@@ -98,11 +98,11 @@ export default function MembersPage() {
   }
 
   return (
-    <main style={{ padding: 32, maxWidth: 1000, margin: "0 auto" }}>
+    <main style={{ padding: 32, maxWidth: 1000, margin: '0 auto' }}>
       <h1>Members</h1>
 
       {error && (
-        <p style={{ color: "crimson", fontWeight: 600 }}>Error: {error}</p>
+        <p style={{ color: 'crimson', fontWeight: 600 }}>Error: {error}</p>
       )}
 
       <section style={{ marginBottom: 24 }}>
@@ -110,7 +110,7 @@ export default function MembersPage() {
           placeholder="Search by name or PSN"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && refresh()}
+          onKeyDown={(e) => e.key === 'Enter' && refresh()}
           style={{ padding: 8, width: 280, marginRight: 8 }}
         />
         <button onClick={refresh}>Search</button>
@@ -118,17 +118,15 @@ export default function MembersPage() {
 
       <section
         style={{
-          border: "1px solid #ddd",
+          border: '1px solid #ddd',
           borderRadius: 8,
           padding: 16,
           marginBottom: 24,
-        }}
-      >
-        <h2>{editingId ? "Edit member" : "Add member"}</h2>
+        }}>
+        <h2>{editingId ? 'Edit member' : 'Add member'}</h2>
         <form
           onSubmit={handleSubmit}
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
-        >
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <input
             required
             placeholder="PSN"
@@ -154,6 +152,14 @@ export default function MembersPage() {
               setForm({ ...form, account_number: e.target.value })
             }
           />
+          <select
+            value={form.gender}
+            onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+            <option value="">Gender</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+          </select>
           <input
             placeholder="Department"
             value={form.department}
@@ -173,16 +179,15 @@ export default function MembersPage() {
             value={form.status}
             onChange={(e) =>
               setForm({ ...form, status: e.target.value as any })
-            }
-          >
+            }>
             <option value="financial">Financial</option>
             <option value="non_financial">Non-financial</option>
           </select>
 
-          <div style={{ gridColumn: "1 / -1" }}>
+          <div style={{ gridColumn: '1 / -1' }}>
             <button type="submit">
-              {editingId ? "Save changes" : "Add member"}
-            </button>{" "}
+              {editingId ? 'Save changes' : 'Add member'}
+            </button>{' '}
             {editingId && (
               <button type="button" onClick={resetForm}>
                 Cancel
@@ -196,27 +201,27 @@ export default function MembersPage() {
         {loading ? (
           <p>Loading...</p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ textAlign: "left", borderBottom: "2px solid #333" }}>
+              <tr style={{ textAlign: 'left', borderBottom: '2px solid #333' }}>
                 <th>PSN</th>
                 <th>Name</th>
                 <th>Department</th>
                 <th>Status</th>
                 <th>Phone</th>
-                <th></th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {members.map((m) => (
-                <tr key={m.id} style={{ borderBottom: "1px solid #eee" }}>
+                <tr key={m.id} style={{ borderBottom: '1px solid #eee' }}>
                   <td>{m.psn}</td>
                   <td>{m.name}</td>
                   <td>{m.department}</td>
                   <td>{m.status}</td>
                   <td>{m.phone}</td>
                   <td>
-                    <button onClick={() => startEdit(m)}>Edit</button>{" "}
+                    <button onClick={() => startEdit(m)}>Edit</button>{' '}
                     <button onClick={() => handleDelete(m.id)}>Delete</button>
                   </td>
                 </tr>
