@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "MACT Cooperative Ledger",
+  title: "Cooperative Manager",
   description: "Cooperative society member, loan, and deduction management",
 };
 
