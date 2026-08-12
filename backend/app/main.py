@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from .database import Base, engine
-from .routers import members
+from .routers import members, loan_types, loans, auth, settings, loan_applications
 
 load_dotenv()
 
@@ -26,6 +26,11 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 app.include_router(members.router)
+app.include_router(loan_types.router)
+app.include_router(loans.router)
+app.include_router(auth.router)
+app.include_router(settings.router)
+app.include_router(loan_applications.router)
 
 
 @app.get("/api/health")

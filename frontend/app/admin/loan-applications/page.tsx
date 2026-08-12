@@ -1,0 +1,221 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useAuth } from "../../../lib/useAuth";
+import {
+  listLoanApplications,
+  getLoanApplication,
+  verifyPayment,
+  decideApplication,
+  LoanApplication,
+  LoanApplicationWithReceipt,
+} from "../../../lib/api";
+
+export default function AdminLoanApplicationsPage() {
+  const { loading: authLoading, logout } = useAuth({
+    requireAuth: true,
+    requirePasswordChanged: true,
+    requireRole: "admin",
+  });
+
+  const [applications, setApplications] = useState<LoanApplication[]>([]);
+  const [expanded, setExpanded] = useState<LoanApplicationWithReceipt | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [approvedAmount, setApprovedAmount] = useState("");
+  const [adminNotes, setAdminNotes] = useState("");
+  const [rejectionReason, setRejectionReason] = useState("");
+
+  async function refresh() {
+    setLoading(true);
+    setError(null);
+    try {
+      setApplications(await listLoanApplications());
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!authLoading) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading]);
+
+  async function handleExpand(id: string) {
+    setError(null);
+    try {
+      const full = await getLoanApplication(id);
+      setExpanded(full);
+      setApprovedAmount(full.requested_amount);
+      setAdminNotes("");
+      setRejectionReason("");
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleVerifyPayment(approved: boolean) {
+    if (!expanded) return;
+    setError(null);
+    try {
+      await verifyPayment(expanded.id, approved, approved ? undefined : rejectionReason);
+      setExpanded(null);
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleDecide(approved: boolean) {
+    if (!expanded) return;
+    setError(null);
+    try {
+      await decideApplication(
+        expanded.id,
+        approved,
+        approved ? parseFloat(approvedAmount) : undefined,
+        adminNotes || undefined
+      );
+      setExpanded(null);
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  if (authLoading || loading) return <main style={{ padding: 32 }}>Loading...</main>;
+
+  return (
+    <main style={{ padding: 32, maxWidth: 1000, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h1>Loan Applications</h1>
+        <button onClick={logout}>Log out</button>
+      </div>
+
+      {error && <p style={{ color: "crimson", fontWeight: 600 }}>{error}</p>}
+
+      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24 }}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "2px solid #333" }}>
+            <th>Member</th>
+            <th>Type</th>
+            <th>Requested</th>
+            <th>Payment</th>
+            <th>Status</th>
+            <th>Flag</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {applications.map((a) => (
+            <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
+              <td>
+                {a.member_name} ({a.member_psn})
+              </td>
+              <td>{a.loan_type_name}</td>
+              <td>{a.requested_amount}</td>
+              <td>{a.payment_status}</td>
+              <td>{a.status}</td>
+              <td>
+                {a.was_restricted_at_submission && (
+                  <span style={{ color: "#b45309", fontWeight: 600 }}>⚠ restricted</span>
+                )}
+              </td>
+              <td>
+                <button onClick={() => handleExpand(a.id)}>Review</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {expanded && (
+        <section
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            padding: 16,
+            position: "sticky",
+            bottom: 16,
+            background: "#fff",
+          }}
+        >
+          <h2>
+            Reviewing: {expanded.member_name} ({expanded.member_psn}) — {expanded.loan_type_name}
+          </h2>
+          <p>
+            Requested: {expanded.requested_amount} · Payment reference: {expanded.payment_reference}
+          </p>
+
+          {expanded.was_restricted_at_submission && (
+            <p style={{ color: "#b45309", fontWeight: 600 }}>
+              ⚠ This member was flagged as loan-restricted when they submitted this application.
+              {expanded.restriction_reason_snapshot && ` Reason: ${expanded.restriction_reason_snapshot}`}
+            </p>
+          )}
+
+          <div style={{ margin: "12px 0" }}>
+            {expanded.receipt_content_type.startsWith("image/") ? (
+              <img
+                src={`data:${expanded.receipt_content_type};base64,${expanded.receipt_image_base64}`}
+                alt="Payment receipt"
+                style={{ maxWidth: "100%", maxHeight: 400, border: "1px solid #ccc" }}
+              />
+            ) : (
+              <a
+                href={`data:${expanded.receipt_content_type};base64,${expanded.receipt_image_base64}`}
+                download="receipt"
+              >
+                Download receipt (PDF)
+              </a>
+            )}
+          </div>
+
+          {expanded.payment_status === "awaiting_verification" && (
+            <div style={{ display: "grid", gap: 8 }}>
+              <h3>Step 1: Verify payment</h3>
+              <input
+                placeholder="Rejection reason (if rejecting)"
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+              />
+              <div>
+                <button onClick={() => handleVerifyPayment(true)}>Verify payment</button>{" "}
+                <button onClick={() => handleVerifyPayment(false)}>Reject payment</button>
+              </div>
+            </div>
+          )}
+
+          {expanded.payment_status === "verified" && expanded.status === "pending" && (
+            <div style={{ display: "grid", gap: 8 }}>
+              <h3>Step 2: Loan decision</h3>
+              <input
+                type="number"
+                step="0.01"
+                placeholder="Approved amount"
+                value={approvedAmount}
+                onChange={(e) => setApprovedAmount(e.target.value)}
+              />
+              <textarea
+                placeholder="Admin notes (sent to member if rejecting)"
+                value={adminNotes}
+                onChange={(e) => setAdminNotes(e.target.value)}
+              />
+              <div>
+                <button onClick={() => handleDecide(true)}>Approve loan</button>{" "}
+                <button onClick={() => handleDecide(false)}>Reject loan</button>
+              </div>
+            </div>
+          )}
+
+          <button onClick={() => setExpanded(null)} style={{ marginTop: 12 }}>
+            Close
+          </button>
+        </section>
+      )}
+    </main>
+  );
+}

@@ -7,8 +7,23 @@ from sqlalchemy import or_
 
 from .. import models, schemas
 from ..database import get_db
+from ..deps import require_admin, get_current_user
 
 router = APIRouter(prefix="/api/members", tags=["members"])
+
+
+@router.get("/me", response_model=schemas.MemberOut)
+def get_my_member_record(
+    current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Convenience endpoint for a logged-in member's own dashboard, so the
+    frontend doesn't need to know its own member_id up front."""
+    if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
+        raise HTTPException(status_code=403, detail="Only members have a member record")
+    member = db.query(models.Member).filter(models.Member.id == current_user.member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member record not found")
+    return member
 
 
 @router.get("", response_model=List[schemas.MemberOut])
@@ -17,6 +32,7 @@ def list_members(
     status: Optional[models.MemberStatus] = None,
     skip: int = 0,
     limit: int = 100,
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Member)
@@ -34,7 +50,13 @@ def list_members(
 
 
 @router.get("/{member_id}", response_model=schemas.MemberOut)
-def get_member(member_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_member(
+    member_id: uuid.UUID,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role == models.UserRole.MEMBER and current_user.member_id != member_id:
+        raise HTTPException(status_code=403, detail="You can only view your own record")
     member = db.query(models.Member).filter(models.Member.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -42,7 +64,11 @@ def get_member(member_id: uuid.UUID, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=schemas.MemberOut, status_code=201)
-def create_member(payload: schemas.MemberCreate, db: Session = Depends(get_db)):
+def create_member(
+    payload: schemas.MemberCreate,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     existing = db.query(models.Member).filter(models.Member.psn == payload.psn).first()
     if existing:
         raise HTTPException(status_code=409, detail="A member with this PSN already exists")
@@ -56,7 +82,10 @@ def create_member(payload: schemas.MemberCreate, db: Session = Depends(get_db)):
 
 @router.put("/{member_id}", response_model=schemas.MemberOut)
 def update_member(
-    member_id: uuid.UUID, payload: schemas.MemberUpdate, db: Session = Depends(get_db)
+    member_id: uuid.UUID,
+    payload: schemas.MemberUpdate,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
 ):
     member = db.query(models.Member).filter(models.Member.id == member_id).first()
     if not member:
@@ -71,7 +100,11 @@ def update_member(
 
 
 @router.delete("/{member_id}", status_code=204)
-def delete_member(member_id: uuid.UUID, db: Session = Depends(get_db)):
+def delete_member(
+    member_id: uuid.UUID,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     member = db.query(models.Member).filter(models.Member.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")

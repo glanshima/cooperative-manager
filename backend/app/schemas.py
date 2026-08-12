@@ -1,10 +1,19 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from .models import MemberStatus, Gender
+from .models import (
+    MemberStatus,
+    Gender,
+    LoanStatus,
+    UserRole,
+    LoanApplicationStatus,
+    PaymentVerificationStatus,
+    LoanRestrictionBehavior,
+)
 
 
 class MemberBase(BaseModel):
@@ -19,6 +28,8 @@ class MemberBase(BaseModel):
     next_of_kin: Optional[str] = None
     next_of_kin_phone: Optional[str] = None
     status: MemberStatus = MemberStatus.FINANCIAL
+    loan_restricted: bool = False
+    restriction_reason: Optional[str] = None
 
 
 class MemberCreate(MemberBase):
@@ -36,6 +47,8 @@ class MemberUpdate(BaseModel):
     next_of_kin: Optional[str] = None
     next_of_kin_phone: Optional[str] = None
     status: Optional[MemberStatus] = None
+    loan_restricted: Optional[bool] = None
+    restriction_reason: Optional[str] = None
 
 
 class MemberOut(MemberBase):
@@ -44,3 +57,219 @@ class MemberOut(MemberBase):
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Loan Types
+# ---------------------------------------------------------------------------
+
+class LoanTypeBase(BaseModel):
+    name: str
+    interest_rate: Decimal  # decimal fraction, e.g. 0.15 for 15%
+    tenure_months: int
+    flat_charge: Decimal = Decimal("0")
+    is_active: bool = True
+    open_for_application: bool = False
+
+
+class LoanTypeCreate(LoanTypeBase):
+    pass
+
+
+class LoanTypeUpdate(BaseModel):
+    name: Optional[str] = None
+    interest_rate: Optional[Decimal] = None
+    tenure_months: Optional[int] = None
+    flat_charge: Optional[Decimal] = None
+    is_active: Optional[bool] = None
+    open_for_application: Optional[bool] = None
+
+
+class LoanTypeOut(LoanTypeBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Loans
+# ---------------------------------------------------------------------------
+
+class LoanCreate(BaseModel):
+    member_id: uuid.UUID
+    loan_type_id: uuid.UUID
+    principal: Decimal
+    disbursement_date: date
+    notes: Optional[str] = None
+
+
+class LoanUpdate(BaseModel):
+    amount_repaid: Optional[Decimal] = None
+    status: Optional[LoanStatus] = None
+    notes: Optional[str] = None
+
+
+class LoanOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    member_id: uuid.UUID
+    loan_type_id: uuid.UUID
+    principal: Decimal
+    interest_amount: Decimal
+    total_repayable: Decimal
+    monthly_installment: Decimal
+    disbursement_date: date
+    expected_end_date: date
+    amount_repaid: Decimal
+    status: LoanStatus
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LoanOutWithDetails(LoanOut):
+    """Includes denormalized member name and loan type name for list views,
+    avoiding N+1 lookups on the frontend."""
+    member_name: str
+    member_psn: str
+    loan_type_name: str
+    balance: Decimal  # total_repayable - amount_repaid
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    username: str  # PSN for members, chosen username/email for admins
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: UserRole
+    must_change_password: bool
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class CreateMemberLoginRequest(BaseModel):
+    """Admin-only: provisions a login for an existing member."""
+    member_id: uuid.UUID
+    temporary_password: str
+
+
+class CreateAdminRequest(BaseModel):
+    """Used only by the one-off seed script, not exposed over the API."""
+    username: str
+    password: str
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    username: str
+    role: UserRole
+    member_id: Optional[uuid.UUID] = None
+    must_change_password: bool
+    is_active: bool
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Loan Applications
+# ---------------------------------------------------------------------------
+
+class LoanApplicationCreate(BaseModel):
+    """Submitted by a member. Payment proof is required in the same
+    request, since submission is gated on having already paid the fee."""
+    loan_type_id: uuid.UUID
+    requested_amount: Decimal
+    member_notes: Optional[str] = None
+    payment_reference: str
+    receipt_image_base64: str
+    receipt_content_type: str
+
+
+class PaymentVerificationRequest(BaseModel):
+    approved: bool
+    rejection_reason: Optional[str] = None  # required by the router if approved=False
+
+
+class LoanDecisionRequest(BaseModel):
+    approved: bool
+    approved_amount: Optional[Decimal] = None  # required by the router if approved=True
+    admin_notes: Optional[str] = None
+
+
+class LoanApplicationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    member_id: uuid.UUID
+    loan_type_id: uuid.UUID
+    requested_amount: Decimal
+    approved_amount: Optional[Decimal] = None
+    status: LoanApplicationStatus
+    member_notes: Optional[str] = None
+    admin_notes: Optional[str] = None
+    was_restricted_at_submission: bool
+    restriction_reason_snapshot: Optional[str] = None
+    form_fee_amount: Decimal
+    payment_reference: str
+    receipt_content_type: str
+    payment_status: PaymentVerificationStatus
+    payment_verified_at: Optional[datetime] = None
+    payment_rejection_reason: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    resulting_loan_id: Optional[uuid.UUID] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LoanApplicationOutWithDetails(LoanApplicationOut):
+    member_name: str
+    member_psn: str
+    loan_type_name: str
+
+
+class LoanApplicationOutWithReceipt(LoanApplicationOutWithDetails):
+    """Only returned on the single-application detail view, not list
+    views, so the (potentially large) base64 receipt isn't sent on every
+    list load."""
+    receipt_image_base64: str
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+class SettingsOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    loan_restriction_behavior: LoanRestrictionBehavior
+    loan_form_fee: Decimal
+    members_module_enabled: bool
+    loans_module_enabled: bool
+    deductions_module_enabled: bool
+    cashbook_module_enabled: bool
+    dividends_module_enabled: bool
+
+
+class SettingsUpdate(BaseModel):
+    loan_restriction_behavior: Optional[LoanRestrictionBehavior] = None
+    loan_form_fee: Optional[Decimal] = None
+    members_module_enabled: Optional[bool] = None
+    loans_module_enabled: Optional[bool] = None
+    deductions_module_enabled: Optional[bool] = None
+    cashbook_module_enabled: Optional[bool] = None
+    dividends_module_enabled: Optional[bool] = None
