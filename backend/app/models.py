@@ -55,6 +55,9 @@ class Member(Base):
     email = Column(String, nullable=True)
     next_of_kin = Column(String, nullable=True)
     next_of_kin_phone = Column(String, nullable=True)
+    next_of_kin_address = Column(String, nullable=True)
+    next_of_kin_email = Column(String, nullable=True)
+    next_of_kin_relationship = Column(String, nullable=True)
 
     # STATUS in the spreadsheet: 1 = financial member, else non-financial
     status = Column(Enum(MemberStatus), nullable=False, default=MemberStatus.FINANCIAL)
@@ -97,6 +100,19 @@ class LoanType(Base):
     Mirrors the 'Loan Types' sheet: each loan product has its own
     interest rate and repayment tenure (e.g. Capital, Short, Quick,
     Item, CR&O loans in the original workbook).
+
+    interest_rate/tenure_months/flat_charge below are a DENORMALIZED
+    CACHE of "whichever rate version is effective as of today" -- kept
+    so the many places that read loan_type.interest_rate directly (the
+    admin table, the member application form's default display, older
+    code) don't all need to become date-aware. The actual source of
+    truth for "what rate applied on a specific date" is
+    LoanTypeRateVersion; any code computing a REAL loan (disbursement,
+    application decision) must look up the version effective as of the
+    relevant date via loan_calc.get_effective_terms(), not read
+    these cached fields directly, since a rate change scheduled for a
+    future date should not apply early, and a loan disbursed after a
+    rate change should use the new rate even if approved earlier.
     """
 
     __tablename__ = "loan_types"
@@ -129,20 +145,59 @@ class LoanType(Base):
 
     loans = relationship("Loan", back_populates="loan_type")
     loan_applications = relationship("LoanApplication", back_populates="loan_type")
+    rate_versions = relationship(
+        "LoanTypeRateVersion", back_populates="loan_type", cascade="all, delete-orphan"
+    )
+
+
+class LoanTypeRateVersion(Base):
+    """
+    Effective-dated rate history for a loan type. Editing a loan type's
+    rate/tenure/flat_charge creates a NEW row here (with an admin-chosen
+    effective_from date) rather than mutating LoanType in place, so a
+    rate change can be scheduled for the future, and loans already
+    disbursed under an older rate are unaffected (they store their own
+    computed numbers permanently and never re-read this table).
+    """
+
+    __tablename__ = "loan_type_rate_versions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    loan_type_id = Column(
+        UUID(as_uuid=True), ForeignKey("loan_types.id", ondelete="CASCADE"), nullable=False
+    )
+
+    interest_rate = Column(Numeric(6, 4), nullable=False)
+    tenure_months = Column(Integer, nullable=False)
+    flat_charge = Column(Numeric(14, 2), nullable=False, default=0)
+
+    effective_from = Column(Date, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    loan_type = relationship("LoanType", back_populates="rate_versions")
 
 
 class Loan(Base):
     """
-    One row per loan disbursement. Replaces the ~59 monthly
-    'Loan Disbursement' tables in the original workbook with a single
-    time-series table filtered by disbursement_date.
+    One row per ACTUAL DISBURSEMENT -- this row does not exist until an
+    admin disburses an approved application (see LoanApplication.disburse
+    flow), even though the application may have been "approved" earlier.
+    Replaces the ~59 monthly 'Loan Disbursement' tables in the original
+    workbook.
 
-    Interest and repayment figures are computed once at disbursement
-    time and stored, mirroring the spreadsheet's IFS-based formulas:
-      interest_amount   = principal * loan_type.interest_rate
-      total_repayable    = principal + interest_amount
-      monthly_installment = total_repayable / loan_type.tenure_months
-      expected_end_date   = disbursement_date + tenure_months (EDATE equivalent)
+    Interest-at-source model: interest is deducted from what's actually
+    paid out, not added on top of what's repaid.
+      interest_amount     = principal * effective interest_rate
+      net_disbursed         = principal - interest_amount  (what the member actually receives)
+      total_repayable        = principal + flat_charge  (flat_charge, if any, IS added -- it's
+                               a processing fee, not interest; only interest is "at source")
+      monthly_installment    = total_repayable / approved_tenure_months
+      expected_end_date      = disbursement_date + tenure_months (EDATE equivalent)
+    disbursement_date is always normalized to the 1st of the month in
+    which disbursement actually happens (not the member's requested date,
+    which is only a preference recorded on the application).
     """
 
     __tablename__ = "loans"
@@ -158,11 +213,17 @@ class Loan(Base):
 
     principal = Column(Numeric(14, 2), nullable=False)
     interest_amount = Column(Numeric(14, 2), nullable=False)
+    net_disbursed = Column(Numeric(14, 2), nullable=False)
     total_repayable = Column(Numeric(14, 2), nullable=False)
     monthly_installment = Column(Numeric(14, 2), nullable=False)
 
     disbursement_date = Column(Date, nullable=False)
     expected_end_date = Column(Date, nullable=False)
+
+    # Snapshot of which account the money actually went to -- the
+    # member's account on file, or a one-off alternate they specified on
+    # this application (see LoanApplication.alternate_account_number).
+    disbursement_account_number = Column(String, nullable=True)
 
     # Running total of repayments made so far; balance = total_repayable - amount_repaid
     amount_repaid = Column(Numeric(14, 2), nullable=False, default=0)
@@ -181,6 +242,7 @@ class Loan(Base):
     member = relationship("Member", back_populates="loans")
     loan_type = relationship("LoanType", back_populates="loans")
     application = relationship("LoanApplication", back_populates="resulting_loan", uselist=False)
+    repayments = relationship("LoanRepayment", back_populates="loan", cascade="all, delete-orphan")
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +344,27 @@ class LoanApplication(Base):
     requested_amount = Column(Numeric(14, 2), nullable=False)
     approved_amount = Column(Numeric(14, 2), nullable=True)
 
+    # Tenure negotiation: a member may request a tenure shorter than (or
+    # equal to) the loan type's default; an admin reviews and sets
+    # approved_tenure_months at decision time (may match the request,
+    # differ, or fall back to the default -- tenure_decision_reason
+    # explains it if the admin didn't simply grant what was requested).
+    # Repayment math always uses approved_tenure_months once set.
+    requested_tenure_months = Column(Integer, nullable=True)
+    approved_tenure_months = Column(Integer, nullable=True)
+    tenure_decision_reason = Column(String, nullable=True)
+
+    # Member's stated preference only -- the actual disbursement_date on
+    # the resulting Loan is controlled by when an admin disburses it
+    # (normalized to the 1st of that month), not this field.
+    preferred_disbursement_date = Column(Date, nullable=True)
+
+    # Where the money should go: the member's account on file by default,
+    # or a one-off alternate for this loan only (not saved to the
+    # member's profile).
+    use_default_account = Column(Boolean, nullable=False, default=True)
+    alternate_account_number = Column(String, nullable=True)
+
     status = Column(
         Enum(LoanApplicationStatus, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
         nullable=False,
@@ -322,6 +405,52 @@ class LoanApplication(Base):
     member = relationship("Member", back_populates="loan_applications")
     loan_type = relationship("LoanType", back_populates="loan_applications")
     resulting_loan = relationship("Loan", back_populates="application")
+
+
+# ---------------------------------------------------------------------------
+# Loan Repayments (member-initiated servicing of an active loan)
+# ---------------------------------------------------------------------------
+
+class RepaymentVerificationStatus(str, enum.Enum):
+    AWAITING_VERIFICATION = "awaiting_verification"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+
+
+class LoanRepayment(Base):
+    """
+    A member's claim of having made a repayment toward an active loan,
+    with proof (bank reference + receipt), verified by an admin before
+    it actually increases Loan.amount_repaid. Mirrors the same
+    payment-proof pattern as the loan-application form fee, applied here
+    to ongoing servicing instead of the initial application.
+    """
+
+    __tablename__ = "loan_repayments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    loan_id = Column(UUID(as_uuid=True), ForeignKey("loans.id", ondelete="CASCADE"), nullable=False)
+    member_id = Column(UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
+
+    amount_claimed = Column(Numeric(14, 2), nullable=False)
+    payment_reference = Column(String, nullable=False)
+    receipt_image_base64 = Column(Text, nullable=False)
+    receipt_content_type = Column(String, nullable=False)
+
+    status = Column(
+        Enum(RepaymentVerificationStatus, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=RepaymentVerificationStatus.AWAITING_VERIFICATION,
+    )
+    rejection_reason = Column(String, nullable=True)
+    verified_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    loan = relationship("Loan", back_populates="repayments")
 
 
 # ---------------------------------------------------------------------------

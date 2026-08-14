@@ -110,23 +110,70 @@ migration, and a troubleshooting table). Short version:
    loan-form fee by bank transfer, and upload a receipt (stored as base64
    in Postgres — see the cost/tradeoff note further down). An admin
    verifies the payment, then separately decides the loan itself
-   (approve with a possibly-different amount, or reject). Approval creates
-   an actual `Loan` record and emails the member the full terms via Resend.
-   A member flagged `loan_restricted` is either blocked or flagged for
-   admin attention on submission, per an admin-configurable setting.
+   (approve with a possibly-different amount and/or tenure, or reject).
+   Approving does NOT disburse — see #7 below. A member flagged
+   `loan_restricted` is either blocked or flagged for admin attention on
+   submission, per an admin-configurable setting.
 5. **Settings** — single-row table: loan-restriction behavior (block/warn),
    loan form fee amount, and per-module enable/disable toggles (not yet
    enforced on the frontend nav — see Next steps).
+6. **Interest-at-source loan model** — confirmed with MACT: interest is
+   deducted from what's disbursed (`net_disbursed = principal -
+   interest_amount`), not added on top of what's repaid
+   (`total_repayable = principal + flat_charge` only — flat charges are a
+   separate processing fee and are NOT "at source"). Fixes the "why is
+   the balance 990,000 on a 900,000 loan" issue flagged during testing.
+7. **Effective-dated loan type rates** — editing a loan type's rate,
+   tenure, or flat charge no longer overwrites it in place. Instead it
+   creates a new `LoanTypeRateVersion` row with an admin-chosen
+   `effective_from` date (can be past, today, or scheduled in the
+   future). Any new loan (direct disbursement or application decision)
+   looks up whichever version was effective as of the relevant date.
+   Loans already disbursed store their own computed numbers permanently
+   and are never affected by later rate changes — this falls out of the
+   existing design for free, no extra code needed to enforce it.
+8. **Tenure negotiation** — a member may request a tenure shorter than
+   or equal to a loan type's default when applying. An admin sets
+   `approved_tenure_months` at decision time (may differ from the
+   request, with `tenure_decision_reason` explaining why); repayment math
+   always uses the approved tenure.
+9. **Disbursement preferences + gated activation** — a member states a
+   preferred disbursement date (informational only) and can choose to
+   receive funds at an alternate account for that one loan instead of
+   their account on file. Approving an application no longer creates a
+   `Loan` — a separate, explicit **"Disburse"** admin action does that,
+   normalizing `disbursement_date` to the 1st of the month it's actually
+   disbursed in. This is the only point a detailed email fires (approval
+   itself doesn't email — the member already sees "approved" on their
+   dashboard).
+10. **Loan servicing (member-initiated repayments)** — a member on an
+    active loan can submit a repayment claim with a bank reference and
+    receipt, mirroring the same payment-proof pattern as loan
+    applications. An admin verifies it before it actually increases
+    `Loan.amount_repaid`; the loan auto-completes once fully repaid.
+11. **Next of kin expansion** — `Member` now also has
+    `next_of_kin_address`, `next_of_kin_email`, and
+    `next_of_kin_relationship` alongside the existing name/phone fields.
 
-### IMPORTANT — before redeploying: run a manual DB migration
+### IMPORTANT — before redeploying: run TWO manual DB migrations, in order
 
-`scripts/manual_migration_2026_08_add_loan_application_columns.sql` adds
-new columns to your **existing** `members` and `loan_types` tables. The
-app's `create_all()` only creates missing tables automatically (so the new
-`users`, `loan_applications`, and `settings` tables appear on their own) —
-it does **not** add missing columns to tables that already have data.
-Run that SQL file in Neon's SQL Editor once, before your next backend
-deploy, or requests touching the new fields will fail.
+1. `scripts/manual_migration_2026_08_add_loan_application_columns.sql`
+   (from the previous session, if not already run)
+2. `scripts/manual_migration_2026_08_loan_features_batch2.sql` (this
+   session) — adds next-of-kin columns, `net_disbursed` +
+   `disbursement_account_number` on `loans` (with a backfill for any
+   existing loan rows), and the tenure/disbursement-preference columns
+   on `loan_applications`. New tables (`loan_type_rate_versions`,
+   `loan_repayments`) are created automatically by `create_all()` on
+   first deploy — no manual step needed for those.
+
+**Known gap, not fixed by the migration:** if you already have a real
+disbursed loan from before this session (e.g. a test 900,000 Capital
+Loan), its `total_repayable`/`monthly_installment` were computed under
+the OLD (incorrect) formula and are **not** automatically recalculated —
+the migration only adds columns and backfills `net_disbursed = principal`
+for historical rows. Decide separately whether to correct or delete/redo
+that specific loan now that the calculation is fixed.
 
 ### Bootstrapping the first admin account
 
@@ -146,6 +193,22 @@ variables (see `.env.example`). If either is missing, `email_utils.py`
 logs a warning and skips sending rather than crashing a successful loan
 decision — so it's safe to leave unset while you're still testing other
 parts of the flow.
+
+### bcrypt/passlib compatibility (already fixed, noted for reference)
+
+`backend/requirements.txt` pins `bcrypt==4.0.1` explicitly alongside
+`passlib[bcrypt]==1.7.4`. Without this pin, pip installs the newest
+bcrypt (5.x), which breaks passlib's internal self-test with `ValueError:
+password cannot be longer than 72 bytes` on literally any password,
+including short ones — the error is misleading, it's not about your
+actual password length. If you ever bump these dependencies, keep them
+pinned together or re-verify compatibility first.
+
+### New pages this session
+- `/admin/loan-repayments` — admin review queue for member-submitted
+  repayment receipts (separate from `/admin/loan-applications`)
+- Loan type manager (`/loans`) now has a "Rate history" view per type
+  instead of directly editable rate/tenure/flat-charge fields
 
 ### Auth model quick reference
 - Members log in with their **PSN** as the username.

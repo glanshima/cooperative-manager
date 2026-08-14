@@ -7,6 +7,7 @@ import {
   getLoanApplication,
   verifyPayment,
   decideApplication,
+  disburseApplication,
   LoanApplication,
   LoanApplicationWithReceipt,
 } from "../../../lib/api";
@@ -24,6 +25,8 @@ export default function AdminLoanApplicationsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [approvedAmount, setApprovedAmount] = useState("");
+  const [approvedTenureMonths, setApprovedTenureMonths] = useState("");
+  const [tenureDecisionReason, setTenureDecisionReason] = useState("");
   const [adminNotes, setAdminNotes] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
 
@@ -50,6 +53,10 @@ export default function AdminLoanApplicationsPage() {
       const full = await getLoanApplication(id);
       setExpanded(full);
       setApprovedAmount(full.requested_amount);
+      setApprovedTenureMonths(
+        full.requested_tenure_months ? String(full.requested_tenure_months) : ""
+      );
+      setTenureDecisionReason("");
       setAdminNotes("");
       setRejectionReason("");
     } catch (e: any) {
@@ -77,8 +84,22 @@ export default function AdminLoanApplicationsPage() {
         expanded.id,
         approved,
         approved ? parseFloat(approvedAmount) : undefined,
+        approved ? parseInt(approvedTenureMonths) : undefined,
+        tenureDecisionReason || undefined,
         adminNotes || undefined
       );
+      setExpanded(null);
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleDisburse(id: string) {
+    if (!confirm("Disburse this loan now? This will move it to active and email the member.")) return;
+    setError(null);
+    try {
+      await disburseApplication(id);
       setExpanded(null);
       await refresh();
     } catch (e: any) {
@@ -125,7 +146,10 @@ export default function AdminLoanApplicationsPage() {
                 )}
               </td>
               <td>
-                <button onClick={() => handleExpand(a.id)}>Review</button>
+                <button onClick={() => handleExpand(a.id)}>Review</button>{" "}
+                {a.status === "approved" && !a.resulting_loan_id && (
+                  <button onClick={() => handleDisburse(a.id)}>Disburse</button>
+                )}
               </td>
             </tr>
           ))}
@@ -148,6 +172,16 @@ export default function AdminLoanApplicationsPage() {
           </h2>
           <p>
             Requested: {expanded.requested_amount} · Payment reference: {expanded.payment_reference}
+          </p>
+          <p style={{ color: "#555" }}>
+            Requested tenure: {expanded.requested_tenure_months ? `${expanded.requested_tenure_months} months` : "default"}
+            {" · "}
+            Preferred disbursement date: {expanded.preferred_disbursement_date || "not specified"}
+            {" · "}
+            Account:{" "}
+            {expanded.use_default_account
+              ? "member's default account"
+              : `alternate — ${expanded.alternate_account_number}`}
           </p>
 
           {expanded.was_restricted_at_submission && (
@@ -199,6 +233,17 @@ export default function AdminLoanApplicationsPage() {
                 value={approvedAmount}
                 onChange={(e) => setApprovedAmount(e.target.value)}
               />
+              <input
+                type="number"
+                placeholder="Approved tenure (months)"
+                value={approvedTenureMonths}
+                onChange={(e) => setApprovedTenureMonths(e.target.value)}
+              />
+              <input
+                placeholder="Tenure decision reason (if different from what was requested)"
+                value={tenureDecisionReason}
+                onChange={(e) => setTenureDecisionReason(e.target.value)}
+              />
               <textarea
                 placeholder="Admin notes (sent to member if rejecting)"
                 value={adminNotes}
@@ -207,6 +252,20 @@ export default function AdminLoanApplicationsPage() {
               <div>
                 <button onClick={() => handleDecide(true)}>Approve loan</button>{" "}
                 <button onClick={() => handleDecide(false)}>Reject loan</button>
+              </div>
+            </div>
+          )}
+
+          {expanded.status === "approved" && !expanded.resulting_loan_id && (
+            <div style={{ display: "grid", gap: 8 }}>
+              <h3>Step 3: Disburse</h3>
+              <p style={{ color: "#555" }}>
+                Approved: {expanded.approved_amount} over {expanded.approved_tenure_months} months.
+                Disbursing will create the active loan, set the disbursement date to the 1st of
+                this month, and email the member with full repayment details.
+              </p>
+              <div>
+                <button onClick={() => handleDisburse(expanded.id)}>Disburse now</button>
               </div>
             </div>
           )}

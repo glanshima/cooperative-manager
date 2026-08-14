@@ -23,6 +23,9 @@ const emptyForm: MemberInput = {
   email: "",
   next_of_kin: "",
   next_of_kin_phone: "",
+  next_of_kin_address: "",
+  next_of_kin_email: "",
+  next_of_kin_relationship: "",
   status: "financial",
   loan_restricted: false,
   restriction_reason: "",
@@ -73,6 +76,9 @@ export default function MembersPage() {
       email: m.email || "",
       next_of_kin: m.next_of_kin || "",
       next_of_kin_phone: m.next_of_kin_phone || "",
+      next_of_kin_address: m.next_of_kin_address || "",
+      next_of_kin_email: m.next_of_kin_email || "",
+      next_of_kin_relationship: m.next_of_kin_relationship || "",
       status: m.status,
       loan_restricted: m.loan_restricted,
       restriction_reason: m.restriction_reason || "",
@@ -210,6 +216,35 @@ export default function MembersPage() {
             <option value="financial">Financial</option>
             <option value="non_financial">Non-financial</option>
           </select>
+
+          <div style={{ gridColumn: "1 / -1", fontWeight: 600, marginTop: 8 }}>
+            Next of kin
+          </div>
+          <input
+            placeholder="Next of kin name"
+            value={form.next_of_kin}
+            onChange={(e) => setForm({ ...form, next_of_kin: e.target.value })}
+          />
+          <input
+            placeholder="Next of kin phone"
+            value={form.next_of_kin_phone}
+            onChange={(e) => setForm({ ...form, next_of_kin_phone: e.target.value })}
+          />
+          <input
+            placeholder="Next of kin address"
+            value={form.next_of_kin_address}
+            onChange={(e) => setForm({ ...form, next_of_kin_address: e.target.value })}
+          />
+          <input
+            placeholder="Next of kin email"
+            value={form.next_of_kin_email}
+            onChange={(e) => setForm({ ...form, next_of_kin_email: e.target.value })}
+          />
+          <input
+            placeholder="Relationship (e.g. Spouse, Sibling)"
+            value={form.next_of_kin_relationship}
+            onChange={(e) => setForm({ ...form, next_of_kin_relationship: e.target.value })}
+          />
 
           <label style={{ gridColumn: "1 / -1" }}>
             <input

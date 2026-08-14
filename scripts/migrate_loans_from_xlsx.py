@@ -115,10 +115,10 @@ def seed_loan_types(wb, session) -> dict:
                 """
                 INSERT INTO loan_types
                     (id, name, interest_rate, tenure_months, flat_charge,
-                     is_active, created_at, updated_at)
+                     is_active, open_for_application, created_at, updated_at)
                 VALUES
                     (gen_random_uuid(), :name, :interest_rate, :tenure_months,
-                     :flat_charge, true, now(), now())
+                     :flat_charge, true, false, now(), now())
                 RETURNING id
                 """
             ),
@@ -130,6 +130,29 @@ def seed_loan_types(wb, session) -> dict:
             },
         )
         new_id = result.fetchone()[0]
+
+        # Also seed an initial rate version so the new effective-dated
+        # rate history (see models.LoanTypeRateVersion) has a starting
+        # point -- otherwise get_effective_terms() would silently fall
+        # back to the loan_type's own cached fields, which works but
+        # leaves no history to look back on.
+        session.execute(
+            text(
+                """
+                INSERT INTO loan_type_rate_versions
+                    (id, loan_type_id, interest_rate, tenure_months, flat_charge, effective_from, created_at)
+                VALUES
+                    (gen_random_uuid(), :loan_type_id, :interest_rate, :tenure_months, :flat_charge, CURRENT_DATE, now())
+                """
+            ),
+            {
+                "loan_type_id": new_id,
+                "interest_rate": interest_rate,
+                "tenure_months": int(tenure_months),
+                "flat_charge": flat_charge,
+            },
+        )
+
         name_to_id[name] = new_id
         inserted += 1
 
@@ -258,22 +281,36 @@ def migrate_loans(wb, session, name_to_id: dict):
             ).fetchone()
             rate, tenure_months, flat_charge = loan_type_row
 
+            # Interest-at-source model: interest is deducted from what's
+            # disbursed, not added on top of what's repaid. See
+            # app/loan_calc.py for the canonical version of this logic --
+            # kept in sync here manually since this script runs standalone.
             interest_amount = principal * float(rate)
-            total_repayable = principal + interest_amount + float(flat_charge)
+            net_disbursed = principal - interest_amount
+            total_repayable = principal + float(flat_charge)
             monthly_installment = total_repayable / tenure_months
+
+            member_account_row = session.execute(
+                text("SELECT account_number FROM members WHERE id = :id"),
+                {"id": member[0]},
+            ).fetchone()
+            disbursement_account_number = member_account_row[0] if member_account_row else None
 
             session.execute(
                 text(
                     """
                     INSERT INTO loans
                         (id, member_id, loan_type_id, principal, interest_amount,
-                         total_repayable, monthly_installment, disbursement_date,
-                         expected_end_date, amount_repaid, status, created_at, updated_at)
+                         net_disbursed, total_repayable, monthly_installment,
+                         disbursement_date, expected_end_date,
+                         disbursement_account_number, amount_repaid, status,
+                         created_at, updated_at)
                     VALUES
                         (gen_random_uuid(), :member_id, :loan_type_id, :principal,
-                         :interest_amount, :total_repayable, :monthly_installment,
+                         :interest_amount, :net_disbursed, :total_repayable, :monthly_installment,
                          :disbursement_date,
                          :disbursement_date + (:tenure_months || ' months')::interval,
+                         :disbursement_account_number,
                          0, 'active', now(), now())
                     """
                 ),
@@ -282,10 +319,12 @@ def migrate_loans(wb, session, name_to_id: dict):
                     "loan_type_id": loan_type_id,
                     "principal": principal,
                     "interest_amount": interest_amount,
+                    "net_disbursed": net_disbursed,
                     "total_repayable": total_repayable,
                     "monthly_installment": monthly_installment,
                     "disbursement_date": disbursement_date,
                     "tenure_months": tenure_months,
+                    "disbursement_account_number": disbursement_account_number,
                 },
             )
             inserted += 1

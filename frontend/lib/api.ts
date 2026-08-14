@@ -137,6 +137,9 @@ export interface Member {
   email?: string | null;
   next_of_kin?: string | null;
   next_of_kin_phone?: string | null;
+  next_of_kin_address?: string | null;
+  next_of_kin_email?: string | null;
+  next_of_kin_relationship?: string | null;
   status: MemberStatus;
   loan_restricted: boolean;
   restriction_reason?: string | null;
@@ -155,6 +158,9 @@ export interface MemberInput {
   email?: string;
   next_of_kin?: string;
   next_of_kin_phone?: string;
+  next_of_kin_address?: string;
+  next_of_kin_email?: string;
+  next_of_kin_relationship?: string;
   status: MemberStatus;
   loan_restricted?: boolean;
   restriction_reason?: string;
@@ -187,7 +193,7 @@ export async function deleteMember(id: string): Promise<void> {
 export interface LoanType {
   id: string;
   name: string;
-  interest_rate: string; // decimal fraction as string, e.g. "0.1500"
+  interest_rate: string; // decimal fraction as string, e.g. "0.1500" - current effective rate (cached)
   tenure_months: number;
   flat_charge: string;
   is_active: boolean;
@@ -196,29 +202,67 @@ export interface LoanType {
   updated_at: string;
 }
 
-export interface LoanTypeInput {
+export interface LoanTypeCreateInput {
   name: string;
   interest_rate: number;
   tenure_months: number;
   flat_charge?: number;
   is_active?: boolean;
   open_for_application?: boolean;
+  effective_from?: string; // ISO date; defaults to today if omitted
+}
+
+export interface LoanTypeUpdateInput {
+  name?: string;
+  is_active?: boolean;
+  open_for_application?: boolean;
+}
+
+export interface LoanTypeRateVersion {
+  id: string;
+  loan_type_id: string;
+  interest_rate: string;
+  tenure_months: number;
+  flat_charge: string;
+  effective_from: string;
+  created_at: string;
+}
+
+export interface LoanTypeRateVersionInput {
+  interest_rate: number;
+  tenure_months: number;
+  flat_charge?: number;
+  effective_from: string; // ISO date, can be future-dated to schedule a change
 }
 
 export async function listLoanTypes(): Promise<LoanType[]> {
   return apiFetch<LoanType[]>("/api/loan-types");
 }
 
-export async function createLoanType(input: LoanTypeInput): Promise<LoanType> {
+export async function createLoanType(input: LoanTypeCreateInput): Promise<LoanType> {
   return apiFetch<LoanType>("/api/loan-types", { method: "POST", body: input });
 }
 
-export async function updateLoanType(id: string, input: Partial<LoanTypeInput>): Promise<LoanType> {
+export async function updateLoanType(id: string, input: LoanTypeUpdateInput): Promise<LoanType> {
   return apiFetch<LoanType>(`/api/loan-types/${id}`, { method: "PUT", body: input });
 }
 
 export async function deleteLoanType(id: string): Promise<void> {
   return apiFetch<void>(`/api/loan-types/${id}`, { method: "DELETE" });
+}
+
+export async function listRateVersions(loanTypeId: string): Promise<LoanTypeRateVersion[]> {
+  return apiFetch<LoanTypeRateVersion[]>(`/api/loan-types/${loanTypeId}/rate-versions`);
+}
+
+export async function createRateVersion(
+  loanTypeId: string,
+  input: LoanTypeRateVersionInput
+): Promise<LoanTypeRateVersion> {
+  return apiFetch<LoanTypeRateVersion>(`/api/loan-types/${loanTypeId}/rate-versions`, {
+    method: "POST",
+    body: input,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -233,10 +277,12 @@ export interface Loan {
   loan_type_id: string;
   principal: string;
   interest_amount: string;
+  net_disbursed: string;
   total_repayable: string;
   monthly_installment: string;
   disbursement_date: string;
   expected_end_date: string;
+  disbursement_account_number?: string | null;
   amount_repaid: string;
   status: LoanStatus;
   notes?: string | null;
@@ -288,6 +334,12 @@ export interface LoanApplication {
   loan_type_id: string;
   requested_amount: string;
   approved_amount?: string | null;
+  requested_tenure_months?: number | null;
+  approved_tenure_months?: number | null;
+  tenure_decision_reason?: string | null;
+  preferred_disbursement_date?: string | null;
+  use_default_account: boolean;
+  alternate_account_number?: string | null;
   status: LoanApplicationStatus;
   member_notes?: string | null;
   admin_notes?: string | null;
@@ -315,6 +367,10 @@ export interface LoanApplicationWithReceipt extends LoanApplication {
 export interface LoanApplicationInput {
   loan_type_id: string;
   requested_amount: number;
+  requested_tenure_months?: number;
+  preferred_disbursement_date?: string; // ISO date, preference only
+  use_default_account: boolean;
+  alternate_account_number?: string;
   member_notes?: string;
   payment_reference: string;
   receipt_image_base64: string;
@@ -351,11 +407,25 @@ export async function decideApplication(
   id: string,
   approved: boolean,
   approvedAmount?: number,
+  approvedTenureMonths?: number,
+  tenureDecisionReason?: string,
   adminNotes?: string
 ): Promise<LoanApplication> {
   return apiFetch<LoanApplication>(`/api/loan-applications/${id}/decide`, {
     method: "POST",
-    body: { approved, approved_amount: approvedAmount, admin_notes: adminNotes },
+    body: {
+      approved,
+      approved_amount: approvedAmount,
+      approved_tenure_months: approvedTenureMonths,
+      tenure_decision_reason: tenureDecisionReason,
+      admin_notes: adminNotes,
+    },
+  });
+}
+
+export async function disburseApplication(id: string): Promise<LoanApplication> {
+  return apiFetch<LoanApplication>(`/api/loan-applications/${id}/disburse`, {
+    method: "POST",
   });
 }
 
@@ -371,6 +441,62 @@ export function fileToBase64(file: File): Promise<string> {
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Loan Repayments (servicing an active loan)
+// ---------------------------------------------------------------------------
+
+export interface LoanRepayment {
+  id: string;
+  loan_id: string;
+  member_id: string;
+  amount_claimed: string;
+  payment_reference: string;
+  receipt_content_type: string;
+  status: PaymentVerificationStatus;
+  rejection_reason?: string | null;
+  verified_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoanRepaymentWithReceipt extends LoanRepayment {
+  receipt_image_base64: string;
+}
+
+export interface LoanRepaymentInput {
+  amount_claimed: number;
+  payment_reference: string;
+  receipt_image_base64: string;
+  receipt_content_type: string;
+}
+
+export async function submitRepayment(loanId: string, input: LoanRepaymentInput): Promise<LoanRepayment> {
+  return apiFetch<LoanRepayment>(`/api/loans/${loanId}/repayments`, { method: "POST", body: input });
+}
+
+export async function listRepaymentsForLoan(loanId: string): Promise<LoanRepayment[]> {
+  return apiFetch<LoanRepayment[]>(`/api/loans/${loanId}/repayments`);
+}
+
+export async function listAllRepayments(status?: PaymentVerificationStatus): Promise<LoanRepayment[]> {
+  return apiFetch<LoanRepayment[]>("/api/loan-repayments", { searchParams: { status } });
+}
+
+export async function getRepayment(id: string): Promise<LoanRepaymentWithReceipt> {
+  return apiFetch<LoanRepaymentWithReceipt>(`/api/loan-repayments/${id}`);
+}
+
+export async function verifyRepayment(
+  id: string,
+  approved: boolean,
+  rejectionReason?: string
+): Promise<LoanRepayment> {
+  return apiFetch<LoanRepayment>(`/api/loan-repayments/${id}/verify`, {
+    method: "POST",
+    body: { approved, rejection_reason: rejectionReason },
   });
 }
 

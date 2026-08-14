@@ -13,6 +13,7 @@ from .models import (
     LoanApplicationStatus,
     PaymentVerificationStatus,
     LoanRestrictionBehavior,
+    RepaymentVerificationStatus,
 )
 
 
@@ -27,6 +28,9 @@ class MemberBase(BaseModel):
     email: Optional[str] = None
     next_of_kin: Optional[str] = None
     next_of_kin_phone: Optional[str] = None
+    next_of_kin_address: Optional[str] = None
+    next_of_kin_email: Optional[str] = None
+    next_of_kin_relationship: Optional[str] = None
     status: MemberStatus = MemberStatus.FINANCIAL
     loan_restricted: bool = False
     restriction_reason: Optional[str] = None
@@ -46,6 +50,9 @@ class MemberUpdate(BaseModel):
     email: Optional[str] = None
     next_of_kin: Optional[str] = None
     next_of_kin_phone: Optional[str] = None
+    next_of_kin_address: Optional[str] = None
+    next_of_kin_email: Optional[str] = None
+    next_of_kin_relationship: Optional[str] = None
     status: Optional[MemberStatus] = None
     loan_restricted: Optional[bool] = None
     restriction_reason: Optional[str] = None
@@ -65,22 +72,24 @@ class MemberOut(MemberBase):
 
 class LoanTypeBase(BaseModel):
     name: str
-    interest_rate: Decimal  # decimal fraction, e.g. 0.15 for 15%
-    tenure_months: int
-    flat_charge: Decimal = Decimal("0")
     is_active: bool = True
     open_for_application: bool = False
 
 
 class LoanTypeCreate(LoanTypeBase):
-    pass
+    """interest_rate/tenure_months/flat_charge here seed the loan type's
+    FIRST rate version. effective_from defaults to today if not given."""
+    interest_rate: Decimal
+    tenure_months: int
+    flat_charge: Decimal = Decimal("0")
+    effective_from: Optional[date] = None
 
 
 class LoanTypeUpdate(BaseModel):
+    """Only non-rate fields. To change interest_rate/tenure_months/
+    flat_charge, create a new rate version instead (POST
+    /api/loan-types/{id}/rate-versions) -- see LoanTypeRateVersionCreate."""
     name: Optional[str] = None
-    interest_rate: Optional[Decimal] = None
-    tenure_months: Optional[int] = None
-    flat_charge: Optional[Decimal] = None
     is_active: Optional[bool] = None
     open_for_application: Optional[bool] = None
 
@@ -89,8 +98,30 @@ class LoanTypeOut(LoanTypeBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    interest_rate: Decimal  # current effective rate (denormalized cache)
+    tenure_months: int
+    flat_charge: Decimal
     created_at: datetime
     updated_at: datetime
+
+
+class LoanTypeRateVersionCreate(BaseModel):
+    interest_rate: Decimal
+    tenure_months: int
+    flat_charge: Decimal = Decimal("0")
+    effective_from: date
+
+
+class LoanTypeRateVersionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    loan_type_id: uuid.UUID
+    interest_rate: Decimal
+    tenure_months: int
+    flat_charge: Decimal
+    effective_from: date
+    created_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +150,12 @@ class LoanOut(BaseModel):
     loan_type_id: uuid.UUID
     principal: Decimal
     interest_amount: Decimal
+    net_disbursed: Decimal
     total_repayable: Decimal
     monthly_installment: Decimal
     disbursement_date: date
     expected_end_date: date
+    disbursement_account_number: Optional[str] = None
     amount_repaid: Decimal
     status: LoanStatus
     notes: Optional[str] = None
@@ -193,6 +226,10 @@ class LoanApplicationCreate(BaseModel):
     request, since submission is gated on having already paid the fee."""
     loan_type_id: uuid.UUID
     requested_amount: Decimal
+    requested_tenure_months: Optional[int] = None  # must be <= the loan type's default tenure
+    preferred_disbursement_date: Optional[date] = None  # preference only, not binding
+    use_default_account: bool = True
+    alternate_account_number: Optional[str] = None  # required if use_default_account=False
     member_notes: Optional[str] = None
     payment_reference: str
     receipt_image_base64: str
@@ -207,6 +244,8 @@ class PaymentVerificationRequest(BaseModel):
 class LoanDecisionRequest(BaseModel):
     approved: bool
     approved_amount: Optional[Decimal] = None  # required by the router if approved=True
+    approved_tenure_months: Optional[int] = None  # required by the router if approved=True
+    tenure_decision_reason: Optional[str] = None  # explain if this differs from what was requested
     admin_notes: Optional[str] = None
 
 
@@ -218,6 +257,12 @@ class LoanApplicationOut(BaseModel):
     loan_type_id: uuid.UUID
     requested_amount: Decimal
     approved_amount: Optional[Decimal] = None
+    requested_tenure_months: Optional[int] = None
+    approved_tenure_months: Optional[int] = None
+    tenure_decision_reason: Optional[str] = None
+    preferred_disbursement_date: Optional[date] = None
+    use_default_account: bool
+    alternate_account_number: Optional[str] = None
     status: LoanApplicationStatus
     member_notes: Optional[str] = None
     admin_notes: Optional[str] = None
@@ -245,6 +290,42 @@ class LoanApplicationOutWithReceipt(LoanApplicationOutWithDetails):
     """Only returned on the single-application detail view, not list
     views, so the (potentially large) base64 receipt isn't sent on every
     list load."""
+    receipt_image_base64: str
+
+
+# ---------------------------------------------------------------------------
+# Loan Repayments
+# ---------------------------------------------------------------------------
+
+class LoanRepaymentCreate(BaseModel):
+    amount_claimed: Decimal
+    payment_reference: str
+    receipt_image_base64: str
+    receipt_content_type: str
+
+
+class RepaymentVerificationRequest(BaseModel):
+    approved: bool
+    rejection_reason: Optional[str] = None  # required by the router if approved=False
+
+
+class LoanRepaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    loan_id: uuid.UUID
+    member_id: uuid.UUID
+    amount_claimed: Decimal
+    payment_reference: str
+    receipt_content_type: str
+    status: RepaymentVerificationStatus
+    rejection_reason: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LoanRepaymentOutWithReceipt(LoanRepaymentOut):
     receipt_image_base64: str
 
 

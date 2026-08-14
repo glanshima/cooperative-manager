@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_admin, get_current_user
-from ..loan_calc import compute_loan_terms, compute_expected_end_date
+from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
 
 router = APIRouter(prefix="/api/loans", tags=["loans"])
 
@@ -21,10 +21,12 @@ def _to_detail_schema(loan: models.Loan) -> schemas.LoanOutWithDetails:
         loan_type_id=loan.loan_type_id,
         principal=loan.principal,
         interest_amount=loan.interest_amount,
+        net_disbursed=loan.net_disbursed,
         total_repayable=loan.total_repayable,
         monthly_installment=loan.monthly_installment,
         disbursement_date=loan.disbursement_date,
         expected_end_date=loan.expected_end_date,
+        disbursement_account_number=loan.disbursement_account_number,
         amount_repaid=loan.amount_repaid,
         status=loan.status,
         notes=loan.notes,
@@ -104,20 +106,28 @@ def create_loan(
 
     # --- Core disbursement calculation, mirrors the spreadsheet's IFS formulas ---
     # (see app/loan_calc.py -- shared with application-approval disbursement)
-    interest_amount, total_repayable, monthly_installment = compute_loan_terms(
-        payload.principal, loan_type.interest_rate, loan_type.flat_charge, loan_type.tenure_months
+    # Direct admin disbursement uses the rate effective as of the chosen
+    # disbursement_date, and the loan type's default tenure (there's no
+    # "requested tenure" negotiation on this admin-direct path).
+    interest_rate, tenure_months, flat_charge = get_effective_terms(
+        db, loan_type, payload.disbursement_date
     )
-    expected_end_date = compute_expected_end_date(payload.disbursement_date, loan_type.tenure_months)
+    interest_amount, net_disbursed, total_repayable, monthly_installment = compute_loan_terms(
+        payload.principal, interest_rate, flat_charge, tenure_months
+    )
+    expected_end_date = compute_expected_end_date(payload.disbursement_date, tenure_months)
 
     loan = models.Loan(
         member_id=payload.member_id,
         loan_type_id=payload.loan_type_id,
         principal=payload.principal,
         interest_amount=interest_amount,
+        net_disbursed=net_disbursed,
         total_repayable=total_repayable,
         monthly_installment=monthly_installment,
         disbursement_date=payload.disbursement_date,
         expected_end_date=expected_end_date,
+        disbursement_account_number=member.account_number,
         amount_repaid=0,
         status=models.LoanStatus.ACTIVE,
         notes=payload.notes,

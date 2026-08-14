@@ -6,7 +6,8 @@ import {
   Loan,
   LoanInput,
   LoanType,
-  LoanTypeInput,
+  LoanTypeCreateInput,
+  LoanTypeRateVersion,
   listLoans,
   createLoan,
   updateLoan,
@@ -14,6 +15,8 @@ import {
   listLoanTypes,
   createLoanType,
   updateLoanType,
+  listRateVersions,
+  createRateVersion,
 } from "../../lib/api";
 import { listMembers, Member } from "../../lib/api";
 
@@ -25,13 +28,14 @@ const emptyLoanForm: LoanInput = {
   notes: "",
 };
 
-const emptyTypeForm: LoanTypeInput = {
+const emptyTypeForm: LoanTypeCreateInput = {
   name: "",
   interest_rate: 0.15,
   tenure_months: 12,
   flat_charge: 0,
   is_active: true,
   open_for_application: false,
+  effective_from: new Date().toISOString().slice(0, 10),
 };
 
 export default function LoansPage() {
@@ -46,11 +50,20 @@ export default function LoansPage() {
   const [members, setMembers] = useState<Member[]>([]);
 
   const [loanForm, setLoanForm] = useState<LoanInput>(emptyLoanForm);
-  const [typeForm, setTypeForm] = useState<LoanTypeInput>(emptyTypeForm);
+  const [typeForm, setTypeForm] = useState<LoanTypeCreateInput>(emptyTypeForm);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showTypeManager, setShowTypeManager] = useState(false);
+
+  const [rateHistoryFor, setRateHistoryFor] = useState<LoanType | null>(null);
+  const [rateHistory, setRateHistory] = useState<LoanTypeRateVersion[]>([]);
+  const [newVersion, setNewVersion] = useState({
+    interest_rate: 0.15,
+    tenure_months: 12,
+    flat_charge: 0,
+    effective_from: new Date().toISOString().slice(0, 10),
+  });
 
   async function refresh() {
     setLoading(true);
@@ -112,6 +125,36 @@ export default function LoansPage() {
   async function handleToggleOpenForApplication(type: LoanType) {
     try {
       await updateLoanType(type.id, { open_for_application: !type.open_for_application });
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleShowRateHistory(type: LoanType) {
+    setError(null);
+    try {
+      const versions = await listRateVersions(type.id);
+      setRateHistoryFor(type);
+      setRateHistory(versions);
+      setNewVersion({
+        interest_rate: parseFloat(type.interest_rate),
+        tenure_months: type.tenure_months,
+        flat_charge: parseFloat(type.flat_charge),
+        effective_from: new Date().toISOString().slice(0, 10),
+      });
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleCreateVersion(e: React.FormEvent) {
+    e.preventDefault();
+    if (!rateHistoryFor) return;
+    setError(null);
+    try {
+      await createRateVersion(rateHistoryFor.id, newVersion);
+      await handleShowRateHistory(rateHistoryFor);
       await refresh();
     } catch (e: any) {
       setError(e.message);
@@ -208,12 +251,100 @@ export default function LoansPage() {
                   <td>
                     <button onClick={() => handleToggleOpenForApplication(t)}>
                       {t.open_for_application ? "Close to members" : "Open to members"}
-                    </button>
+                    </button>{" "}
+                    <button onClick={() => handleShowRateHistory(t)}>Rate history</button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          {rateHistoryFor && (
+            <div
+              style={{
+                border: "1px solid #ccc",
+                borderRadius: 8,
+                padding: 12,
+                marginBottom: 16,
+                background: "#fafafa",
+              }}
+            >
+              <h4>
+                Rate history — {rateHistoryFor.name}{" "}
+                <button onClick={() => setRateHistoryFor(null)}>Close</button>
+              </h4>
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 12 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", borderBottom: "1px solid #ccc" }}>
+                    <th>Effective from</th>
+                    <th>Rate</th>
+                    <th>Tenure</th>
+                    <th>Flat charge</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rateHistory.map((v) => (
+                    <tr key={v.id}>
+                      <td>{v.effective_from}</td>
+                      <td>{(parseFloat(v.interest_rate) * 100).toFixed(2)}%</td>
+                      <td>{v.tenure_months}mo</td>
+                      <td>{v.flat_charge}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <p style={{ fontSize: 13, color: "#666" }}>
+                Adding a new version below does NOT affect loans already disbursed — it only
+                applies to loans disbursed on or after the effective date you choose (which can
+                be in the future, to schedule an upcoming change).
+              </p>
+              <form
+                onSubmit={handleCreateVersion}
+                style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
+              >
+                <input
+                  required
+                  type="number"
+                  step="0.0001"
+                  placeholder="New interest rate"
+                  value={newVersion.interest_rate}
+                  onChange={(e) =>
+                    setNewVersion({ ...newVersion, interest_rate: parseFloat(e.target.value) })
+                  }
+                />
+                <input
+                  required
+                  type="number"
+                  placeholder="New tenure (months)"
+                  value={newVersion.tenure_months}
+                  onChange={(e) =>
+                    setNewVersion({ ...newVersion, tenure_months: parseInt(e.target.value) })
+                  }
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="New flat charge"
+                  value={newVersion.flat_charge}
+                  onChange={(e) =>
+                    setNewVersion({ ...newVersion, flat_charge: parseFloat(e.target.value) || 0 })
+                  }
+                />
+                <input
+                  required
+                  type="date"
+                  value={newVersion.effective_from}
+                  onChange={(e) =>
+                    setNewVersion({ ...newVersion, effective_from: e.target.value })
+                  }
+                />
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <button type="submit">Add rate version</button>
+                </div>
+              </form>
+            </div>
+          )}
 
           <h3>Add loan type</h3>
           <form
@@ -253,6 +384,12 @@ export default function LoansPage() {
               onChange={(e) =>
                 setTypeForm({ ...typeForm, flat_charge: parseFloat(e.target.value) || 0 })
               }
+            />
+            <input
+              required
+              type="date"
+              value={typeForm.effective_from}
+              onChange={(e) => setTypeForm({ ...typeForm, effective_from: e.target.value })}
             />
             <div style={{ gridColumn: "1 / -1" }}>
               <button type="submit">Add loan type</button>
@@ -364,6 +501,7 @@ export default function LoansPage() {
                 <th>Member</th>
                 <th>Type</th>
                 <th>Principal</th>
+                <th>Net disbursed</th>
                 <th>Balance</th>
                 <th>Status</th>
                 <th>Disbursed</th>
@@ -378,6 +516,7 @@ export default function LoansPage() {
                   </td>
                   <td>{loan.loan_type_name}</td>
                   <td>{loan.principal}</td>
+                  <td>{loan.net_disbursed}</td>
                   <td>{loan.balance}</td>
                   <td>{loan.status}</td>
                   <td>{loan.disbursement_date}</td>
