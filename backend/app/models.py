@@ -120,6 +120,7 @@ class LoanType(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     name = Column(String, unique=True, nullable=False, index=True)
+    description = Column(String, nullable=True)
 
     # Stored as a decimal fraction, e.g. 0.15 for 15%. Numeric avoids
     # floating point drift when computing interest on large principals.

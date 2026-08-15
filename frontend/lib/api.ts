@@ -193,6 +193,7 @@ export async function deleteMember(id: string): Promise<void> {
 export interface LoanType {
   id: string;
   name: string;
+  description?: string | null;
   interest_rate: string; // decimal fraction as string, e.g. "0.1500" - current effective rate (cached)
   tenure_months: number;
   flat_charge: string;
@@ -204,6 +205,7 @@ export interface LoanType {
 
 export interface LoanTypeCreateInput {
   name: string;
+  description?: string;
   interest_rate: number;
   tenure_months: number;
   flat_charge?: number;
@@ -214,6 +216,7 @@ export interface LoanTypeCreateInput {
 
 export interface LoanTypeUpdateInput {
   name?: string;
+  description?: string;
   is_active?: boolean;
   open_for_application?: boolean;
 }

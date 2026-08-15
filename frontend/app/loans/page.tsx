@@ -30,6 +30,7 @@ const emptyLoanForm: LoanInput = {
 
 const emptyTypeForm: LoanTypeCreateInput = {
   name: "",
+  description: "",
   interest_rate: 0.15,
   tenure_months: 12,
   flat_charge: 0,
@@ -229,6 +230,7 @@ export default function LoansPage() {
             <thead>
               <tr style={{ textAlign: "left", borderBottom: "2px solid #333" }}>
                 <th>Name</th>
+                <th>Description</th>
                 <th>Rate</th>
                 <th>Tenure (months)</th>
                 <th>Flat charge</th>
@@ -240,6 +242,7 @@ export default function LoansPage() {
               {loanTypes.map((t) => (
                 <tr key={t.id} style={{ borderBottom: "1px solid #eee" }}>
                   <td>{t.name}</td>
+                  <td style={{ maxWidth: 200, fontSize: 13, color: "#555" }}>{t.description || "—"}</td>
                   <td>{(parseFloat(t.interest_rate) * 100).toFixed(2)}%</td>
                   <td>{t.tenure_months}</td>
                   <td>{parseFloat(t.flat_charge) > 0 ? t.flat_charge : "—"}</td>
@@ -356,6 +359,11 @@ export default function LoansPage() {
               placeholder="Name (e.g. Capital Loan)"
               value={typeForm.name}
               onChange={(e) => setTypeForm({ ...typeForm, name: e.target.value })}
+            />
+            <input
+              placeholder="Short description (optional)"
+              value={typeForm.description}
+              onChange={(e) => setTypeForm({ ...typeForm, description: e.target.value })}
             />
             <input
               required

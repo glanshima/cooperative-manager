@@ -46,11 +46,11 @@ export default function MembersPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  async function refresh() {
+  async function refresh(searchOverride?: string) {
     setLoading(true);
     setError(null);
     try {
-      setMembers(await listMembers(search));
+      setMembers(await listMembers(searchOverride !== undefined ? searchOverride : search));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -144,13 +144,48 @@ export default function MembersPage() {
       {success && <p style={{ color: "green", fontWeight: 600 }}>{success}</p>}
 
       <section style={{ marginBottom: 24 }}>
-        <input
-          placeholder="Search by name or PSN"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && refresh()}
-          style={{ padding: 8, width: 280, marginRight: 8 }}
-        />
+        <span style={{ position: "relative", display: "inline-block" }}>
+          <input
+            placeholder="Search by name or PSN"
+            value={search}
+            onChange={(e) => {
+              const value = e.target.value;
+              setSearch(value);
+              if (value === "") {
+                // Clearing via backspace/delete should also refresh immediately,
+                // not just clicking the explicit clear button below. Pass the
+                // empty string directly rather than relying on `search` state,
+                // which hasn't re-rendered with the new value yet at this point.
+                refresh("");
+              }
+            }}
+            onKeyDown={(e) => e.key === "Enter" && refresh()}
+            style={{ padding: 8, paddingRight: search ? 28 : 8, width: 280, marginRight: 8 }}
+          />
+          {search && (
+            <button
+              onClick={() => {
+                setSearch("");
+                refresh("");
+              }}
+              aria-label="Clear search"
+              style={{
+                position: "absolute",
+                right: 36,
+                top: "50%",
+                transform: "translateY(-50%)",
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                fontSize: 16,
+                lineHeight: 1,
+                padding: 4,
+              }}
+            >
+              ×
+            </button>
+          )}
+        </span>
         <button onClick={refresh}>Search</button>
       </section>
 

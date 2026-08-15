@@ -44,6 +44,7 @@ def create_loan_type(
 
     loan_type = models.LoanType(
         name=payload.name,
+        description=payload.description,
         is_active=payload.is_active,
         open_for_application=payload.open_for_application,
         # seeded from the first rate version below via sync_loan_type_cache

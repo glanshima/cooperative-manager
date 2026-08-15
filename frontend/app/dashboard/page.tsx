@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { useAuth } from "../../lib/useAuth";
 import {
   listLoanApplications,
@@ -156,6 +156,17 @@ export default function MemberDashboard() {
   if (authLoading || loading) return <main style={{ padding: 32 }}>Loading...</main>;
 
   const applyableTypes = loanTypes.filter((t) => t.is_active && t.open_for_application);
+  const selectedType = applyableTypes.find((t) => t.id === form.loan_type_id);
+
+  const previewTenure = form.requested_tenure_months || selectedType?.tenure_months || 0;
+  const previewInterest =
+    selectedType && form.requested_amount
+      ? form.requested_amount * parseFloat(selectedType.interest_rate)
+      : 0;
+  const previewFlatCharge = selectedType ? parseFloat(selectedType.flat_charge) : 0;
+  const previewNetDisbursed = form.requested_amount - previewInterest;
+  const previewTotalRepayable = form.requested_amount + previewFlatCharge;
+  const previewInstallment = previewTenure > 0 ? previewTotalRepayable / previewTenure : 0;
 
   return (
     <main style={{ padding: 32, maxWidth: 900, margin: "0 auto" }}>
@@ -226,6 +237,10 @@ export default function MemberDashboard() {
               ))}
             </select>
 
+            {selectedType?.description && (
+              <p style={{ fontSize: 13, color: "#666", margin: 0 }}>{selectedType.description}</p>
+            )}
+
             <input
               required
               type="number"
@@ -262,6 +277,27 @@ export default function MemberDashboard() {
                 onChange={(e) => setForm({ ...form, preferred_disbursement_date: e.target.value })}
               />
             </label>
+
+            {selectedType && form.requested_amount > 0 && (
+              <div
+                style={{
+                  background: "#f6f6f6",
+                  padding: 10,
+                  borderRadius: 6,
+                  fontSize: 14,
+                }}
+              >
+                <strong>Estimated terms</strong> (final terms are set by the cooperative at
+                approval, and may differ):
+                <div>Interest (deducted at source): {previewInterest.toFixed(2)}</div>
+                <div>Amount you would receive: {previewNetDisbursed.toFixed(2)}</div>
+                {previewFlatCharge > 0 && <div>Flat charge: {previewFlatCharge.toFixed(2)}</div>}
+                <div>Total repayable: {previewTotalRepayable.toFixed(2)}</div>
+                <div>
+                  Monthly installment ({previewTenure} months): {previewInstallment.toFixed(2)}
+                </div>
+              </div>
+            )}
 
             <label>
               <input
@@ -326,16 +362,33 @@ export default function MemberDashboard() {
               </tr>
             </thead>
             <tbody>
-              {applications.map((a) => (
-                <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td>{a.loan_type_name}</td>
-                  <td>{a.requested_amount}</td>
-                  <td>{a.requested_tenure_months ? `${a.requested_tenure_months}mo` : "default"}</td>
-                  <td>{a.approved_amount || "—"}</td>
-                  <td>{a.payment_status}</td>
-                  <td>{a.status}</td>
-                </tr>
-              ))}
+              {applications.map((a) => {
+                const rejectionNote =
+                  a.payment_status === "rejected"
+                    ? a.payment_rejection_reason
+                    : a.status === "rejected"
+                    ? a.admin_notes
+                    : null;
+                return (
+                  <Fragment key={a.id}>
+                    <tr style={{ borderBottom: rejectionNote ? "none" : "1px solid #eee" }}>
+                      <td>{a.loan_type_name}</td>
+                      <td>{a.requested_amount}</td>
+                      <td>{a.requested_tenure_months ? `${a.requested_tenure_months}mo` : "default"}</td>
+                      <td>{a.approved_amount || "—"}</td>
+                      <td>{a.payment_status}</td>
+                      <td>{a.status}</td>
+                    </tr>
+                    {rejectionNote && (
+                      <tr style={{ borderBottom: "1px solid #eee" }}>
+                        <td colSpan={6} style={{ color: "#b91c1c", fontSize: 13, paddingBottom: 8 }}>
+                          Reason: {rejectionNote}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}

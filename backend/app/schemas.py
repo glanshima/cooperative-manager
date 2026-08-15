@@ -72,6 +72,7 @@ class MemberOut(MemberBase):
 
 class LoanTypeBase(BaseModel):
     name: str
+    description: Optional[str] = None
     is_active: bool = True
     open_for_application: bool = False
 
@@ -90,6 +91,7 @@ class LoanTypeUpdate(BaseModel):
     flat_charge, create a new rate version instead (POST
     /api/loan-types/{id}/rate-versions) -- see LoanTypeRateVersionCreate."""
     name: Optional[str] = None
+    description: Optional[str] = None
     is_active: Optional[bool] = None
     open_for_application: Optional[bool] = None
 
