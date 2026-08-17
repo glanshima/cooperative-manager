@@ -186,7 +186,7 @@ export default function MembersPage() {
             </button>
           )}
         </span>
-        <button onClick={refresh}>Search</button>
+        <button onClick={() => refresh()}>Search</button>
       </section>
 
       <section

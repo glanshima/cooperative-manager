@@ -223,7 +223,9 @@ class Loan(Base):
 
     # Snapshot of which account the money actually went to -- the
     # member's account on file, or a one-off alternate they specified on
-    # this application (see LoanApplication.alternate_account_number).
+    # this application (see LoanApplication.alternate_*).
+    disbursement_bank_name = Column(String, nullable=True)
+    disbursement_account_name = Column(String, nullable=True)
     disbursement_account_number = Column(String, nullable=True)
 
     # Running total of repayments made so far; balance = total_repayable - amount_repaid
@@ -302,6 +304,7 @@ class LoanApplicationStatus(str, enum.Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    CANCELLED = "cancelled"
 
 
 class PaymentVerificationStatus(str, enum.Enum):
@@ -362,9 +365,34 @@ class LoanApplication(Base):
 
     # Where the money should go: the member's account on file by default,
     # or a one-off alternate for this loan only (not saved to the
-    # member's profile).
+    # member's profile). Structured (not a single free-text field) so
+    # the disbursing admin can verify the account belongs to who they
+    # think it does.
     use_default_account = Column(Boolean, nullable=False, default=True)
+    alternate_bank_name = Column(String, nullable=True)
+    alternate_account_name = Column(String, nullable=True)
     alternate_account_number = Column(String, nullable=True)
+
+    # Cancellation: a member can cancel (forfeiting the form fee -- no
+    # refund) any application that hasn't been disbursed yet, i.e. still
+    # PENDING, or APPROVED but resulting_loan_id is still null. Once
+    # cancelled, cancelled_at records when; the fee is simply not
+    # refunded (no separate "forfeited" flag needed -- CANCELLED status
+    # itself implies it).
+    cancelled_at = Column(DateTime, nullable=True)
+
+    # Reapply: when an admin rejects a loan DECISION (not a payment
+    # rejection -- those can't be reapplied without a fresh application
+    # regardless), they choose whether the member may submit a fresh
+    # application referencing this one. Defaults to True (the common
+    # case -- fixable issues like wrong amount) so an admin only has to
+    # deliberately flip it for genuine non-qualification cases. A
+    # reapplication is a brand new LoanApplication row (new payment
+    # required) -- reapplied_from_id just links back for traceability.
+    can_reapply = Column(Boolean, nullable=False, default=True)
+    reapplied_from_id = Column(
+        UUID(as_uuid=True), ForeignKey("loan_applications.id"), nullable=True
+    )
 
     status = Column(
         Enum(LoanApplicationStatus, values_callable=lambda enum_cls: [e.value for e in enum_cls]),

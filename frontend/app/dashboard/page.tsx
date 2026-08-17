@@ -11,6 +11,9 @@ import {
   getSettings,
   fileToBase64,
   submitRepayment,
+  cancelApplication,
+  rescheduleApplication,
+  reapplyLoanApplication,
   LoanApplication,
   LoanType,
   Loan,
@@ -24,6 +27,8 @@ const emptyForm = {
   requested_tenure_months: "" as number | "",
   preferred_disbursement_date: "",
   use_default_account: true,
+  alternate_bank_name: "",
+  alternate_account_name: "",
   alternate_account_number: "",
   member_notes: "",
   payment_reference: "",
@@ -47,6 +52,7 @@ export default function MemberDashboard() {
   const [showApplyForm, setShowApplyForm] = useState(false);
 
   const [servicingLoanId, setServicingLoanId] = useState<string | null>(null);
+  const [reapplyFromId, setReapplyFromId] = useState<string | null>(null);
   const [repayAmount, setRepayAmount] = useState(0);
   const [repayReference, setRepayReference] = useState("");
   const [repayReceiptFile, setRepayReceiptFile] = useState<File | null>(null);
@@ -92,19 +98,23 @@ export default function MemberDashboard() {
       setError("Please attach your payment receipt.");
       return;
     }
-    if (!form.use_default_account && !form.alternate_account_number) {
-      setError("Please provide an alternate account number, or use your default account.");
+    if (
+      !form.use_default_account &&
+      (!form.alternate_bank_name || !form.alternate_account_name || !form.alternate_account_number)
+    ) {
+      setError("Please provide the bank name, account name, and account number, or use your default account.");
       return;
     }
 
     try {
       const base64 = await fileToBase64(receiptFile);
-      await submitLoanApplication({
-        loan_type_id: form.loan_type_id,
+      const commonFields = {
         requested_amount: form.requested_amount,
         requested_tenure_months: form.requested_tenure_months || undefined,
         preferred_disbursement_date: form.preferred_disbursement_date || undefined,
         use_default_account: form.use_default_account,
+        alternate_bank_name: form.use_default_account ? undefined : form.alternate_bank_name,
+        alternate_account_name: form.use_default_account ? undefined : form.alternate_account_name,
         alternate_account_number: form.use_default_account
           ? undefined
           : form.alternate_account_number,
@@ -112,11 +122,59 @@ export default function MemberDashboard() {
         payment_reference: form.payment_reference,
         receipt_image_base64: base64,
         receipt_content_type: receiptFile.type,
-      });
-      setSuccess("Application submitted. It will be reviewed once your payment is verified.");
+      };
+
+      if (reapplyFromId) {
+        await reapplyLoanApplication(reapplyFromId, commonFields);
+        setSuccess("Reapplication submitted. It will be reviewed once your payment is verified.");
+      } else {
+        await submitLoanApplication({ loan_type_id: form.loan_type_id, ...commonFields });
+        setSuccess("Application submitted. It will be reviewed once your payment is verified.");
+      }
       setForm(emptyForm);
       setReceiptFile(null);
       setShowApplyForm(false);
+      setReapplyFromId(null);
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  function handleStartReapply(app: LoanApplication) {
+    setReapplyFromId(app.id);
+    setForm({
+      ...emptyForm,
+      loan_type_id: app.loan_type_id,
+      requested_amount: parseFloat(app.requested_amount),
+      requested_tenure_months: app.requested_tenure_months || "",
+    });
+    setShowApplyForm(true);
+  }
+
+  async function handleCancel(id: string) {
+    if (
+      !confirm(
+        "Cancel this application? Your loan-form fee will NOT be refunded. " +
+          "If you just want a different disbursement date, use Reschedule instead."
+      )
+    )
+      return;
+    setError(null);
+    try {
+      await cancelApplication(id);
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleReschedule(id: string) {
+    const newDate = prompt("Enter your new preferred disbursement date (YYYY-MM-DD):");
+    if (!newDate) return;
+    setError(null);
+    try {
+      await rescheduleApplication(id, newDate);
       await refresh();
     } catch (e: any) {
       setError(e.message);
@@ -309,12 +367,26 @@ export default function MemberDashboard() {
               {member?.account_number ? ` (${member.account_number})` : ""}
             </label>
             {!form.use_default_account && (
-              <input
-                required
-                placeholder="Alternate account number for this loan only"
-                value={form.alternate_account_number}
-                onChange={(e) => setForm({ ...form, alternate_account_number: e.target.value })}
-              />
+              <div style={{ display: "grid", gap: 8 }}>
+                <input
+                  required
+                  placeholder="Bank name"
+                  value={form.alternate_bank_name}
+                  onChange={(e) => setForm({ ...form, alternate_bank_name: e.target.value })}
+                />
+                <input
+                  required
+                  placeholder="Account name"
+                  value={form.alternate_account_name}
+                  onChange={(e) => setForm({ ...form, alternate_account_name: e.target.value })}
+                />
+                <input
+                  required
+                  placeholder="Account number"
+                  value={form.alternate_account_number}
+                  onChange={(e) => setForm({ ...form, alternate_account_number: e.target.value })}
+                />
+              </div>
             )}
 
             <textarea
@@ -359,6 +431,7 @@ export default function MemberDashboard() {
                 <th>Approved</th>
                 <th>Payment</th>
                 <th>Status</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -369,6 +442,9 @@ export default function MemberDashboard() {
                     : a.status === "rejected"
                     ? a.admin_notes
                     : null;
+                const canCancelOrReschedule =
+                  a.status === "pending" || (a.status === "approved" && !a.resulting_loan_id);
+                const canReapply = a.status === "rejected" && a.can_reapply;
                 return (
                   <Fragment key={a.id}>
                     <tr style={{ borderBottom: rejectionNote ? "none" : "1px solid #eee" }}>
@@ -378,10 +454,21 @@ export default function MemberDashboard() {
                       <td>{a.approved_amount || "—"}</td>
                       <td>{a.payment_status}</td>
                       <td>{a.status}</td>
+                      <td>
+                        {canCancelOrReschedule && (
+                          <>
+                            <button onClick={() => handleReschedule(a.id)}>Reschedule</button>{" "}
+                            <button onClick={() => handleCancel(a.id)}>Cancel</button>
+                          </>
+                        )}
+                        {canReapply && (
+                          <button onClick={() => handleStartReapply(a)}>Reapply</button>
+                        )}
+                      </td>
                     </tr>
                     {rejectionNote && (
                       <tr style={{ borderBottom: "1px solid #eee" }}>
-                        <td colSpan={6} style={{ color: "#b91c1c", fontSize: 13, paddingBottom: 8 }}>
+                        <td colSpan={7} style={{ color: "#b91c1c", fontSize: 13, paddingBottom: 8 }}>
                           Reason: {rejectionNote}
                         </td>
                       </tr>

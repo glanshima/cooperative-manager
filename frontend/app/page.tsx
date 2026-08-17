@@ -17,6 +17,9 @@ export default function Home() {
         <Link href="/admin/loan-applications">Go to Loan Applications (admin review) &rarr;</Link>
       </p>
       <p>
+        <Link href="/admin/disbursements">Go to Disbursements (admin) &rarr;</Link>
+      </p>
+      <p>
         <Link href="/admin/loan-repayments">Go to Loan Repayments (admin review) &rarr;</Link>
       </p>
       <p>

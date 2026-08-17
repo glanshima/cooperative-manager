@@ -60,12 +60,23 @@ def loan_disbursed_email_html(
     tenure_months: int,
     disbursement_date,
     expected_end_date,
+    disbursement_bank_name: str = "",
+    disbursement_account_name: str = "",
     disbursement_account_number: str = "",
+    deducted_amount=None,
 ) -> str:
-    account_block = (
-        f"<tr><td style='padding: 4px 8px;'>Disbursed to account</td>"
-        f"<td style='padding: 4px 8px;'>{disbursement_account_number}</td></tr>"
-        if disbursement_account_number
+    account_lines = ""
+    if disbursement_bank_name:
+        account_lines += f"<tr><td style='padding: 4px 8px;'>Bank</td><td style='padding: 4px 8px;'>{disbursement_bank_name}</td></tr>"
+    if disbursement_account_name:
+        account_lines += f"<tr><td style='padding: 4px 8px;'>Account name</td><td style='padding: 4px 8px;'>{disbursement_account_name}</td></tr>"
+    if disbursement_account_number:
+        account_lines += f"<tr><td style='padding: 4px 8px;'>Account number</td><td style='padding: 4px 8px;'>{disbursement_account_number}</td></tr>"
+
+    deduction_line = (
+        f"<tr><td style='padding: 4px 8px;'>Deducted for existing loan(s)</td>"
+        f"<td style='padding: 4px 8px;'>-{deducted_amount}</td></tr>"
+        if deducted_amount
         else ""
     )
     return f"""
@@ -76,13 +87,14 @@ def loan_disbursed_email_html(
       <table style="border-collapse: collapse; width: 100%;">
         <tr><td style="padding: 4px 8px;">Approved amount</td><td style="padding: 4px 8px;"><strong>{approved_amount}</strong></td></tr>
         <tr><td style="padding: 4px 8px;">Interest (deducted at source)</td><td style="padding: 4px 8px;">{interest_amount}</td></tr>
+        {deduction_line}
         <tr><td style="padding: 4px 8px;">Amount you will receive</td><td style="padding: 4px 8px;"><strong>{net_disbursed}</strong></td></tr>
         <tr><td style="padding: 4px 8px;">Total repayable</td><td style="padding: 4px 8px;">{total_repayable}</td></tr>
         <tr><td style="padding: 4px 8px;">Monthly installment</td><td style="padding: 4px 8px;">{monthly_installment}</td></tr>
         <tr><td style="padding: 4px 8px;">Repayment period</td><td style="padding: 4px 8px;">{tenure_months} months</td></tr>
         <tr><td style="padding: 4px 8px;">Disbursement date</td><td style="padding: 4px 8px;">{disbursement_date}</td></tr>
         <tr><td style="padding: 4px 8px;">Expected completion</td><td style="padding: 4px 8px;">{expected_end_date}</td></tr>
-        {account_block}
+        {account_lines}
       </table>
       <p>You can view these details and service your loan any time from your dashboard.</p>
     </div>

@@ -106,7 +106,7 @@ def submit_application(
     if not payload.use_default_account and not payload.alternate_account_number:
         raise HTTPException(
             status_code=400,
-            detail="alternate_account_number is required when not using the default account",
+            detail="Alternate account details are required when not using the default account",
         )
 
     application = models.LoanApplication(
@@ -116,6 +116,8 @@ def submit_application(
         requested_tenure_months=payload.requested_tenure_months,
         preferred_disbursement_date=payload.preferred_disbursement_date,
         use_default_account=payload.use_default_account,
+        alternate_bank_name=payload.alternate_bank_name if not payload.use_default_account else None,
+        alternate_account_name=payload.alternate_account_name if not payload.use_default_account else None,
         alternate_account_number=payload.alternate_account_number if not payload.use_default_account else None,
         member_notes=payload.member_notes,
         was_restricted_at_submission=was_restricted,
@@ -124,6 +126,7 @@ def submit_application(
         payment_reference=payload.payment_reference,
         receipt_image_base64=payload.receipt_image_base64,
         receipt_content_type=payload.receipt_content_type,
+        reapplied_from_id=payload.reapplied_from_id,
     )
     db.add(application)
     db.commit()
@@ -142,6 +145,8 @@ def submit_application(
 def list_applications(
     status: Optional[models.LoanApplicationStatus] = None,
     payment_status: Optional[models.PaymentVerificationStatus] = None,
+    undisbursed_only: bool = False,
+    loan_type_id: Optional[uuid.UUID] = None,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -156,6 +161,15 @@ def list_applications(
         query = query.filter(models.LoanApplication.status == status)
     if payment_status:
         query = query.filter(models.LoanApplication.payment_status == payment_status)
+    if undisbursed_only:
+        # Convenience filter for the admin "disbursement list" view --
+        # approved but not yet turned into an actual Loan.
+        query = query.filter(
+            models.LoanApplication.status == models.LoanApplicationStatus.APPROVED,
+            models.LoanApplication.resulting_loan_id.is_(None),
+        )
+    if loan_type_id:
+        query = query.filter(models.LoanApplication.loan_type_id == loan_type_id)
 
     applications = query.order_by(models.LoanApplication.created_at.desc()).all()
     return [_to_detail_schema(a) for a in applications]
@@ -283,6 +297,7 @@ def decide_application(
         db.refresh(application)
     else:
         application.status = models.LoanApplicationStatus.REJECTED
+        application.can_reapply = payload.can_reapply
         db.commit()
         db.refresh(application)
 
@@ -303,6 +318,7 @@ def decide_application(
 @router.post("/{application_id}/disburse", response_model=schemas.LoanApplicationOutWithDetails)
 def disburse_application(
     application_id: uuid.UUID,
+    payload: schemas.DisburseRequest = schemas.DisburseRequest(),
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -313,7 +329,21 @@ def disburse_application(
     preference). The interest rate/flat_charge used are whichever were
     effective as of this disbursement date (see LoanTypeRateVersion);
     the tenure is fixed to whatever was approved at decision time. Sends
-    the one detailed email covering everything the member needs."""
+    the one detailed email covering everything the member needs.
+
+    Balance deduction: if the admin selects existing active loan(s) of
+    this member (via deduct_loan_ids or deduct_all_active), those loans
+    are FULLY closed out (amount_repaid = total_repayable, status ->
+    COMPLETED -- no partial deduction) and their combined outstanding
+    balance is subtracted from what the member actually receives on this
+    new loan. The new loan's own principal/interest/total_repayable are
+    unaffected by this -- only net_disbursed (the payout) shrinks. If the
+    deducted total would make net_disbursed negative, the disbursement is
+    rejected with a clear error rather than silently going negative --
+    an admin should resolve that manually (e.g. deduct fewer loans, or
+    handle the shortfall outside the system) rather than have the app
+    guess what to do.
+    """
     application = (
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
@@ -337,22 +367,56 @@ def disburse_application(
     )
     expected_end_date = compute_expected_end_date(disbursement_date, application.approved_tenure_months)
 
-    disbursement_account_number = (
-        application.member.account_number
-        if application.use_default_account
-        else application.alternate_account_number
+    if application.use_default_account:
+        disbursement_bank_name = application.member.bank_name
+        disbursement_account_name = application.member.name
+        disbursement_account_number = application.member.account_number
+    else:
+        disbursement_bank_name = application.alternate_bank_name
+        disbursement_account_name = application.alternate_account_name
+        disbursement_account_number = application.alternate_account_number
+
+    # --- Balance deduction (Round 2 feature) ---
+    active_loans_query = db.query(models.Loan).filter(
+        models.Loan.member_id == application.member_id,
+        models.Loan.status == models.LoanStatus.ACTIVE,
     )
+    loans_to_deduct = []
+    if payload.deduct_all_active:
+        loans_to_deduct = active_loans_query.all()
+    elif payload.deduct_loan_ids:
+        loans_to_deduct = active_loans_query.filter(models.Loan.id.in_(payload.deduct_loan_ids)).all()
+        found_ids = {loan.id for loan in loans_to_deduct}
+        missing = set(payload.deduct_loan_ids) - found_ids
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"These loan IDs are not this member's active loans: {missing}",
+            )
+
+    total_deducted = sum((loan.total_repayable - loan.amount_repaid) for loan in loans_to_deduct)
+    if total_deducted > net_disbursed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Selected loans total {total_deducted} outstanding, which exceeds this loan's "
+                f"net disbursed amount of {net_disbursed}. Deduct fewer loans, or handle the "
+                f"shortfall outside the system."
+            ),
+        )
 
     loan = models.Loan(
         member_id=application.member_id,
         loan_type_id=loan_type.id,
         principal=application.approved_amount,
         interest_amount=interest_amount,
-        net_disbursed=net_disbursed,
+        net_disbursed=net_disbursed - total_deducted,
         total_repayable=total_repayable,
         monthly_installment=monthly_installment,
         disbursement_date=disbursement_date,
         expected_end_date=expected_end_date,
+        disbursement_bank_name=disbursement_bank_name,
+        disbursement_account_name=disbursement_account_name,
         disbursement_account_number=disbursement_account_number,
         amount_repaid=0,
         status=models.LoanStatus.ACTIVE,
@@ -360,6 +424,14 @@ def disburse_application(
     )
     db.add(loan)
     db.flush()  # get loan.id without a full commit yet
+
+    for old_loan in loans_to_deduct:
+        old_loan.amount_repaid = old_loan.total_repayable
+        old_loan.status = models.LoanStatus.COMPLETED
+        old_loan.notes = (
+            (old_loan.notes + " " if old_loan.notes else "")
+            + f"Closed out via offset against new loan {loan.id} disbursed {disbursement_date}."
+        )
 
     application.resulting_loan_id = loan.id
 
@@ -374,14 +446,148 @@ def disburse_application(
             loan_type_name=loan_type.name,
             approved_amount=application.approved_amount,
             interest_amount=interest_amount,
-            net_disbursed=net_disbursed,
+            net_disbursed=net_disbursed - total_deducted,
             total_repayable=total_repayable,
             monthly_installment=monthly_installment,
             tenure_months=application.approved_tenure_months,
             disbursement_date=disbursement_date,
             expected_end_date=expected_end_date,
+            disbursement_bank_name=disbursement_bank_name,
+            disbursement_account_name=disbursement_account_name,
             disbursement_account_number=disbursement_account_number,
+            deducted_amount=total_deducted if total_deducted else None,
         ),
     )
 
     return _to_detail_schema(application)
+
+
+@router.post("/{application_id}/cancel", response_model=schemas.LoanApplicationOutWithDetails)
+def cancel_application(
+    application_id: uuid.UUID,
+    current_user: models.User = Depends(require_password_already_changed),
+    db: Session = Depends(get_db),
+):
+    """Member cancels their own application before it's disbursed. The
+    loan-form fee is NOT refunded -- cancelling is a deliberate choice
+    with that tradeoff; the frontend should warn about this and suggest
+    /reschedule instead if the member just wants a different date."""
+    if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
+        raise HTTPException(status_code=403, detail="Only members can cancel their own applications")
+
+    application = (
+        db.query(models.LoanApplication)
+        .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
+        .filter(models.LoanApplication.id == application_id)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.member_id != current_user.member_id:
+        raise HTTPException(status_code=403, detail="You can only cancel your own applications")
+
+    cancellable = application.status == models.LoanApplicationStatus.PENDING or (
+        application.status == models.LoanApplicationStatus.APPROVED and not application.resulting_loan_id
+    )
+    if not cancellable:
+        raise HTTPException(
+            status_code=400,
+            detail="This application can no longer be cancelled (already disbursed, rejected, or cancelled).",
+        )
+
+    application.status = models.LoanApplicationStatus.CANCELLED
+    application.cancelled_at = datetime.utcnow()
+    db.commit()
+    db.refresh(application)
+    return _to_detail_schema(application)
+
+
+@router.post("/{application_id}/reschedule", response_model=schemas.LoanApplicationOutWithDetails)
+def reschedule_application(
+    application_id: uuid.UUID,
+    payload: schemas.RescheduleRequest,
+    current_user: models.User = Depends(require_password_already_changed),
+    db: Session = Depends(get_db),
+):
+    """Member updates their preferred disbursement date WITHOUT
+    cancelling -- no fee impact at all, since the application itself
+    isn't ending. Same eligibility window as /cancel."""
+    if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
+        raise HTTPException(status_code=403, detail="Only members can reschedule their own applications")
+
+    application = (
+        db.query(models.LoanApplication)
+        .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
+        .filter(models.LoanApplication.id == application_id)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.member_id != current_user.member_id:
+        raise HTTPException(status_code=403, detail="You can only reschedule your own applications")
+
+    reschedulable = application.status == models.LoanApplicationStatus.PENDING or (
+        application.status == models.LoanApplicationStatus.APPROVED and not application.resulting_loan_id
+    )
+    if not reschedulable:
+        raise HTTPException(
+            status_code=400,
+            detail="This application can no longer be rescheduled (already disbursed, rejected, or cancelled).",
+        )
+
+    application.preferred_disbursement_date = payload.preferred_disbursement_date
+    db.commit()
+    db.refresh(application)
+    return _to_detail_schema(application)
+
+
+@router.post("/{application_id}/reapply", response_model=schemas.LoanApplicationOutWithDetails, status_code=201)
+def reapply(
+    application_id: uuid.UUID,
+    payload: schemas.ReapplyRequest,
+    current_user: models.User = Depends(require_password_already_changed),
+    db: Session = Depends(get_db),
+):
+    """Creates a brand new LoanApplication referencing a rejected one.
+    Always requires fresh payment proof -- the original payment was
+    already consumed by the application it was submitted with. Blocked
+    if the admin marked the original as can_reapply=False (genuine
+    non-qualification, not a fixable mistake)."""
+    if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
+        raise HTTPException(status_code=403, detail="Only members can reapply")
+
+    original = (
+        db.query(models.LoanApplication)
+        .filter(models.LoanApplication.id == application_id)
+        .first()
+    )
+    if not original:
+        raise HTTPException(status_code=404, detail="Original application not found")
+    if original.member_id != current_user.member_id:
+        raise HTTPException(status_code=403, detail="You can only reapply from your own applications")
+    if original.status != models.LoanApplicationStatus.REJECTED:
+        raise HTTPException(status_code=400, detail="Only rejected applications can be reapplied from")
+    if not original.can_reapply:
+        raise HTTPException(
+            status_code=403,
+            detail="This application isn't eligible for reapplication. Please contact the cooperative office.",
+        )
+
+    create_payload = schemas.LoanApplicationCreate(
+        loan_type_id=original.loan_type_id,
+        requested_amount=payload.requested_amount or original.requested_amount,
+        requested_tenure_months=payload.requested_tenure_months
+        if payload.requested_tenure_months is not None
+        else original.requested_tenure_months,
+        preferred_disbursement_date=payload.preferred_disbursement_date,
+        use_default_account=payload.use_default_account,
+        alternate_bank_name=payload.alternate_bank_name,
+        alternate_account_name=payload.alternate_account_name,
+        alternate_account_number=payload.alternate_account_number,
+        member_notes=payload.member_notes,
+        payment_reference=payload.payment_reference,
+        receipt_image_base64=payload.receipt_image_base64,
+        receipt_content_type=payload.receipt_content_type,
+        reapplied_from_id=original.id,
+    )
+    return submit_application(create_payload, current_user, db)

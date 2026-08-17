@@ -29,6 +29,7 @@ export default function AdminLoanApplicationsPage() {
   const [tenureDecisionReason, setTenureDecisionReason] = useState("");
   const [adminNotes, setAdminNotes] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
+  const [canReapply, setCanReapply] = useState(true);
 
   async function refresh() {
     setLoading(true);
@@ -59,6 +60,7 @@ export default function AdminLoanApplicationsPage() {
       setTenureDecisionReason("");
       setAdminNotes("");
       setRejectionReason("");
+      setCanReapply(true);
     } catch (e: any) {
       setError(e.message);
     }
@@ -86,7 +88,8 @@ export default function AdminLoanApplicationsPage() {
         approved ? parseFloat(approvedAmount) : undefined,
         approved ? parseInt(approvedTenureMonths) : undefined,
         tenureDecisionReason || undefined,
-        adminNotes || undefined
+        adminNotes || undefined,
+        canReapply
       );
       setExpanded(null);
       await refresh();
@@ -181,7 +184,7 @@ export default function AdminLoanApplicationsPage() {
             Account:{" "}
             {expanded.use_default_account
               ? "member's default account"
-              : `alternate — ${expanded.alternate_account_number}`}
+              : `alternate — ${expanded.alternate_bank_name}, ${expanded.alternate_account_name}, ${expanded.alternate_account_number}`}
           </p>
 
           {expanded.was_restricted_at_submission && (
@@ -249,6 +252,15 @@ export default function AdminLoanApplicationsPage() {
                 value={adminNotes}
                 onChange={(e) => setAdminNotes(e.target.value)}
               />
+              <label>
+                <input
+                  type="checkbox"
+                  checked={canReapply}
+                  onChange={(e) => setCanReapply(e.target.checked)}
+                />{" "}
+                Member may reapply if rejected (uncheck only for genuine non-qualification, e.g.
+                loan restriction — not for a fixable mistake like wrong amount)
+              </label>
               <div>
                 <button onClick={() => handleDecide(true)}>Approve loan</button>{" "}
                 <button onClick={() => handleDecide(false)}>Reject loan</button>

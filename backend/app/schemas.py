@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, date
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict
 
@@ -157,6 +157,8 @@ class LoanOut(BaseModel):
     monthly_installment: Decimal
     disbursement_date: date
     expected_end_date: date
+    disbursement_bank_name: Optional[str] = None
+    disbursement_account_name: Optional[str] = None
     disbursement_account_number: Optional[str] = None
     amount_repaid: Decimal
     status: LoanStatus
@@ -231,11 +233,14 @@ class LoanApplicationCreate(BaseModel):
     requested_tenure_months: Optional[int] = None  # must be <= the loan type's default tenure
     preferred_disbursement_date: Optional[date] = None  # preference only, not binding
     use_default_account: bool = True
+    alternate_bank_name: Optional[str] = None  # required if use_default_account=False
+    alternate_account_name: Optional[str] = None  # required if use_default_account=False
     alternate_account_number: Optional[str] = None  # required if use_default_account=False
     member_notes: Optional[str] = None
     payment_reference: str
     receipt_image_base64: str
     receipt_content_type: str
+    reapplied_from_id: Optional[uuid.UUID] = None  # set when submitted via the reapply flow
 
 
 class PaymentVerificationRequest(BaseModel):
@@ -249,6 +254,22 @@ class LoanDecisionRequest(BaseModel):
     approved_tenure_months: Optional[int] = None  # required by the router if approved=True
     tenure_decision_reason: Optional[str] = None  # explain if this differs from what was requested
     admin_notes: Optional[str] = None
+    can_reapply: bool = True  # only meaningful when approved=False; admin flips to False for non-qualification
+
+
+class RescheduleRequest(BaseModel):
+    preferred_disbursement_date: date
+
+
+class DisburseRequest(BaseModel):
+    """Optional balance-deduction selection at disbursement time (see
+    Round 2 design note): the admin either picks specific active loans
+    of this member to fully close out against the new disbursement, or
+    sets deduct_all_active=True to close out every active loan. Deducted
+    loans always close out completely -- no partial deduction. Leave
+    both empty/false for a normal disbursement with no offset."""
+    deduct_loan_ids: Optional[List[uuid.UUID]] = None
+    deduct_all_active: bool = False
 
 
 class LoanApplicationOut(BaseModel):
@@ -264,6 +285,8 @@ class LoanApplicationOut(BaseModel):
     tenure_decision_reason: Optional[str] = None
     preferred_disbursement_date: Optional[date] = None
     use_default_account: bool
+    alternate_bank_name: Optional[str] = None
+    alternate_account_name: Optional[str] = None
     alternate_account_number: Optional[str] = None
     status: LoanApplicationStatus
     member_notes: Optional[str] = None
@@ -278,6 +301,9 @@ class LoanApplicationOut(BaseModel):
     payment_rejection_reason: Optional[str] = None
     reviewed_at: Optional[datetime] = None
     resulting_loan_id: Optional[uuid.UUID] = None
+    cancelled_at: Optional[datetime] = None
+    can_reapply: bool
+    reapplied_from_id: Optional[uuid.UUID] = None
     created_at: datetime
     updated_at: datetime
 
@@ -293,6 +319,23 @@ class LoanApplicationOutWithReceipt(LoanApplicationOutWithDetails):
     views, so the (potentially large) base64 receipt isn't sent on every
     list load."""
     receipt_image_base64: str
+
+
+class ReapplyRequest(BaseModel):
+    """Submitted by a member to create a fresh application from a
+    rejected one. A brand new payment is always required -- reapplying
+    does not reuse the old (already-consumed) payment proof."""
+    requested_amount: Optional[Decimal] = None  # defaults to the original's amount if omitted
+    requested_tenure_months: Optional[int] = None
+    preferred_disbursement_date: Optional[date] = None
+    use_default_account: bool = True
+    alternate_bank_name: Optional[str] = None
+    alternate_account_name: Optional[str] = None
+    alternate_account_number: Optional[str] = None
+    member_notes: Optional[str] = None
+    payment_reference: str
+    receipt_image_base64: str
+    receipt_content_type: str
 
 
 # ---------------------------------------------------------------------------

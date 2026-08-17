@@ -220,6 +220,61 @@ pinned together or re-verify compatibility first.
 - Members can only see/act on their own records (`/api/members/me`,
   their own loans, their own applications); admins see everything.
 
+## Round 1 (flagged items batch) — small, isolated fixes
+
+- Members search box now refreshes correctly when cleared (fixed a
+  React-closure bug where the fix itself could have reintroduced the
+  same class of bug — `refresh()` now takes an explicit search override).
+- Loan types have a `description` field.
+- Member's dashboard application form shows a live "estimated terms"
+  calculator as they fill it in.
+- Rejected applications show the specific rejection reason directly on
+  the member's dashboard.
+
+### Migration: `scripts/manual_migration_2026_08_round1_description.sql`
+
+## Round 2 (flagged items batch) — schema/logic changes
+
+- **Balance deduction at disbursement** — when disbursing a loan to a
+  member with existing active loan(s), an admin can select specific
+  loans (or "deduct all") to fully close out against the new
+  disbursement. Deduction is always full payoff, never partial —
+  selected loans get `amount_repaid = total_repayable` and flip to
+  `COMPLETED`. The new loan's own principal/interest/repayment schedule
+  are unaffected; only `net_disbursed` (the actual payout) shrinks by
+  the deducted total. If the deduction would exceed `net_disbursed`, the
+  disbursement is rejected with a clear error rather than going negative.
+- **Structured alternate account** — `alternate_account_number` (single
+  field) became `alternate_bank_name` / `alternate_account_name` /
+  `alternate_account_number` on applications, and the equivalent
+  `disbursement_*` trio on `Loan` (snapshotted at actual disbursement).
+- **Dedicated disbursement list** — `/admin/disbursements`: a real
+  filterable (loan type, approval date range) list of every approved,
+  undisbursed loan, with the balance-deduction picker built into the
+  disburse action. The original one-at-a-time disburse button inside
+  `/admin/loan-applications`'s review panel still works too (no
+  deduction UI there — use the dedicated page when deduction matters).
+- **Cancel / reschedule** — a member can cancel (forfeits the loan-form
+  fee, no refund) or reschedule (just updates the preferred date, no fee
+  impact) any application that hasn't been disbursed yet — i.e. still
+  `PENDING`, or `APPROVED` but not yet disbursed. New `CANCELLED` status
+  value.
+- **Reapply** — when an admin rejects a loan *decision* (not a payment
+  rejection — those can't be reapplied without a fresh application
+  regardless), they set `can_reapply` (defaults to `True`, so it's a
+  single checkbox to *uncheck* only for genuine non-qualification cases,
+  not extra friction for the common fixable-mistake case). A member can
+  then submit a fresh application referencing the rejected one, with a
+  brand-new payment (the old one was already consumed).
+
+### Migration: `scripts/manual_migration_2026_08_round2.sql`
+
+This one includes a `DO $$ ... ALTER TYPE ... ADD VALUE 'cancelled' $$`
+block to add the new enum value to Postgres — the migration comments
+explain how to verify the enum type's actual name if it doesn't match
+`loanapplicationstatus` (SQLAlchemy's default naming convention, used
+here since no explicit `name=` was set on that column).
+
 ## Next steps
 
 - **Enforce the module enable/disable toggles** — `Settings` stores them,
@@ -231,6 +286,10 @@ pinned together or re-verify compatibility first.
   aggregated into income/expenditure and assets/liabilities views.
 - **Dividends** — reserve %, honorarium %, member payout % applied to net
   income, per the `CashBook` sheet's W3:W5 percentages.
+- **Deferred from the flagged-items list** (bigger, self-contained units):
+  batch Excel upload/download, member self-service profile (photo,
+  password) with restricted-field editing, member detail panel with
+  revoke-login.
 - **UI polish pass** — deferred by design until all modules exist (see
   conversation history); current pages are functional but not styled for
   mobile.

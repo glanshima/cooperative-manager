@@ -285,6 +285,8 @@ export interface Loan {
   monthly_installment: string;
   disbursement_date: string;
   expected_end_date: string;
+  disbursement_bank_name?: string | null;
+  disbursement_account_name?: string | null;
   disbursement_account_number?: string | null;
   amount_repaid: string;
   status: LoanStatus;
@@ -328,7 +330,7 @@ export async function deleteLoan(id: string): Promise<void> {
 // Loan Applications
 // ---------------------------------------------------------------------------
 
-export type LoanApplicationStatus = "pending" | "approved" | "rejected";
+export type LoanApplicationStatus = "pending" | "approved" | "rejected" | "cancelled";
 export type PaymentVerificationStatus = "awaiting_verification" | "verified" | "rejected";
 
 export interface LoanApplication {
@@ -342,6 +344,8 @@ export interface LoanApplication {
   tenure_decision_reason?: string | null;
   preferred_disbursement_date?: string | null;
   use_default_account: boolean;
+  alternate_bank_name?: string | null;
+  alternate_account_name?: string | null;
   alternate_account_number?: string | null;
   status: LoanApplicationStatus;
   member_notes?: string | null;
@@ -356,6 +360,9 @@ export interface LoanApplication {
   payment_rejection_reason?: string | null;
   reviewed_at?: string | null;
   resulting_loan_id?: string | null;
+  cancelled_at?: string | null;
+  can_reapply: boolean;
+  reapplied_from_id?: string | null;
   member_name: string;
   member_psn: string;
   loan_type_name: string;
@@ -373,6 +380,22 @@ export interface LoanApplicationInput {
   requested_tenure_months?: number;
   preferred_disbursement_date?: string; // ISO date, preference only
   use_default_account: boolean;
+  alternate_bank_name?: string;
+  alternate_account_name?: string;
+  alternate_account_number?: string;
+  member_notes?: string;
+  payment_reference: string;
+  receipt_image_base64: string;
+  receipt_content_type: string;
+}
+
+export interface ReapplyInput {
+  requested_amount?: number;
+  requested_tenure_months?: number;
+  preferred_disbursement_date?: string;
+  use_default_account: boolean;
+  alternate_bank_name?: string;
+  alternate_account_name?: string;
   alternate_account_number?: string;
   member_notes?: string;
   payment_reference: string;
@@ -383,8 +406,17 @@ export interface LoanApplicationInput {
 export async function listLoanApplications(params?: {
   status?: LoanApplicationStatus;
   payment_status?: PaymentVerificationStatus;
+  undisbursed_only?: boolean;
+  loan_type_id?: string;
 }): Promise<LoanApplication[]> {
-  return apiFetch<LoanApplication[]>("/api/loan-applications", { searchParams: params });
+  return apiFetch<LoanApplication[]>("/api/loan-applications", {
+    searchParams: {
+      status: params?.status,
+      payment_status: params?.payment_status,
+      undisbursed_only: params?.undisbursed_only ? "true" : undefined,
+      loan_type_id: params?.loan_type_id,
+    },
+  });
 }
 
 export async function getLoanApplication(id: string): Promise<LoanApplicationWithReceipt> {
@@ -412,7 +444,8 @@ export async function decideApplication(
   approvedAmount?: number,
   approvedTenureMonths?: number,
   tenureDecisionReason?: string,
-  adminNotes?: string
+  adminNotes?: string,
+  canReapply: boolean = true
 ): Promise<LoanApplication> {
   return apiFetch<LoanApplication>(`/api/loan-applications/${id}/decide`, {
     method: "POST",
@@ -422,13 +455,43 @@ export async function decideApplication(
       approved_tenure_months: approvedTenureMonths,
       tenure_decision_reason: tenureDecisionReason,
       admin_notes: adminNotes,
+      can_reapply: canReapply,
     },
   });
 }
 
-export async function disburseApplication(id: string): Promise<LoanApplication> {
+export async function disburseApplication(
+  id: string,
+  deductLoanIds?: string[],
+  deductAllActive?: boolean
+): Promise<LoanApplication> {
   return apiFetch<LoanApplication>(`/api/loan-applications/${id}/disburse`, {
     method: "POST",
+    body: { deduct_loan_ids: deductLoanIds, deduct_all_active: deductAllActive || false },
+  });
+}
+
+export async function cancelApplication(id: string): Promise<LoanApplication> {
+  return apiFetch<LoanApplication>(`/api/loan-applications/${id}/cancel`, { method: "POST" });
+}
+
+export async function rescheduleApplication(
+  id: string,
+  preferredDisbursementDate: string
+): Promise<LoanApplication> {
+  return apiFetch<LoanApplication>(`/api/loan-applications/${id}/reschedule`, {
+    method: "POST",
+    body: { preferred_disbursement_date: preferredDisbursementDate },
+  });
+}
+
+export async function reapplyLoanApplication(
+  id: string,
+  input: ReapplyInput
+): Promise<LoanApplication> {
+  return apiFetch<LoanApplication>(`/api/loan-applications/${id}/reapply`, {
+    method: "POST",
+    body: input,
   });
 }
 
