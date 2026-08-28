@@ -13,11 +13,21 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Text,
+    UniqueConstraint,
+    Index,
+    CheckConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON as GenericJSON
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from .database import Base
+
+# Portable JSON column type: uses native JSONB on Postgres (production /
+# Neon), falls back to generic JSON elsewhere (e.g. SQLite in tests) so
+# the test suite doesn't require a real Postgres instance just to
+# exercise audit/idempotency logic.
+JSONType = GenericJSON().with_variant(JSONB, "postgresql")
 
 
 class MemberStatus(str, enum.Enum):
@@ -116,6 +126,11 @@ class LoanType(Base):
     """
 
     __tablename__ = "loan_types"
+    __table_args__ = (
+        CheckConstraint("interest_rate >= 0", name="ck_loan_types_interest_rate_nonnegative"),
+        CheckConstraint("tenure_months > 0", name="ck_loan_types_tenure_months_positive"),
+        CheckConstraint("flat_charge >= 0", name="ck_loan_types_flat_charge_nonnegative"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -162,6 +177,15 @@ class LoanTypeRateVersion(Base):
     """
 
     __tablename__ = "loan_type_rate_versions"
+    __table_args__ = (
+        CheckConstraint(
+            "interest_rate >= 0", name="ck_loan_type_rate_versions_interest_rate_nonnegative"
+        ),
+        CheckConstraint(
+            "tenure_months > 0", name="ck_loan_type_rate_versions_tenure_months_positive"
+        ),
+        CheckConstraint("flat_charge >= 0", name="ck_loan_type_rate_versions_flat_charge_nonnegative"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -202,6 +226,14 @@ class Loan(Base):
     """
 
     __tablename__ = "loans"
+    __table_args__ = (
+        CheckConstraint("principal > 0", name="ck_loans_principal_positive"),
+        CheckConstraint("interest_amount >= 0", name="ck_loans_interest_amount_nonnegative"),
+        CheckConstraint("net_disbursed >= 0", name="ck_loans_net_disbursed_nonnegative"),
+        CheckConstraint("total_repayable > 0", name="ck_loans_total_repayable_positive"),
+        CheckConstraint("monthly_installment > 0", name="ck_loans_monthly_installment_positive"),
+        CheckConstraint("amount_repaid >= 0", name="ck_loans_amount_repaid_nonnegative"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -257,6 +289,33 @@ class UserRole(str, enum.Enum):
     MEMBER = "member"
 
 
+class AccountStatus(str, enum.Enum):
+    """
+    Explicit account lifecycle state (Phase 1, Section 7). Distinct from
+    the legacy `is_active` boolean, which is retained for backward
+    compatibility with existing code paths that already read it -- the
+    two are kept in sync by the account-lifecycle service functions in
+    `account_lifecycle.py` rather than by ad hoc assignment.
+
+    PENDING      -- account created but not yet activated (e.g. a member
+                    login that has never completed its forced first
+                    password reset can be modeled as pending in a later
+                    phase; currently new logins go straight to ACTIVE
+                    with must_change_password=True).
+    ACTIVE       -- normal login/API/financial access, subject to
+                    permission checks.
+    SUSPENDED    -- temporarily blocked (e.g. under investigation);
+                    reversible by an authorized admin.
+    DEACTIVATED  -- permanently disabled; a deactivated administrator
+                    must immediately lose administrative authority.
+    """
+
+    PENDING = "pending"
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    DEACTIVATED = "deactivated"
+
+
 class User(Base):
     """
     Login credentials, separate from Member/business data. Members log in
@@ -266,6 +325,9 @@ class User(Base):
     """
 
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("failed_login_count >= 0", name="ck_users_failed_login_count_nonnegative"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -288,12 +350,286 @@ class User(Base):
 
     must_change_password = Column(Boolean, nullable=False, default=True)
 
+    # Legacy coarse flag -- kept because existing code (get_current_user,
+    # email/report views, etc.) already reads it. Authoritative state now
+    # lives in account_status; is_active is kept mirrored to
+    # (account_status == ACTIVE) by account_lifecycle.py so nothing that
+    # reads the old column silently goes stale.
     is_active = Column(Boolean, nullable=False, default=True)
+
+    account_status = Column(
+        Enum(AccountStatus, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=AccountStatus.ACTIVE,
+    )
+    status_reason = Column(String, nullable=True)
+    status_changed_at = Column(DateTime, nullable=True)
+    status_changed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    # Super Admin: controlled configuration authority (Blueprint Section
+    # 13). Bypasses the granular Office/Role/Permission checks below, but
+    # every action a super admin takes is still authenticated,
+    # authorized-by-flag, and audited like anything else -- this is NOT
+    # an is_admin=true shortcut for ordinary staff, it is reserved for
+    # the small number of accounts that genuinely need full
+    # configuration authority (see migration notes / Change-Control C-1).
+    is_super_admin = Column(Boolean, nullable=False, default=False)
+
+    # --- Brute-force / account lockout tracking (Section 6) ---
+    failed_login_count = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    last_failed_login_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     member = relationship("Member", back_populates="user")
+    role_assignments = relationship(
+        "UserRoleAssignment",
+        back_populates="user",
+        foreign_keys="UserRoleAssignment.user_id",
+        cascade="all, delete-orphan",
+    )
+    sessions = relationship(
+        "AuthSession",
+        back_populates="user",
+        foreign_keys="AuthSession.user_id",
+        cascade="all, delete-orphan",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Office / Role / Permission (Phase 1, Sections 8-9)
+#
+# User -> Office/Position -> Role -> Permissions.
+#
+# Office and Role are DB-configured (not hard-coded), so a cooperative can
+# add offices/roles without a source-code change. Permission is an atomic
+# capability; the catalogue of *known* permission codes is defined in
+# permissions_catalogue.py and seeded into this table by
+# scripts/seed_permissions.py, but the table itself -- and which
+# permissions a given Role grants -- is ordinary configuration data.
+# ---------------------------------------------------------------------------
+
+
+class Office(Base):
+    """A cooperative-defined office/position (President, Treasurer, ...).
+    Purely an identity/title grouping for accountability and reporting;
+    authorization itself flows through Role -> Permission, not Office
+    directly, since two different offices might legitimately share a
+    role's permission set."""
+
+    __tablename__ = "offices"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, unique=True, nullable=False, index=True)
+    description = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Permission(Base):
+    """An atomic capability, e.g. 'loan.approve'. Rows are seeded from the
+    approved Phase 1 permission catalogue (permissions_catalogue.py);
+    new codes require a code change + reseed, but which roles hold a
+    given permission is ordinary configuration."""
+
+    __tablename__ = "permissions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String, unique=True, nullable=False, index=True)
+    category = Column(String, nullable=False)
+    description = Column(String, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Role(Base):
+    """A reusable, cooperative-configurable bundle of permissions."""
+
+    __tablename__ = "roles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, unique=True, nullable=False, index=True)
+    description = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    permissions = relationship(
+        "RolePermission", back_populates="role", cascade="all, delete-orphan"
+    )
+
+
+class RolePermission(Base):
+    """Many-to-many Role <-> Permission grant."""
+
+    __tablename__ = "role_permissions"
+    __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    permission_id = Column(
+        UUID(as_uuid=True), ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False
+    )
+
+    role = relationship("Role", back_populates="permissions")
+    permission = relationship("Permission")
+
+
+class UserRoleAssignment(Base):
+    """
+    Grants a staff/admin User a Role, optionally attached to an Office
+    they hold that role under. A user may hold more than one active
+    assignment (e.g. Treasurer + a Loan Officer role). Historical
+    assignments are never deleted on revocation -- revoked_at is set
+    instead -- so a past action's audit event can still be traced back
+    to "what office/role did this actor hold at the time" (Blueprint
+    Section 13: "Historical actions must retain the actor's identity and
+    office at the time of action"); the AuditEvent itself also snapshots
+    actor_office_name/actor_role_name at write time for this reason,
+    since a later revocation must not rewrite history.
+    """
+
+    __tablename__ = "user_role_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=False)
+    office_id = Column(UUID(as_uuid=True), ForeignKey("offices.id"), nullable=True)
+
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    assigned_at = Column(DateTime, default=datetime.utcnow)
+    assigned_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    user = relationship("User", back_populates="role_assignments", foreign_keys=[user_id])
+    role = relationship("Role")
+    office = relationship("Office")
+
+
+# ---------------------------------------------------------------------------
+# Auth sessions (Section 6-7: session/token lifecycle, credential
+# revocation, immediate loss of authority on deactivation)
+# ---------------------------------------------------------------------------
+
+
+class AuthSession(Base):
+    """
+    One row per issued access token (identified by its JWT `jti` claim).
+    Access tokens remain short-lived JWTs (unchanged), but tracking the
+    session server-side lets us support real logout and immediate
+    revocation (e.g. an admin force-logs-out a deactivated account)
+    instead of just waiting for natural JWT expiry. get_current_user
+    checks that the session referenced by the token's jti is still
+    un-revoked and unexpired, in addition to decoding the JWT itself.
+    """
+
+    __tablename__ = "auth_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    jti = Column(String, unique=True, nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    issued_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_reason = Column(String, nullable=True)
+
+    user = relationship("User", back_populates="sessions", foreign_keys=[user_id])
+
+
+# ---------------------------------------------------------------------------
+# Audit trail (Section 13-14)
+# ---------------------------------------------------------------------------
+
+
+class AuditEvent(Base):
+    """
+    Immutable audit-event log. Rows are append-only: there is
+    deliberately no update/delete path exposed anywhere in the
+    application code (see audit_service.py) -- protecting that
+    invariant at the database-role/permission level as well is a
+    deployment-hardening step for Phase 10, not a Phase 1 code change.
+
+    previous_values/new_values are JSONB snapshots of only the fields
+    that changed (not full-row dumps), with passwords/secrets always
+    excluded -- see audit_service.redact().
+    """
+
+    __tablename__ = "audit_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    # Snapshot of the actor's display context at the time of the action,
+    # so a later office/role change or revocation can't rewrite history.
+    actor_username = Column(String, nullable=True)
+    actor_office_name = Column(String, nullable=True)
+    actor_role_names = Column(String, nullable=True)  # comma-joined, denormalized snapshot
+
+    event_type = Column(String, nullable=False, index=True)  # e.g. "auth.login_failed"
+    entity_type = Column(String, nullable=True, index=True)  # e.g. "loan_application"
+    entity_id = Column(String, nullable=True, index=True)
+    action = Column(String, nullable=False)  # e.g. "create", "update", "approve", "reject"
+
+    previous_values = Column(JSONType, nullable=True)
+    new_values = Column(JSONType, nullable=True)
+    reason = Column(String, nullable=True)
+
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    request_reference = Column(String, nullable=True)  # correlates to a request id if present
+
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+Index("ix_audit_events_entity", AuditEvent.entity_type, AuditEvent.entity_id)
+
+
+# ---------------------------------------------------------------------------
+# Idempotency foundation (Section 17)
+# ---------------------------------------------------------------------------
+
+
+class IdempotencyRecord(Base):
+    """
+    Generic idempotency store. A state-changing endpoint decorated with
+    `idempotent()` (see idempotency.py) hashes the request body and
+    looks up (user_id, endpoint, idempotency_key). If a completed record
+    exists with a matching request hash, the cached response is
+    replayed instead of re-running the operation; a mismatched request
+    hash under the same key is rejected (409) rather than silently
+    executed, since that indicates client-side key reuse across a
+    different request. `endpoint` plus `idempotency_key` are unique per
+    user so keys can't collide across unrelated operations or users.
+    """
+
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint("user_id", "endpoint", "idempotency_key", name="uq_idempotency_scope"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    endpoint = Column(String, nullable=False)
+    idempotency_key = Column(String, nullable=False)
+    request_hash = Column(String, nullable=False)
+
+    status_code = Column(Integer, nullable=True)
+    response_body = Column(JSONType, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +673,14 @@ class LoanApplication(Base):
     """
 
     __tablename__ = "loan_applications"
+    __table_args__ = (
+        CheckConstraint("requested_amount > 0", name="ck_loan_applications_requested_amount_positive"),
+        CheckConstraint(
+            "approved_amount IS NULL OR approved_amount > 0",
+            name="ck_loan_applications_approved_amount_positive",
+        ),
+        CheckConstraint("form_fee_amount >= 0", name="ck_loan_applications_form_fee_nonnegative"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -456,6 +800,9 @@ class LoanRepayment(Base):
     """
 
     __tablename__ = "loan_repayments"
+    __table_args__ = (
+        CheckConstraint("amount_claimed > 0", name="ck_loan_repayments_amount_claimed_positive"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -500,6 +847,9 @@ class Settings(Base):
     """
 
     __tablename__ = "settings"
+    __table_args__ = (
+        CheckConstraint("loan_form_fee >= 0", name="ck_settings_loan_form_fee_nonnegative"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 

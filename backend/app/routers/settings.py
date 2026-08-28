@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import models, schemas, audit_service
 from ..database import get_db
-from ..deps import get_current_user, require_admin
+from ..deps import get_current_user, require_permission
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -32,12 +32,27 @@ def get_settings(
 @router.put("", response_model=schemas.SettingsOut)
 def update_settings(
     payload: schemas.SettingsUpdate,
-    current_user: models.User = Depends(require_admin),
+    request: Request,
+    current_user: models.User = Depends(require_permission("admin.settings_manage")),
     db: Session = Depends(get_db),
 ):
     settings = _get_or_create_settings(db)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    previous = {field: getattr(settings, field) for field in changes}
+    for field, value in changes.items():
         setattr(settings, field, value)
     db.commit()
     db.refresh(settings)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="settings.updated",
+        action="update",
+        entity_type="settings",
+        entity_id=str(settings.id) if hasattr(settings, "id") else "settings",
+        previous_values=previous,
+        new_values=changes,
+        request=request,
+    )
     return settings

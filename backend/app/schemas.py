@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from .models import (
     MemberStatus,
@@ -14,7 +14,9 @@ from .models import (
     PaymentVerificationStatus,
     LoanRestrictionBehavior,
     RepaymentVerificationStatus,
+    AccountStatus,
 )
+from . import validation
 
 
 class MemberBase(BaseModel):
@@ -34,6 +36,12 @@ class MemberBase(BaseModel):
     status: MemberStatus = MemberStatus.FINANCIAL
     loan_restricted: bool = False
     restriction_reason: Optional[str] = None
+
+    _validate_psn = field_validator("psn")(validation.validate_psn)
+    _validate_email = field_validator("email")(validation.validate_email_format)
+    _validate_noke = field_validator("next_of_kin_email")(validation.validate_email_format)
+    _validate_phone = field_validator("phone")(validation.validate_phone_format)
+    _validate_nokp = field_validator("next_of_kin_phone")(validation.validate_phone_format)
 
 
 class MemberCreate(MemberBase):
@@ -56,6 +64,11 @@ class MemberUpdate(BaseModel):
     status: Optional[MemberStatus] = None
     loan_restricted: Optional[bool] = None
     restriction_reason: Optional[str] = None
+
+    _validate_email = field_validator("email")(validation.validate_email_format)
+    _validate_noke = field_validator("next_of_kin_email")(validation.validate_email_format)
+    _validate_phone = field_validator("phone")(validation.validate_phone_format)
+    _validate_nokp = field_validator("next_of_kin_phone")(validation.validate_phone_format)
 
 
 class MemberOut(MemberBase):
@@ -136,6 +149,8 @@ class LoanCreate(BaseModel):
     principal: Decimal
     disbursement_date: date
     notes: Optional[str] = None
+
+    _validate_principal = field_validator("principal")(validation.validate_positive_amount)
 
 
 class LoanUpdate(BaseModel):
@@ -218,7 +233,123 @@ class UserOut(BaseModel):
     member_id: Optional[uuid.UUID] = None
     must_change_password: bool
     is_active: bool
+    account_status: AccountStatus
+    is_super_admin: bool
+    last_login_at: Optional[datetime] = None
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Office / Role / Permission / Audit (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+class OfficeBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class OfficeCreate(OfficeBase):
+    pass
+
+
+class OfficeUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class OfficeOut(OfficeBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    created_at: datetime
+
+
+class PermissionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    code: str
+    category: str
+    description: str
+
+
+class RoleBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class RoleCreate(RoleBase):
+    permission_codes: List[str] = []
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    permission_codes: Optional[List[str]] = None
+
+
+class RoleOut(RoleBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    created_at: datetime
+    permission_codes: List[str] = []
+
+
+class UserRoleAssignmentCreate(BaseModel):
+    user_id: uuid.UUID
+    role_id: uuid.UUID
+    office_id: Optional[uuid.UUID] = None
+
+
+class UserRoleAssignmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    user_id: uuid.UUID
+    role_id: uuid.UUID
+    role_name: str
+    office_id: Optional[uuid.UUID] = None
+    office_name: Optional[str] = None
+    is_active: bool
+    assigned_at: datetime
+    revoked_at: Optional[datetime] = None
+
+
+class AdminUserCreate(BaseModel):
+    """Creates a new staff/admin User account (distinct from
+    create-member-login, which provisions a login for an existing
+    Member). New admin accounts start with is_super_admin=False and no
+    role assignments -- an authorized admin.role_manage holder must
+    grant a role for the account to be able to do anything."""
+    username: str
+    password: str
+    account_status: AccountStatus = AccountStatus.ACTIVE
+
+
+class AdminUserStatusUpdate(BaseModel):
+    account_status: AccountStatus
+    reason: Optional[str] = None
+
+
+class AuditEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    actor_user_id: Optional[uuid.UUID] = None
+    actor_username: Optional[str] = None
+    actor_office_name: Optional[str] = None
+    actor_role_names: Optional[str] = None
+    event_type: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    action: str
+    previous_values: Optional[dict] = None
+    new_values: Optional[dict] = None
+    reason: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    timestamp: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +372,10 @@ class LoanApplicationCreate(BaseModel):
     receipt_image_base64: str
     receipt_content_type: str
     reapplied_from_id: Optional[uuid.UUID] = None  # set when submitted via the reapply flow
+
+    _validate_amount = field_validator("requested_amount")(validation.validate_positive_amount)
+    _validate_receipt_type = field_validator("receipt_content_type")(validation.validate_receipt_content_type)
+    _validate_receipt_b64 = field_validator("receipt_image_base64")(validation.validate_receipt_base64)
 
 
 class PaymentVerificationRequest(BaseModel):
@@ -337,6 +472,10 @@ class ReapplyRequest(BaseModel):
     receipt_image_base64: str
     receipt_content_type: str
 
+    _validate_amount = field_validator("requested_amount")(validation.validate_positive_amount_optional)
+    _validate_receipt_type = field_validator("receipt_content_type")(validation.validate_receipt_content_type)
+    _validate_receipt_b64 = field_validator("receipt_image_base64")(validation.validate_receipt_base64)
+
 
 # ---------------------------------------------------------------------------
 # Loan Repayments
@@ -347,6 +486,10 @@ class LoanRepaymentCreate(BaseModel):
     payment_reference: str
     receipt_image_base64: str
     receipt_content_type: str
+
+    _validate_amount = field_validator("amount_claimed")(validation.validate_positive_amount)
+    _validate_receipt_type = field_validator("receipt_content_type")(validation.validate_receipt_content_type)
+    _validate_receipt_b64 = field_validator("receipt_image_base64")(validation.validate_receipt_base64)
 
 
 class RepaymentVerificationRequest(BaseModel):

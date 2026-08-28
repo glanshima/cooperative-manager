@@ -2,19 +2,22 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas
+from .. import models, schemas, audit_service
 from ..database import get_db
-from ..deps import get_current_user, require_admin, require_password_already_changed
+from ..deps import get_current_user, require_admin, require_password_already_changed, require_permission, user_has_permission
 from ..email_utils import send_email, repayment_verified_email_html, repayment_rejected_email_html
+from ..idempotency import IdempotencyContext, idempotency_check
 
 router = APIRouter(tags=["loan-repayments"])
 
 
-def _assert_can_view_loan(loan: models.Loan, current_user: models.User):
+def _assert_can_view_loan(loan: models.Loan, current_user: models.User, db: Session):
     if current_user.role == models.UserRole.ADMIN:
+        if not user_has_permission(db, current_user, "repayment.view"):
+            raise HTTPException(status_code=403, detail="You do not have the 'repayment.view' permission")
         return
     if current_user.member_id != loan.member_id:
         raise HTTPException(status_code=403, detail="You can only act on your own loans")
@@ -71,7 +74,7 @@ def list_repayments_for_loan(
     loan = db.query(models.Loan).filter(models.Loan.id == loan_id).first()
     if not loan:
         raise HTTPException(status_code=404, detail="Loan not found")
-    _assert_can_view_loan(loan, current_user)
+    _assert_can_view_loan(loan, current_user, db)
 
     return (
         db.query(models.LoanRepayment)
@@ -87,7 +90,7 @@ def list_repayments_for_loan(
 )
 def list_all_repayments(
     status: Optional[models.RepaymentVerificationStatus] = None,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_permission("repayment.view")),
     db: Session = Depends(get_db),
 ):
     """Admin-only: cross-loan queue of repayments awaiting verification."""
@@ -109,8 +112,11 @@ def get_repayment(
     repayment = db.query(models.LoanRepayment).filter(models.LoanRepayment.id == repayment_id).first()
     if not repayment:
         raise HTTPException(status_code=404, detail="Repayment not found")
-    if current_user.role == models.UserRole.MEMBER and repayment.member_id != current_user.member_id:
-        raise HTTPException(status_code=403, detail="You can only view your own repayments")
+    if current_user.role == models.UserRole.MEMBER:
+        if repayment.member_id != current_user.member_id:
+            raise HTTPException(status_code=403, detail="You can only view your own repayments")
+    elif not user_has_permission(db, current_user, "repayment.view"):
+        raise HTTPException(status_code=403, detail="You do not have the 'repayment.view' permission")
     return repayment
 
 
@@ -121,19 +127,33 @@ def get_repayment(
 def verify_repayment(
     repayment_id: uuid.UUID,
     payload: schemas.RepaymentVerificationRequest,
-    current_user: models.User = Depends(require_admin),
+    request: Request,
+    current_user: models.User = Depends(require_permission("repayment.verify")),
     db: Session = Depends(get_db),
+    idem: IdempotencyContext = Depends(idempotency_check),
 ):
+    if idem.cached_response is not None:
+        return idem.cached_response
+
+    # Row lock (Section 18): the classic "two admins verify the same
+    # repayment at once" race this spec calls out explicitly. Locking
+    # the repayment row (and the loan row it will update) means the
+    # second concurrent request blocks until the first commits, then
+    # sees status != AWAITING_VERIFICATION and 400s cleanly instead of
+    # double-crediting the loan.
     repayment = (
         db.query(models.LoanRepayment)
         .options(joinedload(models.LoanRepayment.loan).joinedload(models.Loan.member))
         .filter(models.LoanRepayment.id == repayment_id)
+        .with_for_update()
         .first()
     )
     if not repayment:
         raise HTTPException(status_code=404, detail="Repayment not found")
     if repayment.status != models.RepaymentVerificationStatus.AWAITING_VERIFICATION:
         raise HTTPException(status_code=400, detail="This repayment has already been reviewed")
+
+    db.query(models.Loan).filter(models.Loan.id == repayment.loan_id).with_for_update().first()
 
     repayment.verified_by_user_id = current_user.id
     repayment.verified_at = datetime.utcnow()
@@ -148,6 +168,17 @@ def verify_repayment(
 
         db.commit()
         db.refresh(repayment)
+
+        audit_service.log_event(
+            db,
+            actor=current_user,
+            event_type="repayment.verified",
+            action="approve",
+            entity_type="loan_repayment",
+            entity_id=str(repayment.id),
+            new_values={"amount_claimed": str(repayment.amount_claimed), "loan_id": str(loan.id)},
+            request=request,
+        )
 
         send_email(
             to=loan.member.email,
@@ -168,6 +199,17 @@ def verify_repayment(
         db.commit()
         db.refresh(repayment)
 
+        audit_service.log_event(
+            db,
+            actor=current_user,
+            event_type="repayment.rejected",
+            action="reject",
+            entity_type="loan_repayment",
+            entity_id=str(repayment.id),
+            reason=payload.rejection_reason,
+            request=request,
+        )
+
         send_email(
             to=repayment.loan.member.email,
             subject="Your repayment could not be verified",
@@ -178,4 +220,6 @@ def verify_repayment(
             ),
         )
 
+    result = schemas.LoanRepaymentOut.model_validate(repayment)
+    idem.store(result.model_dump(mode="json"))
     return repayment

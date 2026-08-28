@@ -2,12 +2,19 @@ import uuid
 from datetime import date, datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas
+from .. import models, schemas, audit_service
 from ..database import get_db
-from ..deps import get_current_user, require_admin, require_password_already_changed
+from ..deps import (
+    get_current_user,
+    require_admin,
+    require_password_already_changed,
+    require_permission,
+    user_has_permission,
+)
+from ..idempotency import IdempotencyContext, idempotency_check
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
 from ..email_utils import (
     send_email,
@@ -39,8 +46,10 @@ def _to_receipt_schema(app: models.LoanApplication) -> schemas.LoanApplicationOu
     )
 
 
-def _assert_can_view(app: models.LoanApplication, current_user: models.User):
+def _assert_can_view(app: models.LoanApplication, current_user: models.User, db: Session):
     if current_user.role == models.UserRole.ADMIN:
+        if not user_has_permission(db, current_user, "loan.view"):
+            raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
         return
     if current_user.member_id != app.member_id:
         raise HTTPException(status_code=403, detail="You can only view your own applications")
@@ -156,6 +165,8 @@ def list_applications(
 
     if current_user.role == models.UserRole.MEMBER:
         query = query.filter(models.LoanApplication.member_id == current_user.member_id)
+    elif not user_has_permission(db, current_user, "loan.view"):
+        raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
 
     if status:
         query = query.filter(models.LoanApplication.status == status)
@@ -190,7 +201,7 @@ def get_application(
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    _assert_can_view(application, current_user)
+    _assert_can_view(application, current_user, db)
     return _to_receipt_schema(application)
 
 
@@ -198,13 +209,19 @@ def get_application(
 def verify_payment(
     application_id: uuid.UUID,
     payload: schemas.PaymentVerificationRequest,
-    current_user: models.User = Depends(require_admin),
+    request: Request,
+    current_user: models.User = Depends(require_permission("loan.review")),
     db: Session = Depends(get_db),
 ):
+    # Row lock (Section 18: concurrency foundation) -- prevents two admins
+    # racing to verify/reject the same payment simultaneously, which
+    # would otherwise both pass the AWAITING_VERIFICATION check before
+    # either commits.
     application = (
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
         .filter(models.LoanApplication.id == application_id)
+        .with_for_update()
         .first()
     )
     if not application:
@@ -213,6 +230,7 @@ def verify_payment(
     if application.payment_status != models.PaymentVerificationStatus.AWAITING_VERIFICATION:
         raise HTTPException(status_code=400, detail="This payment has already been reviewed")
 
+    previous_payment_status = application.payment_status.value
     application.payment_verified_by_user_id = current_user.id
     application.payment_verified_at = datetime.utcnow()
 
@@ -239,13 +257,28 @@ def verify_payment(
 
     db.commit()
     db.refresh(application)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="loan_application.payment_verified" if payload.approved else "loan_application.payment_rejected",
+        action="approve" if payload.approved else "reject",
+        entity_type="loan_application",
+        entity_id=str(application.id),
+        previous_values={"payment_status": previous_payment_status},
+        new_values={"payment_status": application.payment_status.value},
+        reason=payload.rejection_reason,
+        request=request,
+    )
     return _to_detail_schema(application)
+
 
 
 @router.post("/{application_id}/decide", response_model=schemas.LoanApplicationOutWithDetails)
 def decide_application(
     application_id: uuid.UUID,
     payload: schemas.LoanDecisionRequest,
+    request: Request,
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -257,10 +290,22 @@ def decide_application(
     they need to know about; approval doesn't email because the member
     already sees the approved status on their dashboard, and the
     meaningful notification happens at actual disbursement."""
+    # Segregation of duties (Section 12): approving and rejecting are
+    # gated on separate permission codes from the catalogue, so a
+    # cooperative can configure a role that may reject but not approve
+    # (or vice versa) even though both flow through this one endpoint.
+    required_permission = "loan.approve" if payload.approved else "loan.reject"
+    if not user_has_permission(db, current_user, required_permission):
+        raise HTTPException(
+            status_code=403,
+            detail=f"You do not have the '{required_permission}' permission for this action.",
+        )
+
     application = (
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
         .filter(models.LoanApplication.id == application_id)
+        .with_for_update()
         .first()
     )
     if not application:
@@ -295,11 +340,38 @@ def decide_application(
 
         db.commit()
         db.refresh(application)
+
+        audit_service.log_event(
+            db,
+            actor=current_user,
+            event_type="loan_application.approved",
+            action="approve",
+            entity_type="loan_application",
+            entity_id=str(application.id),
+            new_values={
+                "approved_amount": application.approved_amount,
+                "approved_tenure_months": application.approved_tenure_months,
+            },
+            reason=payload.admin_notes,
+            request=request,
+        )
     else:
         application.status = models.LoanApplicationStatus.REJECTED
         application.can_reapply = payload.can_reapply
         db.commit()
         db.refresh(application)
+
+        audit_service.log_event(
+            db,
+            actor=current_user,
+            event_type="loan_application.rejected",
+            action="reject",
+            entity_type="loan_application",
+            entity_id=str(application.id),
+            new_values={"can_reapply": application.can_reapply},
+            reason=payload.admin_notes,
+            request=request,
+        )
 
         send_email(
             to=application.member.email,
@@ -319,8 +391,10 @@ def decide_application(
 def disburse_application(
     application_id: uuid.UUID,
     payload: schemas.DisburseRequest = schemas.DisburseRequest(),
-    current_user: models.User = Depends(require_admin),
+    request: Request = None,
+    current_user: models.User = Depends(require_permission("disbursement.submit")),
     db: Session = Depends(get_db),
+    idem: IdempotencyContext = Depends(idempotency_check),
 ):
     """Actually creates the Loan and moves it to ACTIVE. This is the
     moment a loan really "starts" -- disbursement_date is always
@@ -344,10 +418,19 @@ def disburse_application(
     handle the shortfall outside the system) rather than have the app
     guess what to do.
     """
+    if idem.cached_response is not None:
+        return idem.cached_response
+
+    # Row lock (Section 18/19): this is the highest-stakes concurrency
+    # spot in the app -- two concurrent disburse calls for the same
+    # application must not both create a Loan. Locking the application
+    # row means the second concurrent request blocks until the first
+    # commits, then sees resulting_loan_id already set and 400s cleanly.
     application = (
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
         .filter(models.LoanApplication.id == application_id)
+        .with_for_update()
         .first()
     )
     if not application:
@@ -377,9 +460,16 @@ def disburse_application(
         disbursement_account_number = application.alternate_account_number
 
     # --- Balance deduction (Round 2 feature) ---
-    active_loans_query = db.query(models.Loan).filter(
-        models.Loan.member_id == application.member_id,
-        models.Loan.status == models.LoanStatus.ACTIVE,
+    # Also locked: an old loan being closed out here must not be
+    # concurrently modified by, e.g., a repayment being verified against
+    # it at the same moment.
+    active_loans_query = (
+        db.query(models.Loan)
+        .filter(
+            models.Loan.member_id == application.member_id,
+            models.Loan.status == models.LoanStatus.ACTIVE,
+        )
+        .with_for_update()
     )
     loans_to_deduct = []
     if payload.deduct_all_active:
@@ -459,12 +549,30 @@ def disburse_application(
         ),
     )
 
-    return _to_detail_schema(application)
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="loan_application.disbursed",
+        action="disburse",
+        entity_type="loan_application",
+        entity_id=str(application.id),
+        new_values={
+            "resulting_loan_id": str(loan.id),
+            "net_disbursed": str(net_disbursed - total_deducted),
+            "deducted_loan_ids": [str(l.id) for l in loans_to_deduct],
+        },
+        request=request,
+    )
+
+    result = _to_detail_schema(application)
+    idem.store(result.model_dump() if hasattr(result, "model_dump") else result)
+    return result
 
 
 @router.post("/{application_id}/cancel", response_model=schemas.LoanApplicationOutWithDetails)
 def cancel_application(
     application_id: uuid.UUID,
+    request: Request,
     current_user: models.User = Depends(require_password_already_changed),
     db: Session = Depends(get_db),
 ):
@@ -499,6 +607,16 @@ def cancel_application(
     application.cancelled_at = datetime.utcnow()
     db.commit()
     db.refresh(application)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="loan_application.cancelled",
+        action="cancel",
+        entity_type="loan_application",
+        entity_id=str(application.id),
+        request=request,
+    )
     return _to_detail_schema(application)
 
 

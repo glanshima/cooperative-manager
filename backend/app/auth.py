@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -26,10 +27,15 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
     return pwd_context.verify(plain_password, password_hash)
 
 
-def create_access_token(user_id: str, role: str) -> str:
+def create_access_token(user_id: str, role: str):
+    """Returns (token, jti, expires_at). The caller (routers/auth.py) is
+    responsible for persisting an AuthSession row keyed by jti so the
+    token can be revoked/logged-out server-side (Phase 1, Section 6)."""
+    jti = str(uuid.uuid4())
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": user_id, "role": role, "exp": expire}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    payload = {"sub": user_id, "role": role, "exp": expire, "jti": jti}
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return token, jti, expire
 
 
 def decode_access_token(token: str) -> Optional[dict]:

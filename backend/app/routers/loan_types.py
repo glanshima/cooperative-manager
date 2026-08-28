@@ -2,12 +2,12 @@ import uuid
 from datetime import date
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import models, schemas, audit_service
 from ..database import get_db
-from ..deps import require_admin, get_current_user
+from ..deps import require_admin, get_current_user, require_permission
 from ..loan_calc import sync_loan_type_cache
 
 router = APIRouter(prefix="/api/loan-types", tags=["loan-types"])
@@ -35,7 +35,8 @@ def get_loan_type(
 @router.post("", response_model=schemas.LoanTypeOut, status_code=201)
 def create_loan_type(
     payload: schemas.LoanTypeCreate,
-    current_user: models.User = Depends(require_admin),
+    request: Request,
+    current_user: models.User = Depends(require_permission("admin.settings_manage")),
     db: Session = Depends(get_db),
 ):
     existing = db.query(models.LoanType).filter(models.LoanType.name == payload.name).first()
@@ -68,6 +69,17 @@ def create_loan_type(
     sync_loan_type_cache(db, loan_type)
     db.commit()
     db.refresh(loan_type)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="loan_type.created",
+        action="create",
+        entity_type="loan_type",
+        entity_id=str(loan_type.id),
+        new_values={"name": loan_type.name},
+        request=request,
+    )
     return loan_type
 
 
@@ -75,7 +87,8 @@ def create_loan_type(
 def update_loan_type(
     loan_type_id: uuid.UUID,
     payload: schemas.LoanTypeUpdate,
-    current_user: models.User = Depends(require_admin),
+    request: Request,
+    current_user: models.User = Depends(require_permission("admin.settings_manage")),
     db: Session = Depends(get_db),
 ):
     """Only non-rate fields (name, is_active, open_for_application). To
@@ -86,11 +99,25 @@ def update_loan_type(
     if not loan_type:
         raise HTTPException(status_code=404, detail="Loan type not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    previous = {field: getattr(loan_type, field) for field in changes}
+    for field, value in changes.items():
         setattr(loan_type, field, value)
 
     db.commit()
     db.refresh(loan_type)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="loan_type.updated",
+        action="update",
+        entity_type="loan_type",
+        entity_id=str(loan_type.id),
+        previous_values=previous,
+        new_values=changes,
+        request=request,
+    )
     return loan_type
 
 
@@ -117,7 +144,8 @@ def list_rate_versions(
 def create_rate_version(
     loan_type_id: uuid.UUID,
     payload: schemas.LoanTypeRateVersionCreate,
-    current_user: models.User = Depends(require_admin),
+    request: Request,
+    current_user: models.User = Depends(require_permission("admin.settings_manage")),
     db: Session = Depends(get_db),
 ):
     """Creates a new effective-dated rate/tenure/flat_charge version.
@@ -141,13 +169,30 @@ def create_rate_version(
     sync_loan_type_cache(db, loan_type)
     db.commit()
     db.refresh(version)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="loan_type.rate_version_created",
+        action="create",
+        entity_type="loan_type",
+        entity_id=str(loan_type_id),
+        new_values={
+            "interest_rate": str(version.interest_rate),
+            "tenure_months": version.tenure_months,
+            "flat_charge": str(version.flat_charge),
+            "effective_from": str(version.effective_from),
+        },
+        request=request,
+    )
     return version
 
 
 @router.delete("/{loan_type_id}", status_code=204)
 def delete_loan_type(
     loan_type_id: uuid.UUID,
-    current_user: models.User = Depends(require_admin),
+    request: Request,
+    current_user: models.User = Depends(require_permission("admin.settings_manage")),
     db: Session = Depends(get_db),
 ):
     loan_type = db.query(models.LoanType).filter(models.LoanType.id == loan_type_id).first()
@@ -162,6 +207,17 @@ def delete_loan_type(
             status_code=409,
             detail="This loan type has existing loans and can't be deleted. Deactivate it instead.",
         )
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="loan_type.deleted",
+        action="delete",
+        entity_type="loan_type",
+        entity_id=str(loan_type.id),
+        previous_values={"name": loan_type.name},
+        request=request,
+    )
 
     db.delete(loan_type)
     db.commit()
