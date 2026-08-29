@@ -1,4 +1,6 @@
-# MACT Cooperative Ledger
+# MACT Cooperative Manager
+
+© SIDGAKS Tech
 
 Web app replacement for the legacy Excel-based cooperative ledger.
 This scaffold covers the **Members module** end-to-end (DB → API → UI) as

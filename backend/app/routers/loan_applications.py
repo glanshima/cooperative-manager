@@ -15,6 +15,7 @@ from ..deps import (
     user_has_permission,
 )
 from ..idempotency import IdempotencyContext, idempotency_check
+from ..self_conflict import require_no_self_conflict
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
 from ..email_utils import (
     send_email,
@@ -227,6 +228,17 @@ def verify_payment(
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    require_no_self_conflict(
+        db,
+        current_user,
+        application,
+        action_description="review your own loan-form payment",
+        permission_code="loan.review",
+        entity_type="loan_application",
+        entity_id=str(application.id),
+        request=request,
+    )
+
     if application.payment_status != models.PaymentVerificationStatus.AWAITING_VERIFICATION:
         raise HTTPException(status_code=400, detail="This payment has already been reviewed")
 
@@ -310,6 +322,17 @@ def decide_application(
     )
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    require_no_self_conflict(
+        db,
+        current_user,
+        application,
+        action_description="approve or reject your own loan application",
+        permission_code=required_permission,
+        entity_type="loan_application",
+        entity_id=str(application.id),
+        request=request,
+    )
 
     if application.payment_status != models.PaymentVerificationStatus.VERIFIED:
         raise HTTPException(
@@ -435,6 +458,17 @@ def disburse_application(
     )
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    require_no_self_conflict(
+        db,
+        current_user,
+        application,
+        action_description="disburse your own loan",
+        permission_code="disbursement.submit",
+        entity_type="loan_application",
+        entity_id=str(application.id),
+        request=request,
+    )
 
     if application.status != models.LoanApplicationStatus.APPROVED:
         raise HTTPException(status_code=400, detail="Only approved applications can be disbursed")

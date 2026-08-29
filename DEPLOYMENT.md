@@ -1,6 +1,6 @@
 # Deployment Guide — Vercel + Neon
 
-This guide walks through deploying the MACT Cooperative Ledger from a fresh
+This guide walks through deploying the MACT Cooperative Manager from a fresh
 GitHub repo to a live app on Vercel, backed by Neon Postgres. It assumes
 you've already followed the local setup in `README.md` and confirmed the
 app runs on `localhost`.

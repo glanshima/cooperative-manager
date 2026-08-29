@@ -16,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Index,
     CheckConstraint,
+    text,
 )
 from sqlalchemy import JSON as GenericJSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -322,11 +323,46 @@ class User(Base):
     with their PSN as the username; admins use a chosen username/email.
     An admin creates a member's login with a temporary password and
     must_change_password=True, forcing a reset on first successful login.
+
+    User.member_id (Controlled Phase 1 Remediation, Section 1) links a
+    User account to the Member record it belongs to, when the person
+    behind the account is also a cooperative member -- this is the
+    ONLY thing the conflict-of-interest guard (self_conflict.py) uses to
+    decide whether an admin is acting on their own money. It is set
+    explicitly and manually by another admin via the admin-users API
+    (never inferred from name/email/phone -- see self_conflict.py's
+    module docstring), and defaults to NULL for both new and pre-existing
+    accounts until someone deliberately links one.
+
+    A member-role self-service account (role=MEMBER) and an admin-role
+    account (role=ADMIN) for the SAME underlying person are two separate
+    User rows (they have different login credentials/paths -- PSN vs.
+    admin username), and BOTH may legitimately reference the same
+    member_id at once (an EXCO officer both self-serves as a member and
+    acts with admin authority under a different login). What must never
+    happen is *two* rows of the *same* role both claiming the same
+    member_id -- that would be an ambiguous/duplicate mapping. The
+    uniqueness constraint below is therefore scoped per-role (a partial
+    unique index), not a single table-wide unique column -- see the
+    Phase 1 DB integrity constraints migration and the dedicated
+    Controlled-Remediation migration for the exact SQL.
     """
 
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("failed_login_count >= 0", name="ck_users_failed_login_count_nonnegative"),
+        Index(
+            "ux_users_member_id_per_member_role",
+            "member_id",
+            unique=True,
+            postgresql_where=text("role = 'member'"),
+        ),
+        Index(
+            "ux_users_member_id_per_admin_role",
+            "member_id",
+            unique=True,
+            postgresql_where=text("role = 'admin'"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -343,9 +379,15 @@ class User(Base):
         nullable=False,
     )
 
-    # Null for admin accounts; set for member accounts.
+    # See the class docstring above (Controlled Phase 1 Remediation,
+    # Section 1) -- NULL for any account not explicitly linked to a
+    # member, including admin accounts by default. Uniqueness is
+    # enforced per-role via the partial indexes in __table_args__, NOT
+    # by a plain unique=True here (that would have blocked a member's
+    # self-service account and their separate admin account from both
+    # legitimately linking to the same member_id).
     member_id = Column(
-        UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=True, unique=True
+        UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=True
     )
 
     must_change_password = Column(Boolean, nullable=False, default=True)

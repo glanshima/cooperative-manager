@@ -9,6 +9,7 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, audit_service
@@ -112,6 +113,95 @@ def update_admin_user_status(
         entity_id=str(user.id),
         previous_values={"account_status": previous_status},
         new_values={"account_status": payload.account_status.value, "reason": payload.reason},
+        request=request,
+    )
+    return user
+
+
+@router.patch("/{user_id}/member-link", response_model=schemas.UserOut)
+def update_admin_user_member_link(
+    user_id: uuid.UUID,
+    payload: schemas.AdminUserMemberLinkUpdate,
+    request: Request,
+    current_user: models.User = Depends(require_permission("admin.user_manage")),
+    db: Session = Depends(get_db),
+):
+    """
+    Controlled Phase 1 Remediation, Sections 1 and 10: explicitly link
+    (or unlink) an admin account to the Member record it belongs to, for
+    an elected EXCO officer who is also a cooperative member. This is
+    the ONLY way User.member_id is ever set for an admin account -- there
+    is no automatic/inferred linking anywhere in the codebase, by design
+    (see self_conflict.py's module docstring for why: a wrong inference
+    could either wrongly block an unrelated person or, worse, fail to
+    catch a real conflict).
+
+    Once linked, self_conflict.require_no_self_conflict() uses this
+    field to block this admin from approving, disbursing, verifying, or
+    otherwise administratively acting on their own member record or
+    financial transactions -- a protection that applies even if this
+    admin is a super-admin (see self_conflict.py; super-admin status is
+    never checked there).
+    """
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != models.UserRole.ADMIN:
+        raise HTTPException(
+            status_code=400,
+            detail="Only admin-role accounts can be linked via this endpoint.",
+        )
+
+    previous_member_id = str(user.member_id) if user.member_id else None
+
+    if payload.member_id is not None:
+        member = db.query(models.Member).filter(models.Member.id == payload.member_id).first()
+        if not member:
+            raise HTTPException(status_code=404, detail="Member not found")
+
+        # Friendly pre-check before relying on the partial unique index
+        # as a backstop (Section 1: at most one ADMIN-role user per
+        # member_id -- a member-role self-service account for the same
+        # person, if one exists, is a separate row and unaffected).
+        already_linked = (
+            db.query(models.User)
+            .filter(
+                models.User.role == models.UserRole.ADMIN,
+                models.User.member_id == payload.member_id,
+                models.User.id != user_id,
+            )
+            .first()
+        )
+        if already_linked:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Member {payload.member_id} is already linked to another admin "
+                    f"account ({already_linked.username})."
+                ),
+            )
+
+    user.member_id = payload.member_id
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This member is already linked to another admin account.",
+        )
+    db.refresh(user)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="admin.user_member_link_changed",
+        action="update",
+        entity_type="user",
+        entity_id=str(user.id),
+        previous_values={"member_id": previous_member_id},
+        new_values={"member_id": str(user.member_id) if user.member_id else None},
+        reason=payload.reason,
         request=request,
     )
     return user

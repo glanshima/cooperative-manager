@@ -175,7 +175,20 @@ def create_member_login(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    existing = db.query(models.User).filter(models.User.member_id == member.id).first()
+    # Login State Reconciliation Addendum: scoped to role == MEMBER
+    # specifically. An admin-role account can independently hold this
+    # same member_id (see self_conflict.py / Controlled Remediation
+    # Section 1 -- an EXCO officer's admin account and their own
+    # self-service member login are two separate User rows that may both
+    # legitimately reference the same member_id). Without this role
+    # filter, a member who already has an admin account linked to them
+    # would be incorrectly blocked from ever getting their own
+    # self-service PSN login.
+    existing = (
+        db.query(models.User)
+        .filter(models.User.member_id == member.id, models.User.role == models.UserRole.MEMBER)
+        .first()
+    )
     if existing:
         raise HTTPException(status_code=409, detail="This member already has a login")
 
@@ -217,7 +230,9 @@ def reset_member_password(
 ):
     """Admin resets an existing member's password (e.g. they forgot it),
     setting must_change_password again so the next login forces a reset."""
-    user = db.query(models.User).filter(models.User.member_id == payload.member_id).first()
+    user = db.query(models.User).filter(
+        models.User.member_id == payload.member_id, models.User.role == models.UserRole.MEMBER
+    ).first()
     if not user:
         raise HTTPException(status_code=404, detail="This member doesn't have a login yet")
 

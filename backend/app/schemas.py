@@ -71,12 +71,35 @@ class MemberUpdate(BaseModel):
     _validate_nokp = field_validator("next_of_kin_phone")(validation.validate_phone_format)
 
 
+class MemberLoginStatusUpdate(BaseModel):
+    """Login State Reconciliation Addendum: deactivate or reactivate an
+    EXISTING member self-service login. Does not create or delete the
+    User row -- see routers/auth.py:create-member-login for creation,
+    and members.py's delete_member docstring (Change-Control C-2) for
+    why the User/Member rows themselves are never destroyed here."""
+
+    account_status: AccountStatus
+    reason: Optional[str] = None
+
+
 class MemberOut(MemberBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+
+    # Login State Reconciliation Addendum (2026-08-29): the Members table
+    # needs to know whether a login already exists for this member and,
+    # if so, whether it's currently active -- computed authoritatively by
+    # the backend (list_members/get_member populate these via a join
+    # against users.member_id filtered to role='member', never inferred
+    # by the frontend from partial data). None/None means no login exists
+    # yet ("Create Login" is the correct action); a non-null
+    # login_account_status means one does, and the frontend should offer
+    # Deactivate/Reactivate instead, never Create.
+    login_user_id: Optional[uuid.UUID] = None
+    login_account_status: Optional[AccountStatus] = None
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +245,16 @@ class CreateAdminRequest(BaseModel):
     """Used only by the one-off seed script, not exposed over the API."""
     username: str
     password: str
+
+
+class AdminUserMemberLinkUpdate(BaseModel):
+    """Controlled Phase 1 Remediation, Section 10: explicit, manual
+    linking of an admin account to the Member record it belongs to (for
+    an elected EXCO officer who is also a cooperative member). Set
+    member_id to null to clear an existing link."""
+
+    member_id: Optional[uuid.UUID] = None
+    reason: Optional[str] = None
 
 
 class UserOut(BaseModel):

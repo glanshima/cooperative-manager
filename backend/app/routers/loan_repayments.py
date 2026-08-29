@@ -10,6 +10,7 @@ from ..database import get_db
 from ..deps import get_current_user, require_admin, require_password_already_changed, require_permission, user_has_permission
 from ..email_utils import send_email, repayment_verified_email_html, repayment_rejected_email_html
 from ..idempotency import IdempotencyContext, idempotency_check
+from ..self_conflict import require_no_self_conflict
 
 router = APIRouter(tags=["loan-repayments"])
 
@@ -150,6 +151,18 @@ def verify_repayment(
     )
     if not repayment:
         raise HTTPException(status_code=404, detail="Repayment not found")
+
+    require_no_self_conflict(
+        db,
+        current_user,
+        repayment,
+        action_description="verify your own loan repayment",
+        permission_code="repayment.verify",
+        entity_type="loan_repayment",
+        entity_id=str(repayment.id),
+        request=request,
+    )
+
     if repayment.status != models.RepaymentVerificationStatus.AWAITING_VERIFICATION:
         raise HTTPException(status_code=400, detail="This repayment has already been reviewed")
 

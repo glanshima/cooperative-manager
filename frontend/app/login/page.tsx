@@ -41,7 +41,7 @@ export default function LoginPage() {
         borderRadius: 8,
       }}
     >
-      <h1>MACT Cooperative Ledger</h1>
+      <h1>MACT Cooperative Manager</h1>
       <p style={{ color: "#666" }}>
         Members: log in with your PSN. Admins: use your admin username.
       </p>

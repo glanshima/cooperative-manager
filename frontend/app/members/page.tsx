@@ -10,6 +10,7 @@ import {
   updateMember,
   deleteMember,
   createMemberLogin,
+  updateMemberLoginStatus,
 } from "../../lib/api";
 
 const emptyForm: MemberInput = {
@@ -126,6 +127,38 @@ export default function MembersPage() {
     try {
       await createMemberLogin(member.id, temp);
       setSuccess(`Login created for ${member.name}. Share the PSN and temporary password with them.`);
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  // Login State Reconciliation Addendum: these two call the same
+  // authoritative backend endpoint (PATCH /api/members/{id}/login-status)
+  // that deactivates or reactivates an EXISTING login -- never creates a
+  // new one. Which of Create/Deactivate/Reactivate renders for a given
+  // row is decided entirely by member.login_account_status below, not by
+  // any frontend-side assumption.
+  async function handleDeactivateLogin(member: Member) {
+    if (!confirm(`Deactivate ${member.name}'s login? They will be signed out and unable to log in until reactivated.`)) return;
+    setError(null);
+    setSuccess(null);
+    try {
+      await updateMemberLoginStatus(member.id, "deactivated");
+      setSuccess(`Login deactivated for ${member.name}.`);
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleReactivateLogin(member: Member) {
+    setError(null);
+    setSuccess(null);
+    try {
+      await updateMemberLoginStatus(member.id, "active");
+      setSuccess(`Login reactivated for ${member.name}.`);
+      await refresh();
     } catch (e: any) {
       setError(e.message);
     }
@@ -324,6 +357,7 @@ export default function MembersPage() {
                 <th>Status</th>
                 <th>Restricted</th>
                 <th>Phone</th>
+                <th>Login</th>
                 <th></th>
               </tr>
             </thead>
@@ -336,10 +370,23 @@ export default function MembersPage() {
                   <td>{m.status}</td>
                   <td>{m.loan_restricted ? "⚠ yes" : ""}</td>
                   <td>{m.phone}</td>
+                  <td>{m.login_account_status ?? "no login"}</td>
                   <td>
                     <button onClick={() => startEdit(m)}>Edit</button>{" "}
                     <button onClick={() => handleDelete(m.id)}>Delete</button>{" "}
-                    <button onClick={() => handleCreateLogin(m)}>Create login</button>
+                    {/* Login State Reconciliation Addendum: the action shown
+                        here is derived ENTIRELY from the backend-computed
+                        m.login_account_status -- never assumed. null/undefined
+                        means no login exists yet. */}
+                    {!m.login_account_status && (
+                      <button onClick={() => handleCreateLogin(m)}>Create login</button>
+                    )}
+                    {m.login_account_status === "active" && (
+                      <button onClick={() => handleDeactivateLogin(m)}>Deactivate login</button>
+                    )}
+                    {(m.login_account_status === "deactivated" || m.login_account_status === "suspended") && (
+                      <button onClick={() => handleReactivateLogin(m)}>Reactivate login</button>
+                    )}
                   </td>
                 </tr>
               ))}

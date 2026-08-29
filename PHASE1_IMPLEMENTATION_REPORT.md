@@ -1,18 +1,22 @@
 # MACT Cooperative Manager — Phase 1 Implementation Report
 
 **Phase:** 1 — Security, Authorization, Audit & Data Integrity Foundations
-**Date:** 2026-08-28 (implementation), 2026-08-28 (remediation pass, this update)
-**Status:** **PHASE 1 — NOT YET VERIFIED.** Code-level remediation is complete (see Section J below).
-The blocker is entirely environmental: the remediation pass ran in a sandboxed
-container with no outbound network access and no reachable PostgreSQL instance
-(confirmed by direct attempts — see Section J.5), so the backend test suite,
-the frontend production build, and the disposable-database migration
-verification that Sections 9–11 of the remediation prompt require could not
-be executed. Every fix below was verified the strongest way this environment
-allows (full manual code inspection + `python -m py_compile` on every backend
-file), but that is not the same thing as a green test run, and this report
-says so explicitly rather than claiming otherwise. Section J gives the exact
-commands to run outside this sandbox to close out verification.
+**Date:** 2026-08-28 (implementation), 2026-08-28 (first remediation pass),
+2026-08-29 (Controlled Remediation pass — User↔Member conflict-of-interest
+protection, this update)
+**Status:** **PHASE 1 — NOT YET VERIFIED** for the Controlled Remediation
+work in Section K below (code-complete, unexecuted — same environmental
+sandbox limitation as before). The EARLIER remediation pass (Section J)
+has since been verified live, for real, by the person operating this
+project: they applied both migrations to their actual Neon database,
+ran `seed_permissions.py`/`create_admin.py`, resolved a local Python-
+version wheel-build issue (3.14 → 3.12 venv), fixed a CORS
+misconfiguration between the deployed Vercel frontend and backend, and
+**confirmed a successful end-to-end login on the live deployed app**.
+That is real evidence the Section J fixes work outside a sandbox, even
+though the automated test suite itself still hasn't been run — see
+Section K.9 for exactly what remains outstanding for the NEW
+conflict-of-interest work specifically.
 
 ---
 
@@ -485,3 +489,392 @@ Section J.9 for exact commands to run this suite for real.
 **C-6 — (Remediation pass) Office/Position — no schema change.** See J.8. "Office/Position" in the specification's descriptive prose is treated as referring to the same concept already implemented as `Office` (whose own docstring already says "office/position"), not a request for a third distinct entity between `Office` and `Role`. Recorded per the prompt's instruction to flag rather than silently resolve if any doubt existed; flagging here for cooperative-level confirmation that this reading is correct, since no independent access to the authoritative specification document was available in this remediation pass to verify beyond Claude's own memory of it.
 
 **Open decision (not resolved, flagged per Section 12):** no exact segregation-of-duties *incompatibility rules* were specified (e.g. "the admin who prepared a disbursement may not also approve it"). The permission catalogue and Role model fully support configuring this (a cooperative can simply not grant `disbursement.prepare` and `disbursement.approve` to the same role), but the system does not *enforce* mutual exclusivity between any specific pair of permissions. Recording this as an open decision rather than inventing an enforcement rule, per Section 12's explicit instruction. Unchanged by this remediation pass.
+
+---
+
+## K. Controlled Remediation pass (2026-08-29) — User↔Member conflict-of-interest protection
+
+MACT cooperative members are elected EXCO officers, so the same physical
+person can hold both a Member record (they take out loans, make
+repayments) and an admin/staff User account with real permissions
+(loan.approve, disbursement.submit, accounting.adjust, etc.). Prior to
+this pass, permissions authorized what a user could generally do, but
+nothing prevented an admin from using that authority on their OWN member
+record or financial transactions — an EXCO officer with loan.approve
+could approve their own loan application. This section documents the
+fix.
+
+### K.1 User↔Member link (Section 1)
+
+`User.member_id` already existed as a nullable FK to `members.id` (added
+in the original Phase 1 migration) — no new column was needed. What
+changed: it was previously unique table-wide and, by convention, only
+ever populated for `role='member'` self-service accounts. This pass:
+
+- Relaxed the uniqueness to two **partial unique indexes**
+  (`ux_users_member_id_per_member_role`, `ux_users_member_id_per_admin_role`),
+  each scoped to `WHERE role = '...'`. This allows an EXCO officer's
+  separate member-role self-service account and admin-role account to
+  BOTH legitimately reference the same `member_id`, while still
+  preventing two rows of the *same* role from ambiguously claiming the
+  same member — see `models.py`'s `User` class docstring for the full
+  reasoning.
+- Added migration
+  `scripts/manual_migration_2026_08_controlled_remediation_user_member_link.sql`,
+  which drops the old constraint (looked up dynamically via
+  `pg_constraint`, since its original name isn't recorded anywhere —
+  this table predates this project's migration-script era) and adds the
+  two partial indexes, with a pre-flight duplicate check.
+- **No existing account was auto-linked.** Every admin account's
+  `member_id` remains `NULL` after this migration until a human
+  explicitly sets it (see K.4). Per Section 1's explicit instruction,
+  there is no name/email/phone/fuzzy-matching inference anywhere in this
+  codebase — `self_conflict.py`'s module docstring explains why: a wrong
+  inference could either wrongly block an unrelated person, or worse,
+  fail to catch a real conflict.
+
+### K.2 Central self-conflict guard (Section 2)
+
+New module `backend/app/self_conflict.py`:
+
+- `resolve_owning_member_id(db, target)` — resolves the member a
+  `Member`, `LoanApplication`, `Loan`, or `LoanRepayment` belongs to
+  (direct FK for the first three; `LoanRepayment.member_id`'s own
+  column for the last, rather than traversing `.loan` — simpler and
+  works even without eager loading).
+- `require_no_self_conflict(db, current_user, target, ...)` — the single
+  reusable guard every router calls. Raises HTTP 409 if
+  `current_user.member_id` matches the target's owning member. No-ops
+  (allows the action) when `current_user.member_id` is `NULL` — an admin
+  never explicitly linked to a member cannot have an inferred conflict.
+- `find_eligible_approvers(db, member_id, permission_code, ...)` —
+  read-only lookup of active admins who hold the permission and aren't
+  conflicted, surfaced in the 409 response body (see K.3).
+
+Applied to five endpoints (all syntax-checked, `python -m py_compile`
+passing):
+
+| Router | Endpoint | Permission checked | Guard action description |
+|---|---|---|---|
+| `loan_applications.py` | `verify_payment` | `loan.review` | "review your own loan-form payment" |
+| `loan_applications.py` | `decide_application` | `loan.approve`/`loan.reject` | "approve or reject your own loan application" |
+| `loan_applications.py` | `disburse_application` | `disbursement.submit` | "disburse your own loan" |
+| `loan_repayments.py` | `verify_repayment` | `repayment.verify` | "verify your own loan repayment" |
+| `loans.py` | `update_loan` | `accounting.adjust` | "adjust your own loan" |
+| `members.py` | `update_member` | `member.update` | "administratively edit your own member record" |
+| `members.py` | `delete_member` | `member.deactivate` | "deactivate or delete your own member record" |
+
+In every case, the guard runs immediately after the target row is
+loaded (404-checked) and before any other business-rule validation —
+consistent with the authorization ordering in Section 7 of the prompt
+(permission → object-level auth → resolve target member → self-conflict
+→ business rules → lock → perform → audit).
+
+Not scattered/reimplemented per-router: every call site is a single
+`require_no_self_conflict(...)` call: no duplicated comparison logic.
+
+### K.3 Self-service vs. administrative authority (Section 3)
+
+No self-service member endpoints were disabled or restricted — there
+wasn't one to restrict for most of these actions in the first place
+(`GET /api/members/me` is the only member self-service endpoint that
+existed, and it's read-only). The guard only applies to the
+*administrative* (permission-gated) endpoints listed above; a member
+using their own PSN login for legitimate self-service (e.g. submitting
+their own loan application, viewing their own record) is entirely
+unaffected — that isn't an administrative action and doesn't go through
+`require_no_self_conflict()` at all.
+
+### K.4 Super-admin hard deny (Section 4)
+
+`require_no_self_conflict()` never checks `is_super_admin` — it isn't
+even in the function's parameters. There is no `if is_super_admin:
+allow_everything()` path anywhere in this guard, by construction, not by
+convention. Verified by
+`test_super_admin_cannot_bypass_self_conflict` in
+`test_self_conflict.py`.
+
+### K.5 Alternate approval path (Section 5)
+
+When `require_no_self_conflict()` is called with a `permission_code`, a
+409 response includes an `eligible_approvers` list (active admins
+holding that permission, excluding the conflicted user) and a
+`no_eligible_approver_available` boolean. This is **read-only
+information returned in the same denial response** — there is no
+auto-routing, auto-queueing, or auto-reassignment anywhere; the
+transaction is simply left in its current state (e.g. a loan
+application stays `PENDING`) and it's up to the cooperative's own
+process for another eligible officer to act on it. No President-as-
+universal-approver or other unapproved role-to-role rule was invented.
+
+### K.6 Object ownership (Section 6)
+
+Handled directly in `resolve_owning_member_id()` (K.2) — both direct
+(`Loan.member_id`, `LoanApplication.member_id`) and indirect
+(`LoanRepayment` — uses its own denormalized `member_id` column)
+ownership are covered. `FinancialAdjustment` as a distinct entity does
+not exist yet in this codebase (loan corrections currently go through
+`update_loan`'s `accounting.adjust` gate, which IS guarded — see K.2's
+table); if a dedicated adjustment/reversal entity is introduced in a
+later phase, it should call `resolve_owning_member_id()`'s pattern
+(add a branch, or expose the member relationship directly) rather than
+reimplementing ownership resolution.
+
+### K.7 Admin user management — linking UI/API (Section 10)
+
+New endpoint: `PATCH /api/admin/users/{user_id}/member-link` in
+`admin_users.py`, gated on the existing `admin.user_manage` permission
+(no new permission code introduced — this is squarely within what that
+permission already governs). Accepts `{member_id, reason}`; `member_id:
+null` clears an existing link. Validates: target must be an admin-role
+user; the member must exist; the member isn't already linked to a
+*different* admin (friendly 409 pre-check, backed by the DB's partial
+unique index as the actual authoritative guarantee via `IntegrityError`
+handling). Every change is audit-logged
+(`admin.user_member_link_changed`) with previous/new `member_id` and
+the caller's `reason`. `UserOut` already exposed `member_id` in its
+schema from the original Phase 1 work, so the admin UI can show the
+linked member once the frontend's admin-users page is wired to call
+this new endpoint — **the frontend page itself was not modified in this
+pass** (backend-only; see K.9 for what's left).
+
+### K.8 Tests (Section 11)
+
+All 13 mandatory scenarios plus 5 additional tests for the linking
+endpoint were written:
+
+- `backend/tests/test_self_conflict.py` — the 13 mandatory scenarios:
+  own vs. other member record edits, own vs. other loan-application
+  approval, own repayment verification blocked, own disbursement
+  blocked, super-admin does not bypass, eligible alternate approver
+  surfaced, conflicted approvers excluded from that list, no-eligible-
+  approver leaves the application `PENDING` (never auto-decided), a
+  `NULL` `member_id` has no inferred conflict, matching name/email
+  between an unlinked admin and a member does NOT create a conflict,
+  and a conflict denial is audit-logged without any credential material
+  in the event payload.
+- `backend/tests/test_admin_user_member_link.py` — linking/unlinking
+  succeeds and is audited, double-linking the same member to two admins
+  is rejected, linking a member-role (not admin-role) user is rejected,
+  and the endpoint itself is permission-gated.
+
+**Written, syntax-checked, NOT executed** — same sandbox limitation as
+Section J (no network, no reachable Postgres in this container). See
+K.9.
+
+### K.9 What remains outstanding
+
+- **Tests have not been run.** Unlike Section J's fixes, which the
+  project owner has since verified live against a real deployment, this
+  Controlled Remediation work has NOT yet been exercised against a real
+  database. Given the owner now has a working local Python 3.12 venv
+  (established while debugging Section J), running
+  `pytest backend/tests/test_self_conflict.py
+  backend/tests/test_admin_user_member_link.py -v` against a disposable
+  Postgres database is the immediate next step before trusting this in
+  production.
+- **The new migration
+  (`manual_migration_2026_08_controlled_remediation_user_member_link.sql`)
+  has not been applied to any real database**, including the owner's
+  live Neon database from the Section J deployment. It must be run
+  (Neon Console SQL Editor or `psql -f`) before the linking endpoint or
+  the conflict guard's uniqueness guarantee will actually work against
+  that live database — until then, `User.member_id` there is still
+  governed by the OLD table-wide unique constraint.
+- **Frontend admin-users page was not updated** to actually call the new
+  `PATCH .../member-link` endpoint or display the link — this pass was
+  backend-only. `UserOut.member_id` is already in the API response, so
+  the frontend work is additive (a form field + API call), not blocked
+  on anything backend-side.
+- **`FinancialAdjustment` as a named entity doesn't exist yet** (see
+  K.6) — if/when introduced in a later phase, it needs the same
+  ownership-resolution treatment.
+- **Sections 12–18 of this Controlled Remediation prompt** (restore
+  deployment scripts, permission catalogue/Roles UI, idempotency
+  hardening, audit reliability, DB integrity, Office/Position,
+  segregation of duties) were already fully addressed in the prior
+  remediation pass — see Section J above — and were not re-verified
+  against this prompt's specific wording, but no discrepancy was found
+  on inspection; they describe the same requirements Section J already
+  implemented.
+- **Legacy/brand cleanup (Sections 19–21):** a real, evidence-based pass
+  was done, not a superficial one — findings: no `is_admin` legacy flag
+  exists anywhere in this codebase (only `is_super_admin`, which is
+  explicitly documented as NOT an unguarded shortcut, and which K.4
+  confirms cannot bypass conflict protection); no debug `print()`
+  statements exist in `backend/app/`; no `TODO`/`FIXME`/`XXX` markers
+  exist. Stale branding ("MACT Cooperative Ledger", the project's
+  original working name before it became "MACT Cooperative Manager")
+  was fixed in `frontend/app/page.tsx`, `frontend/app/login/page.tsx`,
+  `frontend/app/layout.tsx` (page title), `backend/app/main.py` (FastAPI
+  app title), `README.md`, and `DEPLOYMENT.md`. A site-wide "© SIDGAKS
+  Tech" footer was added in `frontend/app/layout.tsx` (renders on every
+  page) and at the top of `README.md`. Per the prompt's explicit
+  instruction, the brand was NOT inserted into technical identifiers —
+  table/column names, API paths, Python module/class names, and the
+  Neon database name (`neondb`) are all unchanged.
+  **What was NOT done**, honestly: a full repository-wide sweep for
+  unused imports/dead helper functions was not performed — this sandbox
+  has no `pyflakes`/linting tool available and no network to install
+  one, so an automated sweep wasn't possible, and a fully manual
+  line-by-line audit of every file wasn't attempted given the scope of
+  everything else in this pass. This is a real gap versus the prompt's
+  Section 19 ask, not a silent skip — flagging it rather than claiming a
+  cleanup that didn't happen.
+
+### C-7 — Change-Control: partial (role-scoped) unique index instead of a single unique column on `users.member_id`
+
+The original Phase 1 migration made `member_id` unique table-wide,
+correctly for its use at the time (only member-role self-service
+accounts ever populated it). This Controlled Remediation pass needed
+BOTH an admin-role account and a member-role account to be able to
+reference the same `member_id` simultaneously (the same person, two
+separate logins), which a single table-wide unique column cannot
+express. Resolved with two partial unique indexes scoped by `role`
+(K.1) rather than, e.g., merging member and admin accounts into a
+single login (which would have been a much larger, riskier change to
+the authentication model, explicitly out of scope for a controlled
+remediation). Flagging this for awareness since it changes a
+constraint introduced in the very first Phase 1 migration.
+
+---
+
+## L. Login State Reconciliation & Members Table Action-State Fix (2026-08-29)
+
+### Existing Login State Reconciliation
+
+**Member 32074 finding:** the Members table's per-row action button
+(`Create login`) was rendered **unconditionally for every member**,
+regardless of whether a login already existed. Member 32074's login was
+active; the button still showed "Create Login" because nothing in the
+frontend ever checked.
+
+**Root cause:** `MemberOut` (the schema backing every Members-table API
+response) never carried any login-state field at all — not a bug in a
+query or a broken join, but a genuine gap: login state had never been
+modeled into the members list/detail response in the first place. The
+frontend had no data to condition on even if it had tried. This was
+verified by direct inspection of `schemas.py` (no `has_login`/
+`login_status` field existed) and `frontend/app/members/page.tsx` (the
+`<button>Create login</button>` had no surrounding conditional of any
+kind).
+
+**A second, related defect found and fixed during investigation:**
+`POST /api/auth/create-member-login`'s existing-login check queried
+`User.member_id == member.id` with no role filter. That was correct in
+isolation, but became a regression once the Controlled Remediation pass
+(Section K) introduced the ability for an admin-role account to *also*
+link to a member's `member_id` (for conflict-of-interest purposes) — a
+member whose only existing account was an admin link (no self-service
+login yet) would have been incorrectly blocked from ever getting their
+own member login. Fixed by scoping both `create_member_login` and
+`reset_member_password`'s existing-record lookups to
+`role == UserRole.MEMBER` specifically (see `auth.py`).
+
+**Affected code:**
+- `backend/app/schemas.py` — `MemberOut` gained `login_user_id`,
+  `login_account_status` (nullable; `null` means no login exists — this
+  is the ONLY signal the frontend uses).
+- `backend/app/routers/members.py` — new `_attach_login_state()` helper
+  (single bulk query, role-scoped to `member`) called from `list_members`
+  and `get_member`; new `PATCH /{member_id}/login-status` endpoint
+  (deactivate/reactivate an existing login — never creates or deletes
+  one), gated on the existing `member.deactivate` permission (no new
+  permission code introduced), guarded by `require_no_self_conflict`
+  (an EXCO officer cannot deactivate/reactivate their own login via
+  admin authority either), audit-logged as
+  `member.login_status_changed`, and revokes active sessions on
+  deactivation (mirroring `admin_users.py`'s existing pattern).
+- `backend/app/routers/auth.py` — role-scoping fix described above.
+- `frontend/lib/api.ts` — `Member` interface gained
+  `login_user_id`/`login_account_status`; new
+  `updateMemberLoginStatus()` call.
+- `frontend/app/members/page.tsx` — the single unconditional button is
+  now three conditionally-rendered ones
+  (Create/Deactivate/Reactivate), driven entirely by
+  `member.login_account_status`; a "Login" column was added to the
+  table so the state is visible, not just the action.
+
+**Database state / migration / reconciliation performed:** **none
+required.** Every code path in this repository that has ever created a
+User row for a member (`create_member_login`; no `scripts/*.py`
+migration script creates User rows) has always set `member_id` at
+creation time — verified by inspecting every such code path, not
+assumed. The bug was entirely in what the API/UI surfaced, not in the
+underlying data. A read-only diagnostic,
+`scripts/check_login_state_reconciliation.sql`, was written for the
+project owner to run against their actual live database and confirm
+this holds true there too (checks for member-role User rows with a
+NULL `member_id`, orphaned FKs, or duplicate member-role logins per
+member). Per Section 4/5's explicit instruction, if that script ever
+does surface a row, it is NOT auto-linked by name/email/phone — it must
+be resolved by a human via the admin-users member-link endpoint or
+direct verified correction.
+
+**`User.member_id` → `Member.id` relationship:** confirmed as the sole
+mechanism used everywhere in this fix — see `_attach_login_state()`'s
+docstring for why it's explicitly scoped to `role == 'member'`
+(distinguishing a self-service login from a conflict-of-interest admin
+link to the same person).
+
+**Members table behavior:** now exactly matches Section 6's specified
+state machine (no login → Create; active → Deactivate; inactive →
+Reactivate), driven entirely by backend data per Section 9 — the
+frontend performs no independent inference.
+
+**Duplicate-login protection:** enforced at the backend
+(`create_member_login`'s role-scoped existing-check, now also correctly
+permissive of the has-admin-account-only case) — covered by
+`test_create_login_rejected_when_member_login_already_exists` and
+`test_create_login_allowed_when_only_an_admin_account_is_linked` in
+`test_login_state_reconciliation.py`.
+
+**Login vs. admin role independence (Section 7):** an EXCO
+officer's admin-role account (and any role/permission it holds) has no
+bearing on their own member-role login's displayed state — verified by
+`test_admin_role_does_not_affect_member_login_state`.
+
+**Tests executed:** none — same sandbox limitation as Sections J and K
+(no network, no reachable Postgres in this container). Written and
+`python -m py_compile`-verified only:
+`backend/tests/test_login_state_reconciliation.py`, covering Cases A
+(no login), B (active), C (deactivate/reactivate cycle), D
+(pre-existing-style login), F (EXCO/admin member independence), and
+Section 12's duplicate-protection cases. Case E (an unresolved/unmapped
+login) has no automated test because — per the finding above — no code
+path in this repository can currently produce that state; it's covered
+instead by the read-only diagnostic script for real production data,
+which by definition can't be exercised from an empty test database.
+
+**Legacy cleanup (Section 15):** searched for `has_login`, duplicated
+login-detection logic, frontend-only login-state assumptions, stale
+authentication flags, commented-out/debug login code — none found
+beyond the single unconditional button and missing schema field already
+described above; there was no OTHER, older login-state calculation
+competing with the new one to remove.
+
+**Brand cleanup (Section 17):** no additional stale branding found
+beyond what Section K.9 already fixed in this pass.
+
+**Remaining limitations:**
+- Tests have not been executed against a real database (see above) —
+  the immediate next step is running
+  `pytest backend/tests/test_login_state_reconciliation.py -v` against
+  a disposable Postgres database, alongside the Section K tests.
+- `scripts/check_login_state_reconciliation.sql` has not been run
+  against the live Neon database — recommended before considering this
+  fix fully verified in production, to positively confirm (not just
+  infer from code) that Member 32074's and every other member's login
+  data is clean.
+- Frontend TypeScript compilation (`tsc`/`next build`) has not been run
+  in this sandbox (no `node_modules`, no network) — the same
+  limitation noted in Section J.9.
+
+**Final status: PHASE 1 — NOT YET VERIFIED.** Code-complete for this
+addendum; blocked on the same environmental constraints as Sections J
+and K, not on any known remaining defect. Exact blockers: (1) migration
+`manual_migration_2026_08_controlled_remediation_user_member_link.sql`
+and the new diagnostic script have not been run against the live
+database; (2) `test_login_state_reconciliation.py` and
+`test_admin_user_member_link.py`/`test_self_conflict.py` have not been
+executed; (3) frontend build/TypeScript check has not been run.

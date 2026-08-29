@@ -9,6 +9,7 @@ from .. import models, schemas, audit_service
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission, user_has_permission
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
+from ..self_conflict import require_no_self_conflict
 
 router = APIRouter(prefix="/api/loans", tags=["loans"])
 
@@ -179,6 +180,17 @@ def update_loan(
     loan = db.query(models.Loan).filter(models.Loan.id == loan_id).first()
     if not loan:
         raise HTTPException(status_code=404, detail="Loan not found")
+
+    require_no_self_conflict(
+        db,
+        current_user,
+        loan,
+        action_description="adjust your own loan",
+        permission_code="accounting.adjust",
+        entity_type="loan",
+        entity_id=str(loan.id),
+        request=request,
+    )
 
     changes = payload.model_dump(exclude_unset=True)
     previous = {field: getattr(loan, field) for field in changes}

@@ -121,7 +121,7 @@ def make_member_user(db_session, member, password="Passw0rd!"):
     return user
 
 
-def make_admin_user(db_session, username="admin1", password="Passw0rd!", super_admin=False):
+def make_admin_user(db_session, username="admin1", password="Passw0rd!", super_admin=False, member_id=None):
     user = models.User(
         username=username,
         password_hash=hash_password(password),
@@ -129,6 +129,7 @@ def make_admin_user(db_session, username="admin1", password="Passw0rd!", super_a
         must_change_password=False,
         account_status=models.AccountStatus.ACTIVE,
         is_super_admin=super_admin,
+        member_id=member_id,
     )
     db_session.add(user)
     db_session.commit()

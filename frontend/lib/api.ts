@@ -134,6 +134,10 @@ export async function resetMemberPassword(memberId: string, temporaryPassword: s
 
 export type MemberStatus = "financial" | "non_financial";
 
+// Mirrors the backend's AccountStatus enum (models.py) -- present here
+// only for login_account_status below.
+export type LoginAccountStatus = "active" | "deactivated" | "suspended";
+
 export interface Member {
   id: string;
   psn: string;
@@ -154,6 +158,13 @@ export interface Member {
   restriction_reason?: string | null;
   created_at: string;
   updated_at: string;
+  // Login State Reconciliation Addendum: authoritative, backend-computed
+  // login state. login_account_status is null/undefined when no login
+  // exists yet -- that (and ONLY that) is what should drive showing
+  // "Create Login" in the Members table. Never infer login existence
+  // from any other field.
+  login_user_id?: string | null;
+  login_account_status?: LoginAccountStatus | null;
 }
 
 export interface MemberInput {
@@ -193,6 +204,17 @@ export async function updateMember(id: string, input: Partial<MemberInput>): Pro
 
 export async function deleteMember(id: string): Promise<void> {
   return apiFetch<void>(`/api/members/${id}`, { method: "DELETE" });
+}
+
+export async function updateMemberLoginStatus(
+  id: string,
+  accountStatus: LoginAccountStatus,
+  reason?: string
+): Promise<Member> {
+  return apiFetch<Member>(`/api/members/${id}/login-status`, {
+    method: "PATCH",
+    body: { account_status: accountStatus, reason: reason ?? null },
+  });
 }
 
 // ---------------------------------------------------------------------------

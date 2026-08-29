@@ -8,8 +8,44 @@ from sqlalchemy import or_
 from .. import models, schemas, audit_service
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission
+from ..self_conflict import require_no_self_conflict
 
 router = APIRouter(prefix="/api/members", tags=["members"])
+
+
+def _attach_login_state(db: Session, members: List[models.Member]) -> None:
+    """
+    Login State Reconciliation Addendum: populate the (non-persisted,
+    request-scoped) login_user_id/login_account_status attributes that
+    MemberOut serializes, from a single bulk query -- this is the ONE
+    place the Members table's login-action state is computed, so the
+    frontend never has to (and never did correctly -- see the addendum's
+    root-cause finding: MemberOut previously carried no login-state
+    information at all, and the "Create login" button was rendered
+    unconditionally for every row regardless of whether a login already
+    existed).
+
+    Scoped to role == MEMBER deliberately: a member's *self-service* PSN
+    login is a different account from an admin-role account that might
+    also be linked to the same member_id for conflict-of-interest
+    purposes (see self_conflict.py / Controlled Remediation Section 1)
+    -- an EXCO officer having an admin account does not mean they
+    already have their own member self-service login, and this must not
+    be conflated.
+    """
+    if not members:
+        return
+    member_ids = [m.id for m in members]
+    member_logins = (
+        db.query(models.User)
+        .filter(models.User.member_id.in_(member_ids), models.User.role == models.UserRole.MEMBER)
+        .all()
+    )
+    by_member_id = {u.member_id: u for u in member_logins}
+    for member in members:
+        login_user = by_member_id.get(member.id)
+        member.login_user_id = login_user.id if login_user else None
+        member.login_account_status = login_user.account_status if login_user else None
 
 
 @router.get("/me", response_model=schemas.MemberOut)
@@ -46,7 +82,9 @@ def list_members(
     if status:
         query = query.filter(models.Member.status == status)
 
-    return query.order_by(models.Member.name).offset(skip).limit(limit).all()
+    members = query.order_by(models.Member.name).offset(skip).limit(limit).all()
+    _attach_login_state(db, members)
+    return members
 
 
 @router.get("/{member_id}", response_model=schemas.MemberOut)
@@ -72,6 +110,7 @@ def get_member(
     member = db.query(models.Member).filter(models.Member.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+    _attach_login_state(db, [member])
     return member
 
 
@@ -116,6 +155,17 @@ def update_member(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    require_no_self_conflict(
+        db,
+        current_user,
+        member,
+        action_description="administratively edit your own member record",
+        permission_code="member.update",
+        entity_type="member",
+        entity_id=str(member.id),
+        request=request,
+    )
+
     changes = payload.model_dump(exclude_unset=True)
     previous = {field: getattr(member, field) for field in changes}
     for field, value in changes.items():
@@ -135,6 +185,88 @@ def update_member(
         new_values=changes,
         request=request,
     )
+    return member
+
+
+@router.patch("/{member_id}/login-status", response_model=schemas.MemberOut)
+def update_member_login_status(
+    member_id: uuid.UUID,
+    payload: schemas.MemberLoginStatusUpdate,
+    request: Request,
+    current_user: models.User = Depends(require_permission("member.deactivate")),
+    db: Session = Depends(get_db),
+):
+    """
+    Login State Reconciliation Addendum (2026-08-29): deactivate or
+    reactivate a member's EXISTING self-service login. This is the
+    endpoint the Members table's "Deactivate Login" / "Reactivate Login"
+    action calls -- distinct from POST /api/auth/create-member-login
+    (which only handles the no-login-yet case) and from deleting the
+    Member record entirely (which this never does -- see delete_member's
+    docstring, Change-Control C-2: the Member and User rows, and all
+    financial/audit history, are preserved regardless of login status).
+
+    Reuses member.deactivate rather than introducing a new permission
+    code -- login lifecycle for a member is squarely what that
+    permission already covers (see its use in delete_member above).
+    """
+    member = db.query(models.Member).filter(models.Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    login_user = (
+        db.query(models.User)
+        .filter(models.User.member_id == member_id, models.User.role == models.UserRole.MEMBER)
+        .first()
+    )
+    if not login_user:
+        raise HTTPException(
+            status_code=404,
+            detail="This member doesn't have a login yet. Use Create Login instead.",
+        )
+
+    require_no_self_conflict(
+        db,
+        current_user,
+        member,
+        action_description="change your own login's active status",
+        permission_code="member.deactivate",
+        entity_type="member",
+        entity_id=str(member.id),
+        request=request,
+    )
+
+    previous_status = login_user.account_status.value
+    from ..account_lifecycle import set_account_status
+
+    set_account_status(db, login_user, payload.account_status, changed_by=current_user, reason=payload.reason)
+
+    # Mirrors admin_users.py's status-change behavior: a deactivated/
+    # suspended login's outstanding sessions are revoked immediately, so
+    # "loses access" doesn't wait for JWT expiry.
+    if payload.account_status != models.AccountStatus.ACTIVE:
+        from datetime import datetime as _datetime
+
+        for session in db.query(models.AuthSession).filter(
+            models.AuthSession.user_id == login_user.id, models.AuthSession.revoked_at.is_(None)
+        ):
+            session.revoked_at = _datetime.utcnow()
+            session.revoked_reason = f"member login status changed to {payload.account_status.value}"
+        db.commit()
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="member.login_status_changed",
+        action="update",
+        entity_type="user",
+        entity_id=str(login_user.id),
+        previous_values={"account_status": previous_status},
+        new_values={"account_status": payload.account_status.value, "reason": payload.reason},
+        request=request,
+    )
+
+    _attach_login_state(db, [member])
     return member
 
 
@@ -165,6 +297,17 @@ def delete_member(
     member = db.query(models.Member).filter(models.Member.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+
+    require_no_self_conflict(
+        db,
+        current_user,
+        member,
+        action_description="deactivate or delete your own member record",
+        permission_code="member.deactivate",
+        entity_type="member",
+        entity_id=str(member.id),
+        request=request,
+    )
 
     has_financial_history = bool(member.loans) or bool(member.loan_applications)
     if has_financial_history:

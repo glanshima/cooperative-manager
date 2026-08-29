@@ -21,7 +21,7 @@ from .routers import (
 
 load_dotenv()
 
-app = FastAPI(title="MACT Cooperative Ledger API", version="0.1.0")
+app = FastAPI(title="MACT Cooperative Manager API", version="0.1.0")
 
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 
