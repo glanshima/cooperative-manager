@@ -98,8 +98,10 @@ def seed_permissions(db_session):
     db_session.commit()
 
 
-def make_member(db_session, psn="PSN-0001", name="Test Member", email="member@example.com"):
-    member = models.Member(psn=psn, name=name, email=email, status=models.MemberStatus.FINANCIAL)
+def make_member(db_session, psn="PSN-0001", name="Test Member", email="member@example.com", **extra):
+    member = models.Member(
+        psn=psn, name=name, email=email, status=extra.pop("status", models.MemberStatus.FINANCIAL), **extra
+    )
     db_session.add(member)
     db_session.commit()
     db_session.refresh(member)

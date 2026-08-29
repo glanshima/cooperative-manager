@@ -73,11 +73,11 @@ export default function LoansPage() {
       const [loansData, typesData, membersData] = await Promise.all([
         listLoans(),
         listLoanTypes(),
-        listMembers(),
+        listMembers({ limit: 1000 }),
       ]);
       setLoans(loansData);
       setLoanTypes(typesData);
-      setMembers(membersData);
+      setMembers(membersData.items);
     } catch (e: any) {
       setError(e.message);
     } finally {

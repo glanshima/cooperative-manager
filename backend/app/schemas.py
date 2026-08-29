@@ -102,6 +102,34 @@ class MemberOut(MemberBase):
     login_account_status: Optional[AccountStatus] = None
 
 
+class MemberListResponse(BaseModel):
+    """Members Search & Filtering Remediation: GET /api/members returns
+    this wrapper (not a bare list) specifically so pagination metadata
+    (total match count against the FULL filtered dataset, not just the
+    current page) is available -- required by that remediation's
+    acceptance criteria. This is a deliberate, scoped deviation from the
+    flat-list convention used by every other list endpoint in this
+    codebase (loans, loan-applications, audit) -- see the Phase 1 report
+    for why it wasn't applied everywhere."""
+
+    items: List[MemberOut]
+    total: int
+    skip: int
+    limit: int
+
+
+class MemberFilterOptions(BaseModel):
+    """Distinct bank_name/department values actually present across
+    authorized members right now -- used to populate the Members
+    table's filter dropdowns from real data, never fabricated. No
+    separate Bank/Department entity exists in this codebase (bank_name
+    and department are free-text columns on Member); see the Phase 1
+    report for that finding."""
+
+    banks: List[str]
+    departments: List[str]
+
+
 # ---------------------------------------------------------------------------
 # Loan Types
 # ---------------------------------------------------------------------------

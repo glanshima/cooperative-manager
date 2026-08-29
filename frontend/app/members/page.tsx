@@ -1,17 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../../lib/useAuth";
 import {
   Member,
   MemberInput,
+  MemberFilterOptions,
+  MemberStatus,
   listMembers,
+  getMemberFilterOptions,
   createMember,
   updateMember,
   deleteMember,
   createMemberLogin,
   updateMemberLoginStatus,
 } from "../../lib/api";
+
+const PAGE_SIZE = 25;
 
 const emptyForm: MemberInput = {
   psn: "",
@@ -40,29 +45,110 @@ export default function MembersPage() {
   });
 
   const [members, setMembers] = useState<Member[]>([]);
+  const [total, setTotal] = useState(0);
+  const [skip, setSkip] = useState(0);
+
+  // Free-text search: identifies specific member(s) by Member Number/
+  // PSN, name, or phone. Only fires on Enter/the Search button (not per
+  // keystroke) -- same behavior as before this remediation, kept as-is
+  // per the instruction not to add complexity where the existing
+  // approach already avoids the request-race problem by construction
+  // (it simply doesn't fire a request per keystroke).
   const [search, setSearch] = useState("");
+
+  // Structured filters: narrow the member GROUP shown. Independent of
+  // search, independent of each other, and each fires its own request
+  // immediately on change (Members Search & Filtering Remediation,
+  // Section 1) -- the administrator never has to type anything into
+  // search to use these.
+  const [bankFilter, setBankFilter] = useState("");
+  const [departmentFilter, setDepartmentFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<MemberStatus | "">("");
+  const [filterOptions, setFilterOptions] = useState<MemberFilterOptions>({
+    banks: [],
+    departments: [],
+  });
+
   const [form, setForm] = useState<MemberInput>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  async function refresh(searchOverride?: string) {
+  // Request-race guard (Section 15): if two requests are ever in flight
+  // (e.g. two filter changes fired close together), only the response to
+  // the MOST RECENTLY issued request is ever applied to the UI.
+  const requestSeqRef = useRef(0);
+
+  async function refresh(overrides: { search?: string; skip?: number } = {}) {
+    const effectiveSkip = overrides.skip !== undefined ? overrides.skip : skip;
+    const effectiveSearch = overrides.search !== undefined ? overrides.search : search;
+    const mySeq = ++requestSeqRef.current;
     setLoading(true);
     setError(null);
     try {
-      setMembers(await listMembers(searchOverride !== undefined ? searchOverride : search));
+      const result = await listMembers({
+        search: effectiveSearch,
+        bank_name: bankFilter || undefined,
+        department: departmentFilter || undefined,
+        status: statusFilter || undefined,
+        skip: effectiveSkip,
+        limit: PAGE_SIZE,
+      });
+      if (mySeq !== requestSeqRef.current) return; // a newer request has already superseded this one
+      setMembers(result.items);
+      setTotal(result.total);
+      setSkip(effectiveSkip);
     } catch (e: any) {
+      if (mySeq !== requestSeqRef.current) return;
       setError(e.message);
     } finally {
-      setLoading(false);
+      if (mySeq === requestSeqRef.current) setLoading(false);
     }
   }
 
+  // Any filter change: reset to page 1 (skip=0) and refetch immediately
+  // -- Section 7's mandatory pagination-reset behavior. Search is
+  // deliberately NOT a dependency here (it only refetches on
+  // Enter/Search/Clear, handled explicitly below) so that typing doesn't
+  // trigger this effect on every keystroke.
   useEffect(() => {
-    if (!authLoading) refresh();
+    if (!authLoading) refresh({ skip: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, bankFilter, departmentFilter, statusFilter]);
+
+  useEffect(() => {
+    if (!authLoading) {
+      getMemberFilterOptions()
+        .then(setFilterOptions)
+        .catch(() => {
+          /* Non-fatal: filter dropdowns just show as empty/"All" if this fails. */
+        });
+    }
   }, [authLoading]);
+
+  function goToPage(newSkip: number) {
+    if (newSkip < 0 || newSkip >= total) return;
+    refresh({ skip: newSkip });
+  }
+
+  function clearFilters() {
+    setSearch("");
+    setBankFilter("");
+    setDepartmentFilter("");
+    setStatusFilter("");
+    // bank/department/status resets above trigger the useEffect's
+    // refetch at skip=0 already; explicitly refresh with an empty search
+    // too, in case only `search` had a value (which isn't watched by
+    // that effect).
+    refresh({ search: "", skip: 0 });
+  }
+
+  const activeFilterDescriptions: string[] = [];
+  if (bankFilter) activeFilterDescriptions.push(`Bank: ${bankFilter}`);
+  if (departmentFilter) activeFilterDescriptions.push(`Department: ${departmentFilter}`);
+  if (statusFilter) activeFilterDescriptions.push(`Status: ${statusFilter === "financial" ? "Financial" : "Non-financial"}`);
+  const hasActiveFilters = search || bankFilter || departmentFilter || statusFilter;
 
   function startEdit(m: Member) {
     setEditingId(m.id);
@@ -176,10 +262,10 @@ export default function MembersPage() {
       {error && <p style={{ color: "crimson", fontWeight: 600 }}>Error: {error}</p>}
       {success && <p style={{ color: "green", fontWeight: 600 }}>{success}</p>}
 
-      <section style={{ marginBottom: 24 }}>
+      <section style={{ marginBottom: 12 }}>
         <span style={{ position: "relative", display: "inline-block" }}>
           <input
-            placeholder="Search by name or PSN"
+            placeholder="Search by member number/PSN, name, or phone"
             value={search}
             onChange={(e) => {
               const value = e.target.value;
@@ -189,17 +275,17 @@ export default function MembersPage() {
                 // not just clicking the explicit clear button below. Pass the
                 // empty string directly rather than relying on `search` state,
                 // which hasn't re-rendered with the new value yet at this point.
-                refresh("");
+                refresh({ search: "", skip: 0 });
               }
             }}
-            onKeyDown={(e) => e.key === "Enter" && refresh()}
-            style={{ padding: 8, paddingRight: search ? 28 : 8, width: 280, marginRight: 8 }}
+            onKeyDown={(e) => e.key === "Enter" && refresh({ skip: 0 })}
+            style={{ padding: 8, paddingRight: search ? 28 : 8, width: 320, marginRight: 8 }}
           />
           {search && (
             <button
               onClick={() => {
                 setSearch("");
-                refresh("");
+                refresh({ search: "", skip: 0 });
               }}
               aria-label="Clear search"
               style={{
@@ -219,7 +305,56 @@ export default function MembersPage() {
             </button>
           )}
         </span>
-        <button onClick={() => refresh()}>Search</button>
+        <button onClick={() => refresh({ skip: 0 })}>Search</button>
+      </section>
+
+      <section style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <label>
+          Bank{" "}
+          <select value={bankFilter} onChange={(e) => setBankFilter(e.target.value)}>
+            <option value="">All Banks</option>
+            {filterOptions.banks.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Department{" "}
+          <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)}>
+            <option value="">All Departments</option>
+            {filterOptions.departments.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Status{" "}
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as MemberStatus | "")}>
+            <option value="">All Statuses</option>
+            <option value="financial">Financial</option>
+            <option value="non_financial">Non-financial</option>
+          </select>
+        </label>
+        {hasActiveFilters && <button onClick={clearFilters}>Clear Filters</button>}
+      </section>
+
+      <section style={{ marginBottom: 24, color: "#555", fontSize: 14 }}>
+        {loading ? (
+          <span>Loading…</span>
+        ) : (
+          <>
+            <strong>
+              Showing {members.length === 0 ? 0 : skip + 1}
+              {members.length > 0 ? `–${skip + members.length}` : ""} of {total} member
+              {total === 1 ? "" : "s"}
+            </strong>
+            {activeFilterDescriptions.length > 0 && <span> ({activeFilterDescriptions.join(", ")})</span>}
+          </>
+        )}
       </section>
 
       <section
@@ -347,51 +482,68 @@ export default function MembersPage() {
       <section>
         {loading ? (
           <p>Loading...</p>
+        ) : error ? (
+          <p>Unable to load members.</p>
+        ) : members.length === 0 ? (
+          <p>No matching records found.</p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "2px solid #333" }}>
-                <th>PSN</th>
-                <th>Name</th>
-                <th>Department</th>
-                <th>Status</th>
-                <th>Restricted</th>
-                <th>Phone</th>
-                <th>Login</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.map((m) => (
-                <tr key={m.id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td>{m.psn}</td>
-                  <td>{m.name}</td>
-                  <td>{m.department}</td>
-                  <td>{m.status}</td>
-                  <td>{m.loan_restricted ? "⚠ yes" : ""}</td>
-                  <td>{m.phone}</td>
-                  <td>{m.login_account_status ?? "no login"}</td>
-                  <td>
-                    <button onClick={() => startEdit(m)}>Edit</button>{" "}
-                    <button onClick={() => handleDelete(m.id)}>Delete</button>{" "}
-                    {/* Login State Reconciliation Addendum: the action shown
-                        here is derived ENTIRELY from the backend-computed
-                        m.login_account_status -- never assumed. null/undefined
-                        means no login exists yet. */}
-                    {!m.login_account_status && (
-                      <button onClick={() => handleCreateLogin(m)}>Create login</button>
-                    )}
-                    {m.login_account_status === "active" && (
-                      <button onClick={() => handleDeactivateLogin(m)}>Deactivate login</button>
-                    )}
-                    {(m.login_account_status === "deactivated" || m.login_account_status === "suspended") && (
-                      <button onClick={() => handleReactivateLogin(m)}>Reactivate login</button>
-                    )}
-                  </td>
+          <>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "2px solid #333" }}>
+                  <th>PSN</th>
+                  <th>Name</th>
+                  <th>Department</th>
+                  <th>Status</th>
+                  <th>Restricted</th>
+                  <th>Phone</th>
+                  <th>Login</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {members.map((m) => (
+                  <tr key={m.id} style={{ borderBottom: "1px solid #eee" }}>
+                    <td>{m.psn}</td>
+                    <td>{m.name}</td>
+                    <td>{m.department}</td>
+                    <td>{m.status}</td>
+                    <td>{m.loan_restricted ? "⚠ yes" : ""}</td>
+                    <td>{m.phone}</td>
+                    <td>{m.login_account_status ?? "no login"}</td>
+                    <td>
+                      <button onClick={() => startEdit(m)}>Edit</button>{" "}
+                      <button onClick={() => handleDelete(m.id)}>Delete</button>{" "}
+                      {/* Login State Reconciliation Addendum: the action shown
+                          here is derived ENTIRELY from the backend-computed
+                          m.login_account_status -- never assumed. null/undefined
+                          means no login exists yet. */}
+                      {!m.login_account_status && (
+                        <button onClick={() => handleCreateLogin(m)}>Create login</button>
+                      )}
+                      {m.login_account_status === "active" && (
+                        <button onClick={() => handleDeactivateLogin(m)}>Deactivate login</button>
+                      )}
+                      {(m.login_account_status === "deactivated" || m.login_account_status === "suspended") && (
+                        <button onClick={() => handleReactivateLogin(m)}>Reactivate login</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
+              <button disabled={skip === 0} onClick={() => goToPage(skip - PAGE_SIZE)}>
+                Previous
+              </button>
+              <span>
+                Page {Math.floor(skip / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+              </span>
+              <button disabled={skip + PAGE_SIZE >= total} onClick={() => goToPage(skip + PAGE_SIZE)}>
+                Next
+              </button>
+            </div>
+          </>
         )}
       </section>
     </main>

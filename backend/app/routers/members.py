@@ -62,29 +62,112 @@ def get_my_member_record(
     return member
 
 
-@router.get("", response_model=List[schemas.MemberOut])
+@router.get("/filter-options", response_model=schemas.MemberFilterOptions)
+def get_member_filter_options(
+    current_user: models.User = Depends(require_permission("member.view")),
+    db: Session = Depends(get_db),
+):
+    """
+    Members Search & Filtering Remediation, Sections 6/7/14: populates
+    the Bank/Department filter dropdowns from DISTINCT values actually
+    present on authorized members right now -- never fabricated, never
+    hard-coded. There is no separate Bank or Department entity in this
+    codebase (bank_name/department are free-text columns on Member); see
+    the Phase 1 report for that finding and why introducing one was out
+    of scope for this remediation.
+    """
+    banks = (
+        db.query(models.Member.bank_name)
+        .filter(models.Member.bank_name.isnot(None), models.Member.bank_name != "")
+        .distinct()
+        .order_by(models.Member.bank_name)
+        .all()
+    )
+    departments = (
+        db.query(models.Member.department)
+        .filter(models.Member.department.isnot(None), models.Member.department != "")
+        .distinct()
+        .order_by(models.Member.department)
+        .all()
+    )
+    return schemas.MemberFilterOptions(
+        banks=[b[0] for b in banks],
+        departments=[d[0] for d in departments],
+    )
+
+
+@router.get("", response_model=schemas.MemberListResponse)
 def list_members(
-    search: Optional[str] = Query(None, description="Search by name or PSN"),
+    search: Optional[str] = Query(None, description="Matches member number/PSN, name, or phone"),
+    bank_name: Optional[str] = Query(None, description="Exact match against Member.bank_name"),
+    department: Optional[str] = Query(None, description="Exact match against Member.department"),
     status: Optional[models.MemberStatus] = None,
     skip: int = 0,
     limit: int = 100,
     current_user: models.User = Depends(require_permission("member.view")),
     db: Session = Depends(get_db),
 ):
+    """
+    Members Search & Filtering Remediation (2026-08-29). Two
+    conceptually separate, combinable mechanisms, both enforced here at
+    the query level (never in the browser, never against only the
+    current page):
+
+    - Free-text `search` -- "which member(s) am I looking for" -- matches
+      PSN (this codebase's Member Number/ID -- there is no separate
+      member_number field; see the Phase 1 report), name, or phone.
+      Normalized server-side: `.strip()`ed, and empty/whitespace-only
+      input is treated as no search at all (never sent to the DB as an
+      empty-string LIKE). Leading/trailing whitespace on the STORED
+      value is not a concern here -- this only trims the incoming query
+      term. Meaningful internal spaces (e.g. "John Doe") are preserved,
+      since `.strip()` only removes leading/trailing whitespace.
+      Email is deliberately NOT included: it was never part of the
+      pre-existing search contract (the prior implementation only
+      matched name/PSN), and this remediation's own scope note makes
+      email-search conditional on it already being approved -- it
+      wasn't, so it stays out.
+    - Structured filters `bank_name`, `department`, `status` -- "which
+      group of members do I want to see" -- each optional and
+      independently usable without `search`. `status` uses this
+      codebase's actual canonical MemberStatus values (`financial` /
+      `non_financial` -- there is no `active`/`inactive` status in this
+      data model; see the Phase 1 report for why the addendum's
+      "Active"/"Inactive" wording maps to these instead of being
+      invented as new values).
+
+    All conditions AND together. `total` in the response is the count of
+    the FULLY FILTERED dataset (before `skip`/`limit` are applied), so
+    the frontend can compute total pages and detect an out-of-range page
+    after a filter change -- this is why the endpoint returns
+    MemberListResponse instead of a bare list.
+    """
     query = db.query(models.Member)
 
-    if search:
-        like = f"%{search}%"
+    normalized_search = search.strip() if search else ""
+    if normalized_search:
+        like = f"%{normalized_search}%"
         query = query.filter(
-            or_(models.Member.name.ilike(like), models.Member.psn.ilike(like))
+            or_(
+                models.Member.name.ilike(like),
+                models.Member.psn.ilike(like),
+                models.Member.phone.ilike(like),
+            )
         )
+
+    if bank_name:
+        query = query.filter(models.Member.bank_name == bank_name)
+
+    if department:
+        query = query.filter(models.Member.department == department)
 
     if status:
         query = query.filter(models.Member.status == status)
 
+    total = query.count()
     members = query.order_by(models.Member.name).offset(skip).limit(limit).all()
     _attach_login_state(db, members)
-    return members
+    return schemas.MemberListResponse(items=members, total=total, skip=skip, limit=limit)
 
 
 @router.get("/{member_id}", response_model=schemas.MemberOut)

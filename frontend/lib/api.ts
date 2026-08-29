@@ -186,8 +186,42 @@ export interface MemberInput {
   restriction_reason?: string;
 }
 
-export async function listMembers(search?: string): Promise<Member[]> {
-  return apiFetch<Member[]>("/api/members", { searchParams: { search } });
+export interface MemberListResult {
+  items: Member[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface MemberFilterOptions {
+  banks: string[];
+  departments: string[];
+}
+
+export interface MemberListParams {
+  search?: string;
+  bank_name?: string;
+  department?: string;
+  status?: MemberStatus;
+  skip?: number;
+  limit?: number;
+}
+
+export async function listMembers(params: MemberListParams = {}): Promise<MemberListResult> {
+  return apiFetch<MemberListResult>("/api/members", {
+    searchParams: {
+      search: params.search || undefined,
+      bank_name: params.bank_name || undefined,
+      department: params.department || undefined,
+      status: params.status || undefined,
+      skip: params.skip !== undefined ? String(params.skip) : undefined,
+      limit: params.limit !== undefined ? String(params.limit) : undefined,
+    },
+  });
+}
+
+export async function getMemberFilterOptions(): Promise<MemberFilterOptions> {
+  return apiFetch<MemberFilterOptions>("/api/members/filter-options");
 }
 
 export async function getMyMemberRecord(): Promise<Member> {
