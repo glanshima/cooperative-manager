@@ -7,6 +7,7 @@ import {
   MemberInput,
   MemberFilterOptions,
   MemberStatus,
+  ApiError,
   listMembers,
   getMemberFilterOptions,
   createMember,
@@ -15,6 +16,26 @@ import {
   createMemberLogin,
   updateMemberLoginStatus,
 } from "../../lib/api";
+
+/** Appends the eligible-approvers list to a self-conflict error message,
+ * when the backend included one (self_conflict.py / require_no_self_conflict),
+ * so the admin sees who else can do this instead of just a dead-end
+ * denial. Falls back to the plain message for any other kind of error. */
+function describeError(e: unknown): string {
+  if (e instanceof ApiError && e.detail && typeof e.detail === "object") {
+    const detail = e.detail as { eligible_approvers?: { username: string }[]; no_eligible_approver_available?: boolean };
+    if (detail.eligible_approvers) {
+      if (detail.eligible_approvers.length > 0) {
+        const names = detail.eligible_approvers.map((a) => a.username).join(", ");
+        return `${e.message} Eligible approvers: ${names}.`;
+      }
+      if (detail.no_eligible_approver_available) {
+        return `${e.message} No other eligible officer currently holds this permission.`;
+      }
+    }
+  }
+  return e instanceof Error ? e.message : String(e);
+}
 
 const PAGE_SIZE = 25;
 
@@ -73,6 +94,14 @@ export default function MembersPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Members-list-table's own load failure -- kept SEPARATE from the
+  // action-oriented `error` above. Bug fixed 2026-08-30: these two were
+  // previously the same state, so a self-conflict 409 (or any other
+  // failure) from Edit/Delete/Create-login/etc. would also make the
+  // ALREADY-successfully-loaded members table incorrectly render
+  // "Unable to load members." -- conflating "this one action failed"
+  // with "the list itself failed to load" even when the list was fine.
+  const [listError, setListError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   // Request-race guard (Section 15): if two requests are ever in flight
@@ -85,7 +114,7 @@ export default function MembersPage() {
     const effectiveSearch = overrides.search !== undefined ? overrides.search : search;
     const mySeq = ++requestSeqRef.current;
     setLoading(true);
-    setError(null);
+    setListError(null);
     try {
       const result = await listMembers({
         search: effectiveSearch,
@@ -101,7 +130,7 @@ export default function MembersPage() {
       setSkip(effectiveSkip);
     } catch (e: any) {
       if (mySeq !== requestSeqRef.current) return;
-      setError(e.message);
+      setListError(e.message);
     } finally {
       if (mySeq === requestSeqRef.current) setLoading(false);
     }
@@ -189,7 +218,7 @@ export default function MembersPage() {
       resetForm();
       await refresh();
     } catch (e: any) {
-      setError(e.message);
+      setError(describeError(e));
     }
   }
 
@@ -199,7 +228,7 @@ export default function MembersPage() {
       await deleteMember(id);
       await refresh();
     } catch (e: any) {
-      setError(e.message);
+      setError(describeError(e));
     }
   }
 
@@ -215,7 +244,7 @@ export default function MembersPage() {
       setSuccess(`Login created for ${member.name}. Share the PSN and temporary password with them.`);
       await refresh();
     } catch (e: any) {
-      setError(e.message);
+      setError(describeError(e));
     }
   }
 
@@ -234,7 +263,7 @@ export default function MembersPage() {
       setSuccess(`Login deactivated for ${member.name}.`);
       await refresh();
     } catch (e: any) {
-      setError(e.message);
+      setError(describeError(e));
     }
   }
 
@@ -246,7 +275,7 @@ export default function MembersPage() {
       setSuccess(`Login reactivated for ${member.name}.`);
       await refresh();
     } catch (e: any) {
-      setError(e.message);
+      setError(describeError(e));
     }
   }
 
@@ -260,6 +289,7 @@ export default function MembersPage() {
       </div>
 
       {error && <p style={{ color: "crimson", fontWeight: 600 }}>Error: {error}</p>}
+      {listError && <p style={{ color: "crimson", fontWeight: 600 }}>Error loading members: {listError}</p>}
       {success && <p style={{ color: "green", fontWeight: 600 }}>{success}</p>}
 
       <section style={{ marginBottom: 12 }}>
@@ -482,7 +512,7 @@ export default function MembersPage() {
       <section>
         {loading ? (
           <p>Loading...</p>
-        ) : error ? (
+        ) : listError ? (
           <p>Unable to load members.</p>
         ) : members.length === 0 ? (
           <p>No matching records found.</p>

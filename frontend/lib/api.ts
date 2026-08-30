@@ -19,10 +19,38 @@ export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+/**
+ * Thrown by apiFetch on any non-2xx response. `message` is always a
+ * human-readable string (safe to render directly, e.g. via
+ * `catch (e: any) { setError(e.message) }`), even when the backend's
+ * `detail` was a structured object rather than a plain string (e.g.
+ * self_conflict.py's 409 responses, which include an `eligible_approvers`
+ * list) -- the full original `detail` value (string OR object) is also
+ * kept on `.detail` for callers that want more than just the message.
+ */
+export class ApiError extends Error {
+  detail: unknown;
+  constructor(message: string, detail?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.detail = detail;
+  }
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Request failed with status ${res.status}`);
+    const detail = body.detail;
+    let message: string;
+    if (typeof detail === "string" && detail) {
+      message = detail;
+    } else if (detail && typeof detail === "object" && typeof (detail as any).message === "string") {
+      // e.g. self_conflict.py's { error, message, eligible_approvers, ... }
+      message = (detail as any).message;
+    } else {
+      message = `Request failed with status ${res.status}`;
+    }
+    throw new ApiError(message, detail);
   }
   if (res.status === 204) return undefined as unknown as T;
   return res.json();
