@@ -17,7 +17,6 @@ from sqlalchemy import (
     Index,
     CheckConstraint,
     text,
-    and_,
 )
 from sqlalchemy import JSON as GenericJSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -102,23 +101,36 @@ class Member(Base):
     # raised a SQLAlchemy "multiple rows returned for uselist=False
     # relationship" error the first time any code path actually used it
     # (nothing did yet -- this was a dormant bug, not an active one).
-    # Split into the two explicit, role-scoped relationships below
-    # instead of one ambiguous one. viewonly=True because the actual
-    # write path for member_id is always through the User row directly
-    # (auth.py's create_member_login, admin_users.py's member-link
-    # endpoint) -- these exist for reading, not assigning through.
-    member_login_user = relationship(
-        "User",
-        primaryjoin="and_(User.member_id == Member.id, User.role == UserRole.MEMBER)",
-        viewonly=True,
-        uselist=False,
-    )
-    admin_login_user = relationship(
-        "User",
-        primaryjoin="and_(User.member_id == Member.id, User.role == UserRole.ADMIN)",
-        viewonly=True,
-        uselist=False,
-    )
+    #
+    # HOTFIX 2026-08-30: the first attempt at this fix used two
+    # SQLAlchemy relationship()s with a custom string primaryjoin
+    # (filtering by role). That could not be verified in the sandbox
+    # this was built in (no SQLAlchemy installed, no network to install
+    # it), and it broke mapper configuration in production -- SQLAlchemy
+    # configures ALL mapped relationships together the first time ANY
+    # query runs, so a bad relationship on Member took down completely
+    # unrelated endpoints too (login included, despite login never
+    # touching Member at all). Reverted to plain, explicit query methods
+    # below instead: no relationship() at all, so there is nothing for
+    # mapper configuration to resolve or get wrong -- these only run
+    # when actually called, with an explicit db session, like any other
+    # query in this codebase.
+    def get_member_login_user(self, db):
+        """The role='member' self-service User for this Member, if any."""
+        return (
+            db.query(User)
+            .filter(User.member_id == self.id, User.role == UserRole.MEMBER)
+            .first()
+        )
+
+    def get_admin_login_user(self, db):
+        """The role='admin' User linked to this Member for conflict-of-
+        interest checking (self_conflict.py), if any."""
+        return (
+            db.query(User)
+            .filter(User.member_id == self.id, User.role == UserRole.ADMIN)
+            .first()
+        )
 
 
 class LoanStatus(str, enum.Enum):
@@ -457,9 +469,9 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # No back_populates here (see Member.member_login_user /
-    # Member.admin_login_user below, in the Member class) -- this side
-    # (User -> Member) is unambiguous (each User has at most one
+    # No back_populates here (see Member.get_member_login_user() /
+    # Member.get_admin_login_user() below, in the Member class) -- this
+    # side (User -> Member) is unambiguous (each User has at most one
     # member_id), but the reverse (Member -> User) is NOT one-to-one
     # since the Controlled Remediation pass's partial unique indexes:
     # up to two User rows (one role='member', one role='admin') can
