@@ -40,7 +40,7 @@ def _referenced_permission_codes() -> set:
 
 
 def test_catalogue_has_no_duplicate_codes():
-    codes = [code for code, _, _ in PERMISSION_CATALOGUE]
+    codes = [code for code, _, _, _ in PERMISSION_CATALOGUE]
     assert len(codes) == len(set(codes)), "Duplicate permission code in PERMISSION_CATALOGUE"
 
 

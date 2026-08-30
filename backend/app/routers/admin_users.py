@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import models, schemas, audit_service
+from .. import models, schemas, audit_service, member_link_governance
 from ..account_lifecycle import set_account_status, validate_password_strength
 from ..auth import hash_password
 from ..database import get_db
@@ -207,6 +207,61 @@ def update_admin_user_member_link(
     return user
 
 
+@router.patch("/{user_id}/non-member-confirmation", response_model=schemas.UserOut)
+def update_non_member_confirmation(
+    user_id: uuid.UUID,
+    payload: schemas.AdminUserNonMemberConfirmationUpdate,
+    request: Request,
+    current_user: models.User = Depends(require_permission("admin.user_manage")),
+    db: Session = Depends(get_db),
+):
+    """
+    Controlled Implementation -- Admin Governance & Member-Link
+    Enforcement, Section 2: explicit, audited attestation that this
+    admin account does NOT represent a cooperative member (e.g. a hired
+    bookkeeper), so it may hold requires_member_link=True permissions
+    while member_id stays null. This is the ONLY way
+    confirmed_non_member_admin is ever set -- never inferred (see
+    member_link_governance.py's module docstring).
+    """
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != models.UserRole.ADMIN:
+        raise HTTPException(
+            status_code=400,
+            detail="Only admin-role accounts can be confirmed as non-member accounts.",
+        )
+    if payload.confirmed and user.member_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This account is already linked to a Member; a non-member "
+                "confirmation would be contradictory. Unlink it first if that's "
+                "no longer correct."
+            ),
+        )
+
+    previous = user.confirmed_non_member_admin
+    user.confirmed_non_member_admin = payload.confirmed
+    db.commit()
+    db.refresh(user)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="admin.user_non_member_confirmation_changed",
+        action="update",
+        entity_type="user",
+        entity_id=str(user.id),
+        previous_values={"confirmed_non_member_admin": previous},
+        new_values={"confirmed_non_member_admin": user.confirmed_non_member_admin},
+        reason=payload.reason,
+        request=request,
+    )
+    return user
+
+
 @router.get("/{user_id}/assignments", response_model=List[schemas.UserRoleAssignmentOut])
 def list_user_assignments(
     user_id: uuid.UUID,
@@ -239,6 +294,21 @@ def assign_role(
         office = db.query(models.Office).filter(models.Office.id == payload.office_id).first()
         if not office:
             raise HTTPException(status_code=404, detail="Office not found")
+
+    # Controlled Implementation -- Admin Governance & Member-Link
+    # Enforcement, Sections 2 and 4: this role may carry
+    # requires_member_link=True permissions; granting it to an account
+    # that's neither linked nor confirmed non-member would create an
+    # account holding sensitive financial authority the self-conflict
+    # guard can never actually check. Backend-enforced -- frontend
+    # validation alone is insufficient (Section 4).
+    role_permission_codes = [rp.permission.code for rp in role.permissions]
+    blocking_codes = member_link_governance.sensitive_codes_in(db, role_permission_codes)
+    if blocking_codes and not member_link_governance.is_governance_satisfied(user):
+        raise HTTPException(
+            status_code=409,
+            detail=member_link_governance.governance_denial_message(user, blocking_codes),
+        )
 
     assignment = models.UserRoleAssignment(
         user_id=user_id,

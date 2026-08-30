@@ -417,6 +417,21 @@ class User(Base):
     # configuration authority (see migration notes / Change-Control C-1).
     is_super_admin = Column(Boolean, nullable=False, default=False)
 
+    # Controlled Implementation -- Admin Governance & Member-Link
+    # Enforcement (2026-08), Section 2: an explicit, auditable attestation
+    # that this admin account genuinely does NOT represent a cooperative
+    # member (e.g. a hired bookkeeper with no EXCO/member standing) --
+    # the ONLY thing, besides member_id being set, that lets the account
+    # receive a permission classified requires_member_link=True (see
+    # Permission.requires_member_link). Defaults to False (fail-closed):
+    # an unlinked account cannot receive a sensitive financial permission
+    # until either a real member_id link is set, or another
+    # admin.user_manage holder deliberately confirms this flag via
+    # PATCH /api/admin/users/{id}/non-member-confirmation. This is
+    # DELIBERATELY NOT inferred from name/email/anything else -- same
+    # design rule as member_id itself (see self_conflict.py).
+    confirmed_non_member_admin = Column(Boolean, nullable=False, default=False)
+
     # --- Brute-force / account lockout tracking (Section 6) ---
     failed_login_count = Column(Integer, nullable=False, default=0)
     locked_until = Column(DateTime, nullable=True)
@@ -485,6 +500,17 @@ class Permission(Base):
     code = Column(String, unique=True, nullable=False, index=True)
     category = Column(String, nullable=False)
     description = Column(String, nullable=False)
+
+    # Controlled Implementation -- Admin Governance & Member-Link
+    # Enforcement (2026-08), Section 3: whether *holding* this permission
+    # is sensitive enough that the admin account granted it must be
+    # linked to a Member (User.member_id) or explicitly confirmed as a
+    # legitimate non-member account (User.confirmed_non_member_admin)
+    # before the grant is allowed. Seeded from permissions_catalogue.py's
+    # PERMISSION_CATALOGUE (4th tuple element) -- see that module's
+    # docstring for the classification rationale. Enforced in
+    # routers/admin_users.py::assign_role and routers/roles.py::update_role.
+    requires_member_link = Column(Boolean, nullable=False, default=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
