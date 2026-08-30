@@ -187,8 +187,8 @@ def require_no_self_conflict(
         detail={
             "error": "self_conflict",
             "message": (
-                f"You cannot {action_description} because it belongs to you "
-                "This action requires another eligible officer."
+                f"You cannot {action_description} because it belongs to your own "
+                "member record. This action requires another eligible officer."
             ),
             "eligible_approvers": [
                 {"id": str(u.id), "username": u.username} for u in eligible_approvers
