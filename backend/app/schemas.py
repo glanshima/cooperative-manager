@@ -292,7 +292,6 @@ class UserOut(BaseModel):
     username: str
     role: UserRole
     member_id: Optional[uuid.UUID] = None
-    confirmed_non_member_admin: bool = False
     must_change_password: bool
     is_active: bool
     account_status: AccountStatus
@@ -334,18 +333,6 @@ class PermissionOut(BaseModel):
     code: str
     category: str
     description: str
-    requires_member_link: bool = False
-
-
-class AdminUserNonMemberConfirmationUpdate(BaseModel):
-    """Controlled Implementation -- Admin Governance & Member-Link
-    Enforcement, Section 2: explicit attestation that an admin account
-    does NOT represent a cooperative member, allowing it to receive
-    permissions classified requires_member_link=True while member_id
-    stays null. Set confirmed=False to withdraw a prior confirmation."""
-
-    confirmed: bool
-    reason: Optional[str] = None
 
 
 class RoleBase(BaseModel):

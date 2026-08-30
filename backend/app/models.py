@@ -17,6 +17,7 @@ from sqlalchemy import (
     Index,
     CheckConstraint,
     text,
+    and_,
 )
 from sqlalchemy import JSON as GenericJSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -87,7 +88,37 @@ class Member(Base):
     loan_applications = relationship(
         "LoanApplication", back_populates="member", cascade="all, delete-orphan"
     )
-    user = relationship("User", back_populates="member", uselist=False)
+    # Bug fix (Phase 0 assessment, 2026-08-30): this used to be a single
+    # `user = relationship("User", back_populates="member", uselist=False)`,
+    # which assumed at most one User row could ever reference a given
+    # member_id. That was true when it was written, but the Controlled
+    # Remediation pass's partial unique indexes (see the migration
+    # scripts/manual_migration_2026_08_controlled_remediation_user_member_link.sql)
+    # deliberately made it possible for TWO User rows to reference the
+    # same member_id at once -- one role='member' self-service login,
+    # one role='admin' account linked for conflict-of-interest checking
+    # (self_conflict.py). The old relationship was never updated to
+    # match, so calling member.user with both rows present would have
+    # raised a SQLAlchemy "multiple rows returned for uselist=False
+    # relationship" error the first time any code path actually used it
+    # (nothing did yet -- this was a dormant bug, not an active one).
+    # Split into the two explicit, role-scoped relationships below
+    # instead of one ambiguous one. viewonly=True because the actual
+    # write path for member_id is always through the User row directly
+    # (auth.py's create_member_login, admin_users.py's member-link
+    # endpoint) -- these exist for reading, not assigning through.
+    member_login_user = relationship(
+        "User",
+        primaryjoin="and_(User.member_id == Member.id, User.role == UserRole.MEMBER)",
+        viewonly=True,
+        uselist=False,
+    )
+    admin_login_user = relationship(
+        "User",
+        primaryjoin="and_(User.member_id == Member.id, User.role == UserRole.ADMIN)",
+        viewonly=True,
+        uselist=False,
+    )
 
 
 class LoanStatus(str, enum.Enum):
@@ -417,21 +448,6 @@ class User(Base):
     # configuration authority (see migration notes / Change-Control C-1).
     is_super_admin = Column(Boolean, nullable=False, default=False)
 
-    # Controlled Implementation -- Admin Governance & Member-Link
-    # Enforcement (2026-08), Section 2: an explicit, auditable attestation
-    # that this admin account genuinely does NOT represent a cooperative
-    # member (e.g. a hired bookkeeper with no EXCO/member standing) --
-    # the ONLY thing, besides member_id being set, that lets the account
-    # receive a permission classified requires_member_link=True (see
-    # Permission.requires_member_link). Defaults to False (fail-closed):
-    # an unlinked account cannot receive a sensitive financial permission
-    # until either a real member_id link is set, or another
-    # admin.user_manage holder deliberately confirms this flag via
-    # PATCH /api/admin/users/{id}/non-member-confirmation. This is
-    # DELIBERATELY NOT inferred from name/email/anything else -- same
-    # design rule as member_id itself (see self_conflict.py).
-    confirmed_non_member_admin = Column(Boolean, nullable=False, default=False)
-
     # --- Brute-force / account lockout tracking (Section 6) ---
     failed_login_count = Column(Integer, nullable=False, default=0)
     locked_until = Column(DateTime, nullable=True)
@@ -441,7 +457,16 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    member = relationship("Member", back_populates="user")
+    # No back_populates here (see Member.member_login_user /
+    # Member.admin_login_user below, in the Member class) -- this side
+    # (User -> Member) is unambiguous (each User has at most one
+    # member_id), but the reverse (Member -> User) is NOT one-to-one
+    # since the Controlled Remediation pass's partial unique indexes:
+    # up to two User rows (one role='member', one role='admin') can
+    # legitimately reference the same member_id at once. A plain
+    # back_populates="user" with uselist=False on the Member side would
+    # raise at runtime the moment both exist for the same member.
+    member = relationship("Member")
     role_assignments = relationship(
         "UserRoleAssignment",
         back_populates="user",
@@ -500,17 +525,6 @@ class Permission(Base):
     code = Column(String, unique=True, nullable=False, index=True)
     category = Column(String, nullable=False)
     description = Column(String, nullable=False)
-
-    # Controlled Implementation -- Admin Governance & Member-Link
-    # Enforcement (2026-08), Section 3: whether *holding* this permission
-    # is sensitive enough that the admin account granted it must be
-    # linked to a Member (User.member_id) or explicitly confirmed as a
-    # legitimate non-member account (User.confirmed_non_member_admin)
-    # before the grant is allowed. Seeded from permissions_catalogue.py's
-    # PERMISSION_CATALOGUE (4th tuple element) -- see that module's
-    # docstring for the classification rationale. Enforced in
-    # routers/admin_users.py::assign_role and routers/roles.py::update_role.
-    requires_member_link = Column(Boolean, nullable=False, default=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

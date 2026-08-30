@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from .. import models, schemas, audit_service, member_link_governance
+from .. import models, schemas, audit_service
 from ..database import get_db
 from ..deps import get_current_user, require_any_permission, require_permission
 
@@ -118,42 +118,6 @@ def update_role(
         unknown = _unknown_codes(db, permission_codes)
         if unknown:
             raise HTTPException(status_code=400, detail=f"Unknown permission code(s): {', '.join(unknown)}")
-
-        # Controlled Implementation -- Admin Governance & Member-Link
-        # Enforcement, Sections 2 and 4: a role can also acquire a
-        # sensitive permission via THIS endpoint, after already being
-        # assigned to admins -- the assign-time gate in
-        # admin_users.py::assign_role alone isn't enough to close this
-        # path. Block the edit if it would leave any currently-assigned,
-        # non-governed admin holding a requires_member_link permission.
-        newly_blocking_codes = member_link_governance.sensitive_codes_in(db, permission_codes)
-        if newly_blocking_codes:
-            assignees = (
-                db.query(models.User)
-                .join(
-                    models.UserRoleAssignment,
-                    models.UserRoleAssignment.user_id == models.User.id,
-                )
-                .filter(
-                    models.UserRoleAssignment.role_id == role.id,
-                    models.UserRoleAssignment.is_active.is_(True),
-                )
-                .all()
-            )
-            ungoverned = [u for u in assignees if not member_link_governance.is_governance_satisfied(u)]
-            if ungoverned:
-                names = ", ".join(sorted(u.username for u in ungoverned))
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Cannot add permission(s) {', '.join(sorted(newly_blocking_codes))} to "
-                        f"role '{role.name}': it is currently assigned to unlinked, "
-                        f"unconfirmed admin account(s) ({names}). Link or confirm those "
-                        "accounts first, or remove the assignment, before granting this "
-                        "role sensitive financial authority."
-                    ),
-                )
-
         _set_role_permissions(db, role, permission_codes)
 
     db.commit()

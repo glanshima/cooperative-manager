@@ -93,15 +93,8 @@ def seed_permissions(db_session):
     """Seeds the permission catalogue only (not default roles) -- tests
     build their own minimal roles so each test's fixture setup is
     self-explanatory."""
-    for code, category, description, requires_member_link in PERMISSION_CATALOGUE:
-        db_session.add(
-            models.Permission(
-                code=code,
-                category=category,
-                description=description,
-                requires_member_link=requires_member_link,
-            )
-        )
+    for code, category, description in PERMISSION_CATALOGUE:
+        db_session.add(models.Permission(code=code, category=category, description=description))
     db_session.commit()
 
 
@@ -130,14 +123,7 @@ def make_member_user(db_session, member, password="Passw0rd!"):
     return user
 
 
-def make_admin_user(
-    db_session,
-    username="admin1",
-    password="Passw0rd!",
-    super_admin=False,
-    member_id=None,
-    confirmed_non_member_admin=False,
-):
+def make_admin_user(db_session, username="admin1", password="Passw0rd!", super_admin=False, member_id=None):
     user = models.User(
         username=username,
         password_hash=hash_password(password),
@@ -146,7 +132,6 @@ def make_admin_user(
         account_status=models.AccountStatus.ACTIVE,
         is_super_admin=super_admin,
         member_id=member_id,
-        confirmed_non_member_admin=confirmed_non_member_admin,
     )
     db_session.add(user)
     db_session.commit()

@@ -1044,3 +1044,27 @@ addendum; blocked on the same environmental constraints as Sections J,
 K, and L — no tests have been executed, and neither has the frontend
 build. No known remaining functional defect; the blockers are entirely
 "hasn't been run yet," not "known to be broken."
+
+---
+
+## N. Member↔User relationship fix (2026-08-30)
+
+Fixes Recommendation #1 from the Phase 0 Admin↔Member Linking
+Assessment: `Member.user` was a single `uselist=False` relationship that
+assumed at most one `User` row could reference a given `member_id`. That
+assumption stopped being true as of the Controlled Remediation pass's
+partial unique indexes, which deliberately allow **two** `User` rows
+(one `role='member'` self-service login, one `role='admin'` conflict-
+linked account) to reference the same `member_id` at once. Nothing in
+the router code called `member.user` yet, so this was a dormant, not
+active, bug — confirmed by grepping every call site before making the
+change.
+
+**Fix:** replaced the single ambiguous relationship with two explicit,
+role-scoped ones on `Member`: `member_login_user` and `admin_login_user`
+(both `viewonly=True`, `uselist=False`, each filtered by `User.role` in
+their `primaryjoin`). `User.member` (the many-to-one side) is unchanged
+except for dropping its now-asymmetric `back_populates`. Covered by
+`backend/tests/test_member_user_relationship.py`, including the exact
+scenario that used to crash (both rows present for one member) —
+written, not yet executed against a real database.

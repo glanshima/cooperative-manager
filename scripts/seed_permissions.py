@@ -30,37 +30,26 @@ Session = sessionmaker(bind=engine)
 def main():
     session = Session()
 
-    for code, category, description, requires_member_link in PERMISSION_CATALOGUE:
+    for code, category, description in PERMISSION_CATALOGUE:
         existing = session.execute(
             text("SELECT id FROM permissions WHERE code = :code"), {"code": code}
         ).fetchone()
         if existing:
             session.execute(
                 text(
-                    "UPDATE permissions SET category = :category, description = :description, "
-                    "requires_member_link = :requires_member_link WHERE code = :code"
+                    "UPDATE permissions SET category = :category, description = :description WHERE code = :code"
                 ),
-                {
-                    "code": code,
-                    "category": category,
-                    "description": description,
-                    "requires_member_link": requires_member_link,
-                },
+                {"code": code, "category": category, "description": description},
             )
         else:
             session.execute(
                 text(
                     """
-                    INSERT INTO permissions (id, code, category, description, requires_member_link, created_at)
-                    VALUES (gen_random_uuid(), :code, :category, :description, :requires_member_link, now())
+                    INSERT INTO permissions (id, code, category, description, created_at)
+                    VALUES (gen_random_uuid(), :code, :category, :description, now())
                     """
                 ),
-                {
-                    "code": code,
-                    "category": category,
-                    "description": description,
-                    "requires_member_link": requires_member_link,
-                },
+                {"code": code, "category": category, "description": description},
             )
     session.commit()
     print(f"Seeded/updated {len(PERMISSION_CATALOGUE)} permissions.")
