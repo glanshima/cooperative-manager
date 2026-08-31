@@ -711,6 +711,17 @@ export async function updateAdminUserStatus(
   });
 }
 
+export async function updateAdminUserMemberLink(
+  userId: string,
+  memberId: string | null,
+  reason?: string
+): Promise<CurrentUser> {
+  return apiFetch<CurrentUser>(`/api/admin/users/${userId}/member-link`, {
+    method: "PATCH",
+    body: { member_id: memberId, reason: reason ?? null },
+  });
+}
+
 export interface UserRoleAssignment {
   id: string;
   user_id: string;

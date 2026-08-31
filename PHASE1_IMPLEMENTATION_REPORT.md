@@ -1068,3 +1068,102 @@ except for dropping its now-asymmetric `back_populates`. Covered by
 `backend/tests/test_member_user_relationship.py`, including the exact
 scenario that used to crash (both rows present for one member) —
 written, not yet executed against a real database.
+
+---
+
+## O. Admin → Member Linking Workflow & Self-Conflict Alert Lifecycle (2026-08-30)
+
+Controlled remediation building the operational Admin UI on top of the
+already-existing backend linkage architecture (Sections K, N). **Zero
+backend files were changed in this pass** — deliberate, given the prior
+session's outage from an unverified backend model change. Every new UI
+action calls the existing `PATCH /api/admin/users/{id}/member-link`
+endpoint; no new or competing linkage mechanism was introduced.
+
+**Admin Users page (`frontend/app/admin/users/page.tsx`) rewritten** to
+add:
+- A "Linked Member" column showing "Not linked" or "PSN — Name" (built
+  from a client-side lookup against `GET /api/members` — no new backend
+  endpoint, reusing the same pattern `loans.py`'s member picker already
+  used).
+- Link / Change Member / Unlink actions, each a thin wrapper around the
+  existing endpoint, each requiring explicit selection + confirmation
+  before submitting.
+- An optional member-search-and-link step on the admin-creation form —
+  implemented as two sequential calls to two already-existing endpoints
+  (`POST /api/admin/users` then `PATCH .../member-link`), not a new
+  combined endpoint. If the second call fails, the admin account (already
+  created) is not rolled back or hidden — the UI says so explicitly and
+  points at the manual Link action as a fallback.
+
+**Error-state lifecycle fixed** (Section 6/7's core ask): the page
+previously had exactly the same bug class already found and fixed on the
+Members page — a single shared `error` string covering both
+list-loading failures AND every individual operation's own failure, with
+several handlers (`toggleExpand` in particular) never clearing it on
+success. Traced precisely, not guessed: `refresh()` did clear `error` at
+its own start, but per-operation handlers like `toggleExpand` did not,
+so a stale message from an earlier failed operation could survive
+indefinitely until a `refresh()` happened to run. Fixed by splitting
+into three independent states — `listError` (only `refresh()` sets/
+clears this), `actionError` (every mutating operation clears this via a
+shared `beginAction()` helper at its own start, not just on success),
+and `success` — plus an explicit "Dismiss" button. Every action handler
+(create, status change, expand-roles, assign role, revoke role, link,
+change, unlink) now goes through the same `beginAction()`/
+`isCurrentAction()` pair, closing the bug uniformly rather than only for
+the new linking feature.
+
+**Race-safety:** a shared `actionSeqRef` sequence counter guards every
+mutating operation — only the most recently *started* operation's
+result is ever applied to `actionError`/`success`, so a slow older
+failure can't overwrite a faster newer success (Section 8's example).
+`refresh()` has its own separate `listSeqRef` for the same reason,
+consistent with the pattern already used on the Members page.
+
+**Finding — the prompt's Section 6 premise does not match current
+backend behavior**, verified by direct inspection rather than assumed:
+`update_admin_user_member_link` in `admin_users.py` does **not** call
+`self_conflict.require_no_self_conflict()` at any point — it was never
+wired in. The docstring mentions `self_conflict.py`, but only describes
+what happens *after* a link is set (future approve/disburse/verify
+actions get blocked), not a check on the linking action itself. This
+was independently confirmed empirically earlier in this engagement: an
+admin (`glanshima`) successfully linked their own account to their own
+member record via this exact endpoint, with no rejection. **No backend
+change was made to add this check** — the Critical Scope Rule explicitly
+prohibits redesigning "the existing self-conflict business rule" and
+"the existing backend member-link endpoint," and adding a new validation
+rule that doesn't currently exist would be exactly that. This is
+reported as a genuine open gap (Section F below), not silently
+implemented or silently ignored.
+
+**Database verification:** not re-queried in this pass (no DB access
+from this environment). Relying on evidence already gathered earlier in
+this same engagement: the Neon Console SQL Editor output confirmed both
+`ux_users_member_id_per_admin_role` and `ux_users_member_id_per_member_role`
+partial unique indexes exist on the live database.
+
+**Tests:** added `test_linking_to_a_nonexistent_member_is_rejected` and
+`test_changing_an_existing_link_to_a_different_member_succeeds` to
+`test_admin_user_member_link.py`, filling the two backend scenarios from
+Section 11's list that weren't already covered by the prior pass. All
+backend scenarios in Section 11 are now covered **except** "Admin
+self-conflict is rejected" — not written, because (per the finding
+above) that behavior does not exist in the code to test. No frontend
+tests were added — this project has no frontend test runner/framework
+configured (confirmed: no test files under `frontend/`, no test script
+in `package.json` beyond `next build`/`next dev`/`next start`), so
+"Frontend: 1–13" in Section 11 were manually verified against the code's
+logic (traced state transitions by hand) rather than executed as
+automated tests; this is stated plainly in the final report below
+rather than implied to be equivalent to a real test run.
+
+**Regression check performed** (code-level, not executed): confirmed
+zero backend files were modified in this pass; `self_conflict.py`,
+`deps.py`, `members.py`, `auth.py`, and `admin_users.py`'s actual
+endpoint logic are byte-for-byte unchanged from the last known-working
+deployment. The Admin Users page rewrite is additive relative to the
+previous version — every prior capability (create, suspend/reactivate/
+deactivate, expand/assign/revoke roles) is still present and calls the
+same functions as before.

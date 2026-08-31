@@ -91,3 +91,46 @@ def test_linking_requires_admin_user_manage_permission(client, db_session, seed_
         headers=auth_headers(unrelated_admin),
     )
     assert res.status_code == 403
+
+
+def test_linking_to_a_nonexistent_member_is_rejected(client, db_session, seed_permissions):
+    manager = make_admin_user(db_session, username="link_manager_6")
+    grant_permission(db_session, manager, "admin.user_manage")
+    target_admin = make_admin_user(db_session, username="link_target_6")
+
+    res = client.patch(
+        f"/api/admin/users/{target_admin.id}/member-link",
+        json={"member_id": "00000000-0000-0000-0000-000000000000"},
+        headers=auth_headers(manager),
+    )
+    assert res.status_code == 404
+
+
+def test_changing_an_existing_link_to_a_different_member_succeeds(client, db_session, seed_permissions):
+    """Exercises the Admin Users UI's 'Change Member' action -- re-linking
+    an already-linked admin to a different member (not unlink-then-relink,
+    a single call with a new member_id)."""
+    manager = make_admin_user(db_session, username="link_manager_7")
+    grant_permission(db_session, manager, "admin.user_manage")
+
+    old_member = make_member(db_session, psn="LINK-007", email="link7@example.com")
+    new_member = make_member(db_session, psn="LINK-008", email="link8@example.com")
+    target_admin = make_admin_user(db_session, username="link_target_7", member_id=old_member.id)
+
+    res = client.patch(
+        f"/api/admin/users/{target_admin.id}/member-link",
+        json={"member_id": str(new_member.id), "reason": "Changed EXCO assignment"},
+        headers=auth_headers(manager),
+    )
+    assert res.status_code == 200
+    assert res.json()["member_id"] == str(new_member.id)
+
+    # The old member must now be free to link to someone else -- confirms
+    # the change actually released the old link, not just added a second one.
+    other_admin = make_admin_user(db_session, username="link_target_7b")
+    res2 = client.patch(
+        f"/api/admin/users/{other_admin.id}/member-link",
+        json={"member_id": str(old_member.id)},
+        headers=auth_headers(manager),
+    )
+    assert res2.status_code == 200
