@@ -152,6 +152,41 @@ def update_admin_user_member_link(
             detail="Only admin-role accounts can be linked via this endpoint.",
         )
 
+    # Governance Objective 2 (Admin Self-Link Protection): an admin can
+    # never use this endpoint to set/change THEIR OWN account's
+    # member_id -- decided as a blanket rule (not "only their own
+    # existing member"), since allowing an admin to link themselves to
+    # SOME OTHER member would let them grant themselves administrative
+    # control over their own identity-mapping just as much as linking to
+    # "their own" member would. Self-UNLINK (payload.member_id is None)
+    # is deliberately NOT blocked here -- removing your own link removes
+    # power rather than granting it, and Section 4's separate role-based
+    # unlink protection still applies regardless of who performs it.
+    # Unconditional: current_user.is_super_admin is never checked, same
+    # as every other conflict-of-interest protection in this codebase
+    # (self_conflict.py).
+    if current_user.id == user_id and payload.member_id is not None:
+        audit_service.log_event(
+            db,
+            actor=current_user,
+            event_type="admin.member_link_self_conflict_denied",
+            action="deny",
+            entity_type="user",
+            entity_id=str(user.id),
+            reason=f"Blocked: admin attempted to link their own account to member {payload.member_id}.",
+            request=request,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "self_conflict",
+                "message": (
+                    "You cannot link your own account to a Member record. "
+                    "Ask another authorized admin to perform this link."
+                ),
+            },
+        )
+
     previous_member_id = str(user.member_id) if user.member_id else None
 
     if payload.member_id is not None:
@@ -179,6 +214,26 @@ def update_admin_user_member_link(
                     f"Member {payload.member_id} is already linked to another admin "
                     f"account ({already_linked.username})."
                 ),
+            )
+    else:
+        # Governance Objective 1, Section 4: do not allow the invalid
+        # state (member_id=NULL while an active role.requires_member_link
+        # role is held). Only checked when actually clearing a link
+        # (payload.member_id is None) and only when the user currently
+        # HAS a link to clear -- changing from one member to a different
+        # one never passes through this branch, since the resulting
+        # member_id is still non-null.
+        if user.member_id is not None and _user_has_active_member_required_role(db, user_id):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "member_link_required",
+                    "message": (
+                        "This account cannot be unlinked from its Member because it holds "
+                        "an active role that requires Member linkage. Change or revoke "
+                        "that role first."
+                    ),
+                },
             )
 
     user.member_id = payload.member_id
@@ -221,6 +276,30 @@ def list_user_assignments(
     return [_to_assignment_out(a) for a in assignments]
 
 
+def _user_has_active_member_required_role(db: Session, user_id: uuid.UUID) -> bool:
+    """
+    Admin Identity Governance remediation, Governance Objective 1
+    (Sections 3-5): true if `user_id` currently holds at least one
+    ACTIVE role assignment whose Role has requires_member_link=True.
+    Mirrors the exact active-assignment convention already used by
+    deps.py::user_has_permission (UserRoleAssignment.is_active AND
+    Role.is_active), so "active" means the same thing here as it does
+    everywhere else permission/role state is checked in this codebase.
+    """
+    return (
+        db.query(models.UserRoleAssignment)
+        .join(models.Role, models.UserRoleAssignment.role_id == models.Role.id)
+        .filter(
+            models.UserRoleAssignment.user_id == user_id,
+            models.UserRoleAssignment.is_active.is_(True),
+            models.Role.is_active.is_(True),
+            models.Role.requires_member_link.is_(True),
+        )
+        .first()
+        is not None
+    )
+
+
 @router.post("/{user_id}/assignments", response_model=schemas.UserRoleAssignmentOut, status_code=201)
 def assign_role(
     user_id: uuid.UUID,
@@ -239,6 +318,22 @@ def assign_role(
         office = db.query(models.Office).filter(models.Office.id == payload.office_id).first()
         if not office:
             raise HTTPException(status_code=404, detail="Office not found")
+
+    # Governance Objective 1, Section 3: a role marked requires_member_link
+    # cannot be assigned to an account with no linked Member. Backend-
+    # authoritative -- enforced here regardless of caller (UI, direct API
+    # call, future client).
+    if role.requires_member_link and user.member_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "member_link_required",
+                "message": (
+                    "This role requires the user account to be linked to a Member "
+                    "before the role can be assigned."
+                ),
+            },
+        )
 
     assignment = models.UserRoleAssignment(
         user_id=user_id,

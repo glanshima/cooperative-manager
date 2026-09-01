@@ -339,6 +339,7 @@ class RoleBase(BaseModel):
     name: str
     description: Optional[str] = None
     is_active: bool = True
+    requires_member_link: bool = False
 
 
 class RoleCreate(RoleBase):
@@ -349,6 +350,7 @@ class RoleUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    requires_member_link: Optional[bool] = None
     permission_codes: Optional[List[str]] = None
 
 

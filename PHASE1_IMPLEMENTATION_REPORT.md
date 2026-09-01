@@ -1167,3 +1167,192 @@ deployment. The Admin Users page rewrite is additive relative to the
 previous version — every prior capability (create, suspend/reactivate/
 deactivate, expand/assign/revoke roles) is still present and calls the
 same functions as before.
+
+---
+
+## P. Admin Identity Governance Controlled Remediation (2026-08-31)
+
+Two governance objectives, both backend-authoritative, both using only
+plain-Column/plain-query patterns (no `relationship()` with custom
+joins) given the prior session's outage from an unverified relationship
+change.
+
+### P.1 Governance Objective 1 — Role-Based Member Link Requirement
+
+New `roles.requires_member_link` Boolean column (default `false`,
+purely additive — no existing role or assignment is affected by the
+migration itself). Enforced in `admin_users.py`:
+- **Assignment time:** `assign_role` rejects assigning a
+  `requires_member_link=True` role to a user with `member_id IS NULL`
+  (409, `{"error": "member_link_required", ...}`).
+- **Unlink time:** `update_admin_user_member_link` rejects clearing
+  `member_id` (setting it to `null`) while the user holds any active
+  role with `requires_member_link=True` (`_user_has_active_member_required_role()`,
+  mirroring `deps.py::user_has_permission`'s exact active-assignment
+  query convention). Changing to a *different* member is unaffected
+  (the resulting `member_id` is still non-null, so this branch is never
+  entered).
+- No role name is ever hard-coded anywhere in the enforcement code —
+  purely data-driven off the `requires_member_link` flag, which a
+  cooperative administrator sets per-role via the Roles UI or API.
+
+### P.2 Governance Objective 2 — Admin Self-Link Protection
+
+`update_admin_user_member_link` now rejects `current_user.id == user_id
+AND payload.member_id is not None` — i.e. an admin can never use this
+endpoint to link or change *their own* account's member link, full
+stop. Unconditional: `is_super_admin` is never checked, consistent with
+`self_conflict.py`'s established precedent elsewhere. Self-*unlinking*
+is explicitly NOT blocked by this rule (removing your own link removes
+power, not grants it) — it remains subject only to Objective 1's
+separate role-based unlink check. Denials are audit-logged
+(`admin.member_link_self_conflict_denied`) before the exception is
+raised, so a rejected attempt can never appear as a successful linkage
+in the audit trail.
+
+**Decision flagged for review — Section 12, test 3 of the remediation
+prompt** ("Admin links themselves to a different Member — do not
+assume prohibited") was genuinely ambiguous between two readings: block
+only linking to the admin's *own pre-existing* member identity, or
+block *any* self-directed link. A **blanket rule** was chosen (any
+self-directed link is blocked, regardless of which member) — reasoning
+documented inline in `admin_users.py` and in
+`test_3_admin_cannot_link_themselves_to_a_different_member_either`.
+This is the single most significant interpretive decision made in this
+pass; if a narrower rule was actually intended, this is the exact test
+and code block to revisit.
+
+---
+
+### «Decision D — LOCKED: Blanket Admin Self-Link Prohibition.» (2026-09-01)
+
+**Status: LOCKED.** Approved and formally recorded by the project owner.
+Reproduced verbatim below for the permanent record; the implementation
+already matched this decision exactly when it was locked, so **no code
+changes were required or made** as a result of this lock.
+
+> An administrator may never use the Admin → Member linking endpoint to
+> link or change their own admin account to any Member record. This
+> applies regardless of which Member is selected; whether the Member is
+> the administrator's own Member record; whether the administrator is
+> Super Admin; or which role the administrator holds.
+>
+> **No Super Admin bypass.** The restriction is unconditional at the
+> Admin → Member linking endpoint.
+>
+> **Self-unlink** remains permitted, unchanged, unless another existing
+> governance rule prevents it — specifically, if the administrator
+> currently holds a role where `requires_member_link = true`, the
+> role-assignment/linkage integrity rule (Governance Objective 1) must
+> still prevent the resulting invalid state.
+>
+> This rule does not prohibit an administrator from *having* a Member
+> record — only from using the self-service Admin → Member linking
+> operation to establish or change that relationship themselves. A
+> controlled administrative process (another authorized admin performing
+> the link) remains available.
+>
+> Locked: do not narrow this rule to only the administrator's own Member
+> record, add a Super Admin bypass, weaken backend enforcement, or
+> reinterpret it in a future branch without explicit authorization. The
+> backend remains authoritative.
+
+**Required verification (all seven, checked against the actual code and
+test suite — not re-executed, same standing sandbox limitation as every
+item in this report):**
+
+| # | Requirement | Enforced by | Covered by |
+|---|---|---|---|
+| 1 | Admin cannot self-link to their own Member record | `admin_users.py` line 168: `if current_user.id == user_id and payload.member_id is not None` | `test_1_admin_cannot_link_themselves_to_their_own_member` |
+| 2 | Admin cannot self-link to another Member record | Same condition — no member-specific branch exists; the check has no dependency on *which* member is selected | `test_3_admin_cannot_link_themselves_to_a_different_member_either` |
+| 3 | Super Admin cannot bypass | Confirmed by direct inspection: `is_super_admin` is never referenced anywhere in this endpoint or in the condition above | `test_1b_super_admin_cannot_bypass_self_link_protection` |
+| 4 | Admin can still be linked via an authorized external/controlled process | The condition only fires when `current_user.id == user_id` (the caller acting on themselves); a *different* admin performing the link is unaffected | `test_2_admin_links_another_admin_to_a_valid_member_succeeds` |
+| 5 | Existing valid Admin → Member links continue to work (change operation) | Unaffected — the self-link condition and the "change to a different member" path are independent | `test_4_changing_an_existing_link_continues_to_work`, `test_changing_an_existing_link_to_a_different_member_succeeds` |
+| 6 | Required-member role enforcement remains intact | Governance Objective 1's checks (assignment-time and unlink-time) live in separate code paths from the self-link check and were not modified by this lock | `test_role_member_link_requirement.py` (7 tests), `test_5b_admin_can_unlink_their_own_account` (self-unlink still subject to the role check) |
+| 7 | Audit behavior remains intact | `admin.member_link_self_conflict_denied` is logged before the exception is raised; no `admin.user_member_link_changed` (success) event is ever created for a blocked attempt | `test_self_link_denial_is_audited` |
+
+All seven are satisfied by the implementation as it stood before this
+lock. This lock changes the status of Section P.2's decision from
+"flagged for review" to **closed, permanent, and not to be
+reinterpreted without new, explicit authorization** — per the decision
+record above.
+
+### P.3 A mistake made and caught during this pass
+
+An early `str_replace` edit accidentally deleted the
+`def list_user_assignments(` line while inserting the new
+`_user_has_active_member_required_role()` helper nearby. Caught
+immediately via `python -m py_compile` failing (not shipped) and fixed
+before continuing. Noted here in the interest of the same transparency
+applied to the earlier production incident — this one did not reach a
+deployable state, but is exactly the class of careless edit that did
+last time.
+
+### P.4 Files changed
+
+**Backend:** `models.py` (new column), `schemas.py` (`RoleBase`/
+`RoleUpdate`), `routers/roles.py` (`_to_role_out`, `create_role`,
+`update_role`), `routers/admin_users.py` (both enforcement points +
+helper), new migration
+`scripts/manual_migration_2026_08_admin_identity_governance.sql`.
+
+**Frontend:** `lib/api.ts` (`Role` interface, `createRole`/`updateRole`
+signatures — no changes needed to error handling, since both new error
+shapes reuse the existing `{"error": ..., "message": ...}` structure
+`ApiError`/`describeError` already handle from the earlier self-conflict
+work); `app/admin/roles/page.tsx` (create-form checkbox, per-role badge,
+editable toggle in the edit panel); `app/admin/users/page.tsx`
+(`AssignRoleForm` shows role options annotated "(requires Member link)"
+and disables Assign with an inline explanation when the target account
+isn't linked — client-side hint only, backend remains authoritative
+regardless).
+
+### P.5 Tests
+
+- `test_role_member_link_requirement.py` (new) — Section 12 items 6-12:
+  unlinked+non-required=allowed, unlinked+required=rejected,
+  linked+required=allowed, second member-required role still rejected
+  while unlinked, unlink blocked while a member-required role is active,
+  unlink allowed after revoking that role, and a direct API call (not
+  going through any UI) is still rejected.
+- `test_admin_user_member_link.py` (extended) — Section 12 items 1-5:
+  self-link to own/any member rejected (including a super-admin
+  variant), linking *another* admin succeeds, self-link to an unrelated
+  member is *also* rejected (the documented blanket-rule decision),
+  changing an existing link continues to work, unlinking a valid account
+  continues to work, an admin can unlink *themselves*, and the denial is
+  audit-logged with no false-success event alongside it.
+- `conftest.py` extended with `make_role()` and a `requires_member_link`
+  parameter on `grant_permission()`.
+
+**All written and `python -m py_compile`-verified. None executed** —
+same standing sandbox limitation (no network, no reachable Postgres)
+as every prior pass in this engagement.
+
+### P.6 Regression check (code-level, not executed)
+
+Confirmed via full-repository `py_compile` (zero errors) and a
+line-by-line re-read of every modified function. `self_conflict.py`,
+`deps.py`, `members.py`, `auth.py`, and the previously-existing parts of
+`admin_users.py`/`roles.py` are unchanged in behavior — every
+modification in this pass is additive (a new column with a safe
+default, new conditional branches that only fire in new/specific
+circumstances, new endpoints' response fields). No `relationship()`
+with a custom join was used anywhere in this pass, specifically to avoid
+the failure mode from the prior session's outage.
+
+### P.7 What remains outstanding
+
+- **Migration not applied to any real database** —
+  `scripts/manual_migration_2026_08_admin_identity_governance.sql` must
+  be run (Neon Console SQL Editor, same as every prior migration) before
+  any of this works against the live deployment.
+- **No automated test has been executed** — same standing gap as every
+  prior pass; recommend running the full suite (now including these two
+  new files) against a disposable database before trusting this in
+  production, especially given this pass touches the same file
+  (`admin_users.py`) that had a careless edit caught mid-session (P.3).
+- ~~The Section 12 test 3 interpretation (P.2) needs explicit
+  confirmation~~ **RESOLVED 2026-09-01 — see «Decision D — LOCKED» above.**
+- No frontend build/TypeScript check has been run (no network/Node
+  modules in this sandbox) — same limitation as every prior pass.

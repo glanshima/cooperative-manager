@@ -139,9 +139,9 @@ def make_admin_user(db_session, username="admin1", password="Passw0rd!", super_a
     return user
 
 
-def grant_permission(db_session, user, *permission_codes, role_name=None):
+def grant_permission(db_session, user, *permission_codes, role_name=None, requires_member_link=False):
     role_name = role_name or f"role-{uuid.uuid4().hex[:8]}"
-    role = models.Role(name=role_name)
+    role = models.Role(name=role_name, requires_member_link=requires_member_link)
     db_session.add(role)
     db_session.flush()
     for code in permission_codes:
@@ -150,6 +150,22 @@ def grant_permission(db_session, user, *permission_codes, role_name=None):
         db_session.add(models.RolePermission(role_id=role.id, permission_id=permission.id))
     db_session.add(models.UserRoleAssignment(user_id=user.id, role_id=role.id))
     db_session.commit()
+    return role
+
+
+def make_role(db_session, name=None, requires_member_link=False, permission_codes=()):
+    """Creates a Role WITHOUT assigning it to anyone -- for tests that
+    need to call the actual assignment endpoint (POST .../assignments)
+    themselves, rather than grant_permission's direct-DB auto-assignment."""
+    role = models.Role(name=name or f"role-{uuid.uuid4().hex[:8]}", requires_member_link=requires_member_link)
+    db_session.add(role)
+    db_session.flush()
+    for code in permission_codes:
+        permission = db_session.query(models.Permission).filter(models.Permission.code == code).first()
+        assert permission is not None, f"Permission {code!r} not seeded -- use the seed_permissions fixture"
+        db_session.add(models.RolePermission(role_id=role.id, permission_id=permission.id))
+    db_session.commit()
+    db_session.refresh(role)
     return role
 
 

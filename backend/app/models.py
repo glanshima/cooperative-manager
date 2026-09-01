@@ -551,6 +551,20 @@ class Role(Base):
     description = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
 
+    # Admin Identity Governance remediation (2026-08-31): whether an
+    # account holding this role (via an active UserRoleAssignment) must
+    # be linked to a Member (User.member_id != NULL). False by default --
+    # not every admin/staff role represents a cooperative member (e.g.
+    # System Administrator, Auditor); only roles that represent or act in
+    # a capacity requiring an identifiable Member (EXCO/office roles like
+    # Treasurer) should have this set True. Enforced in
+    # routers/admin_users.py at role-assignment time and at unlink time
+    # -- see _role_requires_member_link_active() there. No existing role
+    # data is affected by adding this column (every pre-existing role
+    # defaults to False, so no already-assigned role retroactively
+    # becomes invalid).
+    requires_member_link = Column(Boolean, nullable=False, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

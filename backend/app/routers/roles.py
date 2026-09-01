@@ -17,6 +17,7 @@ def _to_role_out(role: models.Role) -> schemas.RoleOut:
         name=role.name,
         description=role.description,
         is_active=role.is_active,
+        requires_member_link=role.requires_member_link,
         created_at=role.created_at,
         permission_codes=sorted(rp.permission.code for rp in role.permissions),
     )
@@ -71,7 +72,12 @@ def create_role(
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown permission code(s): {', '.join(unknown)}")
 
-    role = models.Role(name=payload.name, description=payload.description, is_active=payload.is_active)
+    role = models.Role(
+        name=payload.name,
+        description=payload.description,
+        is_active=payload.is_active,
+        requires_member_link=payload.requires_member_link,
+    )
     db.add(role)
     db.flush()
     _set_role_permissions(db, role, payload.permission_codes)
@@ -106,6 +112,7 @@ def update_role(
     previous = {
         "name": role.name,
         "is_active": role.is_active,
+        "requires_member_link": role.requires_member_link,
         "permission_codes": sorted(rp.permission.code for rp in role.permissions),
     }
 

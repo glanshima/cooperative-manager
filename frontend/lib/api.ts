@@ -794,6 +794,7 @@ export interface Role {
   name: string;
   description?: string | null;
   is_active: boolean;
+  requires_member_link: boolean;
   created_at: string;
   permission_codes: string[];
 }
@@ -805,6 +806,7 @@ export async function listRoles(): Promise<Role[]> {
 export async function createRole(input: {
   name: string;
   description?: string;
+  requires_member_link?: boolean;
   permission_codes: string[];
 }): Promise<Role> {
   return apiFetch<Role>("/api/roles", { method: "POST", body: input });
@@ -812,7 +814,13 @@ export async function createRole(input: {
 
 export async function updateRole(
   id: string,
-  input: Partial<{ name: string; description: string; is_active: boolean; permission_codes: string[] }>
+  input: Partial<{
+    name: string;
+    description: string;
+    is_active: boolean;
+    requires_member_link: boolean;
+    permission_codes: string[];
+  }>
 ): Promise<Role> {
   return apiFetch<Role>(`/api/roles/${id}`, { method: "PUT", body: input });
 }
