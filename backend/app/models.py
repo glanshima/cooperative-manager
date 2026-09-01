@@ -644,6 +644,12 @@ class User(Base):
         foreign_keys="AuthSession.user_id",
         cascade="all, delete-orphan",
     )
+    password_reset_tokens = relationship(
+        "PasswordResetToken",
+        back_populates="user",
+        foreign_keys="PasswordResetToken.user_id",
+        cascade="all, delete-orphan",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -807,6 +813,37 @@ class AuthSession(Base):
     revoked_reason = Column(String, nullable=True)
 
     user = relationship("User", back_populates="sessions", foreign_keys=[user_id])
+
+
+# ---------------------------------------------------------------------------
+# Password Reset Tokens (Self-Service Password Recovery)
+# ---------------------------------------------------------------------------
+
+
+class PasswordResetToken(Base):
+    """
+    Stores cryptographically hashed, short-lived, single-use password
+    recovery tokens. Raw tokens are generated via secrets.token_urlsafe(32)
+    and sent via email; only their SHA-256 hex digest (token_hash) is stored
+    here. On successful password reset, used_at is populated and all active
+    AuthSession rows for the user are revoked.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    token_hash = Column(String, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    used_at = Column(DateTime, nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="password_reset_tokens", foreign_keys=[user_id])
 
 
 # ---------------------------------------------------------------------------

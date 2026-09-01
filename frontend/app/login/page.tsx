@@ -64,9 +64,14 @@ export default function LoginPage() {
           onChange={(e) => setPassword(e.target.value)}
           style={{ padding: 10 }}
         />
-        <button type="submit" disabled={loading} style={{ padding: 10 }}>
+        <button type="submit" disabled={loading} style={{ padding: 10, cursor: loading ? "not-allowed" : "pointer" }}>
           {loading ? "Logging in..." : "Log in"}
         </button>
+        <div style={{ textAlign: "center", marginTop: 8 }}>
+          <a href="/forgot-password" style={{ color: "#0066cc", fontSize: 13, textDecoration: "none" }}>
+            Forgot your password?
+          </a>
+        </div>
       </form>
     </main>
   );

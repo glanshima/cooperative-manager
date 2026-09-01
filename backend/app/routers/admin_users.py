@@ -405,3 +405,54 @@ def _to_assignment_out(a: models.UserRoleAssignment) -> schemas.UserRoleAssignme
         assigned_at=a.assigned_at,
         revoked_at=a.revoked_at,
     )
+
+
+@router.post("/{user_id}/reset-password", response_model=schemas.UserOut)
+def reset_admin_user_password(
+    user_id: uuid.UUID,
+    payload: schemas.AdminUserPasswordResetRequest,
+    request: Request,
+    current_user: models.User = Depends(require_permission("admin.user_manage")),
+    db: Session = Depends(get_db),
+):
+    """
+    Authorized Admin resets a staff/admin user's password with a temporary password,
+    forces password change on their next login (must_change_password=True),
+    clears any active lockout, and revokes all active sessions for that user.
+    """
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != models.UserRole.ADMIN:
+        raise HTTPException(status_code=400, detail="Only staff/admin accounts can be reset via this endpoint")
+
+    error = validate_password_strength(payload.temporary_password)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    user.password_hash = hash_password(payload.temporary_password)
+    user.must_change_password = True
+    user.failed_login_count = 0
+    user.locked_until = None
+
+    # Revoke all active sessions for this user
+    from datetime import datetime as _datetime
+    for session in db.query(models.AuthSession).filter(
+        models.AuthSession.user_id == user.id, models.AuthSession.revoked_at.is_(None)
+    ):
+        session.revoked_at = _datetime.utcnow()
+        session.revoked_reason = "admin_password_reset"
+
+    db.commit()
+    db.refresh(user)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="admin.user_password_reset",
+        action="update",
+        entity_type="user",
+        entity_id=str(user.id),
+        request=request,
+    )
+    return user

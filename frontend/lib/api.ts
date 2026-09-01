@@ -156,6 +156,27 @@ export async function resetMemberPassword(memberId: string, temporaryPassword: s
   });
 }
 
+export async function forgotPassword(identifier: string): Promise<{ message: string }> {
+  return apiFetch<{ message: string }>("/api/auth/forgot-password", {
+    method: "POST",
+    body: { identifier },
+  });
+}
+
+export async function verifyResetToken(token: string): Promise<{ valid: boolean }> {
+  return apiFetch<{ valid: boolean }>("/api/auth/verify-reset-token", {
+    method: "POST",
+    body: { token },
+  });
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+  return apiFetch<{ message: string }>("/api/auth/reset-password", {
+    method: "POST",
+    body: { token, new_password: newPassword },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Members
 // ---------------------------------------------------------------------------
@@ -736,6 +757,16 @@ export async function updateAdminUserMemberLink(
   return apiFetch<CurrentUser>(`/api/admin/users/${userId}/member-link`, {
     method: "PATCH",
     body: { member_id: memberId, reason: reason ?? null },
+  });
+}
+
+export async function resetAdminUserPassword(
+  userId: string,
+  temporaryPassword: string
+): Promise<CurrentUser> {
+  return apiFetch<CurrentUser>(`/api/admin/users/${userId}/reset-password`, {
+    method: "POST",
+    body: { temporary_password: temporaryPassword },
   });
 }
 
