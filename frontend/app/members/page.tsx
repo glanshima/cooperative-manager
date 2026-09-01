@@ -17,6 +17,16 @@ import {
   updateMemberLoginStatus,
 } from "../../lib/api";
 
+/** Minimal shape for the Next-of-Kin member picker -- same fields as
+ * Member.next_of_kin_member (schemas.py's NextOfKinMemberSummary), plus
+ * whatever listMembers/search already returns (a full Member, but only
+ * these fields are used here). */
+type NokMemberOption = { id: string; psn: string; name: string; phone?: string | null };
+
+function describeMemberOption(m: NokMemberOption): string {
+  return `${m.psn} — ${m.name}`;
+}
+
 /** Appends the eligible-approvers list to a self-conflict error message,
  * when the backend included one (self_conflict.py / require_no_self_conflict),
  * so the admin sees who else can do this instead of just a dead-end
@@ -92,6 +102,22 @@ export default function MembersPage() {
 
   const [form, setForm] = useState<MemberInput>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Member Relationship / Next-of-Kin Controlled Remediation (2026-09):
+  // separate state from `form` above, mirroring the admin/users page's
+  // existing member-search-and-select pattern (searchMembersFor there)
+  // rather than inventing a new one. `nokIsMember === null` is the
+  // "not yet answered" state -- used only while adding a NEW member, so
+  // the required Yes/No question (Section 1) can't be silently
+  // defaulted; editing an existing member initializes this from that
+  // member's current next_of_kin_is_member (which itself may be null
+  // for a legacy record -- see lib/api.ts's Member.next_of_kin_is_member
+  // doc comment).
+  const [nokIsMember, setNokIsMember] = useState<boolean | null>(null);
+  const [nokQuery, setNokQuery] = useState("");
+  const [nokResults, setNokResults] = useState<NokMemberOption[]>([]);
+  const [nokSelectedMember, setNokSelectedMember] = useState<NokMemberOption | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Members-list-table's own load failure -- kept SEPARATE from the
@@ -199,21 +225,84 @@ export default function MembersPage() {
       loan_restricted: m.loan_restricted,
       restriction_reason: m.restriction_reason || "",
     });
+    setNokIsMember(m.next_of_kin_is_member ?? null);
+    setNokSelectedMember(m.next_of_kin_member ?? null);
+    setNokQuery("");
+    setNokResults([]);
   }
 
   function resetForm() {
     setEditingId(null);
     setForm(emptyForm);
+    setNokIsMember(null);
+    setNokSelectedMember(null);
+    setNokQuery("");
+    setNokResults([]);
+  }
+
+  async function searchNokMembers() {
+    if (!nokQuery.trim()) {
+      setNokResults([]);
+      return;
+    }
+    try {
+      const result = await listMembers({ search: nokQuery, limit: 10 });
+      // A member can't be their own Next of Kin (backend enforces this
+      // with a 409 either way -- see self_reference in
+      // member_relationships.py -- but filtering it out of the search
+      // results here means the person editing never sees a choice the
+      // backend would just reject).
+      setNokResults(editingId ? result.items.filter((m) => m.id !== editingId) : result.items);
+    } catch {
+      // A failed search suggestion shouldn't blow away the top-level
+      // `error` state -- just show no results.
+      setNokResults([]);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    // Member Relationship / Next-of-Kin Controlled Remediation, Section
+    // 1: adding a new member requires an explicit Yes/No answer -- an
+    // unanswered (null) state is caught here with a clear message
+    // rather than letting it fall through to the backend's 422 (which
+    // has no field context to show next to).
+    if (!editingId && nokIsMember === null) {
+      setError("Please answer whether this member's Next of Kin is also a cooperative member.");
+      return;
+    }
+    if (nokIsMember === true && !nokSelectedMember) {
+      setError("Please search for and select the Next-of-Kin member.");
+      return;
+    }
+
+    // On edit, only send next_of_kin_is_member/next_of_kin_member_id
+    // when this session's editing actually touched them -- otherwise
+    // the fields are simply omitted (undefined, dropped by
+    // JSON.stringify) so the existing relationship is left alone (see
+    // MemberUpdate's docstring in schemas.py). "Touched" here just
+    // means the current in-memory nokIsMember state, which startEdit()
+    // seeded from the member's own current value -- so re-submitting an
+    // edit without changing the Next-of-Kin section at all still sends
+    // the same value back, which set_relationship()/clear_relationship()
+    // both treat as a no-op if unchanged.
+    const payload: MemberInput = {
+      ...form,
+      ...(nokIsMember !== null
+        ? {
+            next_of_kin_is_member: nokIsMember,
+            next_of_kin_member_id: nokIsMember ? nokSelectedMember?.id : undefined,
+          }
+        : {}),
+    };
+
     try {
       if (editingId) {
-        await updateMember(editingId, form);
+        await updateMember(editingId, payload);
       } else {
-        await createMember(form);
+        await createMember(payload);
       }
       resetForm();
       await refresh();
@@ -453,31 +542,115 @@ export default function MembersPage() {
           <div style={{ gridColumn: "1 / -1", fontWeight: 600, marginTop: 8 }}>
             Next of kin
           </div>
-          <input
-            placeholder="Next of kin name"
-            value={form.next_of_kin}
-            onChange={(e) => setForm({ ...form, next_of_kin: e.target.value })}
-          />
-          <input
-            placeholder="Next of kin phone"
-            value={form.next_of_kin_phone}
-            onChange={(e) => setForm({ ...form, next_of_kin_phone: e.target.value })}
-          />
-          <input
-            placeholder="Next of kin address"
-            value={form.next_of_kin_address}
-            onChange={(e) => setForm({ ...form, next_of_kin_address: e.target.value })}
-          />
-          <input
-            placeholder="Next of kin email"
-            value={form.next_of_kin_email}
-            onChange={(e) => setForm({ ...form, next_of_kin_email: e.target.value })}
-          />
-          <input
-            placeholder="Relationship (e.g. Spouse, Sibling)"
-            value={form.next_of_kin_relationship}
-            onChange={(e) => setForm({ ...form, next_of_kin_relationship: e.target.value })}
-          />
+
+          {/* Member Relationship / Next-of-Kin Controlled Remediation
+              (2026-09), Section 1: this Yes/No question is required for
+              a NEW member (checked in handleSubmit above); for an
+              existing legacy member it may start unanswered (neither
+              radio selected) if next_of_kin_is_member is null -- see
+              lib/api.ts's Member type doc comment -- and stays that way
+              until the person editing explicitly picks one. */}
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={{ marginRight: 16 }}>
+              <input
+                type="radio"
+                name="nokIsMember"
+                checked={nokIsMember === true}
+                onChange={() => setNokIsMember(true)}
+              />{" "}
+              Next of kin is a cooperative member
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="nokIsMember"
+                checked={nokIsMember === false}
+                onChange={() => {
+                  setNokIsMember(false);
+                  setNokSelectedMember(null);
+                  setNokQuery("");
+                  setNokResults([]);
+                }}
+              />{" "}
+              Next of kin is not a cooperative member
+            </label>
+          </div>
+
+          {nokIsMember === true && (
+            <div style={{ gridColumn: "1 / -1" }}>
+              {nokSelectedMember ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span>
+                    Selected: <strong>{describeMemberOption(nokSelectedMember)}</strong>
+                  </span>
+                  <button type="button" onClick={() => setNokSelectedMember(null)}>
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <input
+                    placeholder="Search member by PSN, name, or phone"
+                    value={nokQuery}
+                    onChange={(e) => setNokQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), searchNokMembers())}
+                    style={{ marginRight: 8 }}
+                  />
+                  <button type="button" onClick={searchNokMembers}>
+                    Search
+                  </button>
+                  {nokResults.length > 0 && (
+                    <ul style={{ listStyle: "none", padding: 0, margin: "8px 0" }}>
+                      {nokResults.map((m) => (
+                        <li key={m.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNokSelectedMember(m);
+                              setNokResults([]);
+                              setNokQuery("");
+                            }}
+                          >
+                            {describeMemberOption(m)}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {nokIsMember === false && (
+            <>
+              <input
+                placeholder="Next of kin name"
+                value={form.next_of_kin}
+                onChange={(e) => setForm({ ...form, next_of_kin: e.target.value })}
+              />
+              <input
+                placeholder="Next of kin phone"
+                value={form.next_of_kin_phone}
+                onChange={(e) => setForm({ ...form, next_of_kin_phone: e.target.value })}
+              />
+              <input
+                placeholder="Next of kin address"
+                value={form.next_of_kin_address}
+                onChange={(e) => setForm({ ...form, next_of_kin_address: e.target.value })}
+              />
+              <input
+                placeholder="Next of kin email"
+                value={form.next_of_kin_email}
+                onChange={(e) => setForm({ ...form, next_of_kin_email: e.target.value })}
+              />
+              <input
+                placeholder="Relationship (e.g. Spouse, Sibling)"
+                value={form.next_of_kin_relationship}
+                onChange={(e) => setForm({ ...form, next_of_kin_relationship: e.target.value })}
+              />
+            </>
+          )}
 
           <label style={{ gridColumn: "1 / -1" }}>
             <input
@@ -527,6 +700,7 @@ export default function MembersPage() {
                   <th>Status</th>
                   <th>Restricted</th>
                   <th>Phone</th>
+                  <th>Next of kin</th>
                   <th>Login</th>
                   <th></th>
                 </tr>
@@ -540,6 +714,13 @@ export default function MembersPage() {
                     <td>{m.status}</td>
                     <td>{m.loan_restricted ? "⚠ yes" : ""}</td>
                     <td>{m.phone}</td>
+                    <td>
+                      {m.next_of_kin_is_member && m.next_of_kin_member
+                        ? `${describeMemberOption(m.next_of_kin_member)} (member)`
+                        : m.next_of_kin_is_member === false
+                        ? m.next_of_kin || "—"
+                        : "—"}
+                    </td>
                     <td>{m.login_account_status ?? "no login"}</td>
                     <td>
                       <button onClick={() => startEdit(m)}>Edit</button>{" "}

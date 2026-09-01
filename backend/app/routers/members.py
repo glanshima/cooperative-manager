@@ -5,12 +5,63 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from .. import models, schemas, audit_service
+from .. import models, schemas, audit_service, member_relationships
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission
 from ..self_conflict import require_no_self_conflict
 
 router = APIRouter(prefix="/api/members", tags=["members"])
+
+
+def _attach_next_of_kin(db: Session, members: List[models.Member]) -> None:
+    """
+    Member Relationship / Next-of-Kin Controlled Remediation (2026-09):
+    populate the (non-persisted, request-scoped) next_of_kin_is_member/
+    next_of_kin_member attributes that MemberOut serializes, from a
+    single bulk query -- same pattern as _attach_login_state above.
+
+    next_of_kin_is_member is set to True when an active relationship
+    exists, False when one doesn't but the legacy free-text next_of_kin
+    field is populated (an already-answered "no" in substance, even
+    though this remediation didn't exist when it was entered), and left
+    None only when neither a relationship nor any free-text Next-of-Kin
+    data exists at all -- i.e. genuinely never answered. This mirrors
+    login_account_status's None-means-unknown convention above rather
+    than forcing every pre-existing member into an artificial
+    True/False.
+    """
+    if not members:
+        return
+    member_ids = [m.id for m in members]
+    active_relationships = (
+        db.query(models.MemberRelationship)
+        .filter(
+            models.MemberRelationship.member_id.in_(member_ids),
+            models.MemberRelationship.relationship_type == models.RelationshipType.NEXT_OF_KIN,
+            models.MemberRelationship.status == models.RelationshipStatus.ACTIVE,
+        )
+        .all()
+    )
+    by_member_id = {r.member_id: r for r in active_relationships}
+    related_member_ids = [r.related_member_id for r in active_relationships]
+    related_members_by_id = {}
+    if related_member_ids:
+        related_members_by_id = {
+            m.id: m
+            for m in db.query(models.Member).filter(models.Member.id.in_(related_member_ids)).all()
+        }
+
+    for member in members:
+        rel = by_member_id.get(member.id)
+        if rel is not None:
+            member.next_of_kin_is_member = True
+            member.next_of_kin_member = related_members_by_id.get(rel.related_member_id)
+        elif member.next_of_kin:
+            member.next_of_kin_is_member = False
+            member.next_of_kin_member = None
+        else:
+            member.next_of_kin_is_member = None
+            member.next_of_kin_member = None
 
 
 def _attach_login_state(db: Session, members: List[models.Member]) -> None:
@@ -59,6 +110,7 @@ def get_my_member_record(
     member = db.query(models.Member).filter(models.Member.id == current_user.member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member record not found")
+    _attach_next_of_kin(db, [member])
     return member
 
 
@@ -167,6 +219,7 @@ def list_members(
     total = query.count()
     members = query.order_by(models.Member.name).offset(skip).limit(limit).all()
     _attach_login_state(db, members)
+    _attach_next_of_kin(db, members)
     return schemas.MemberListResponse(items=members, total=total, skip=skip, limit=limit)
 
 
@@ -194,6 +247,7 @@ def get_member(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     _attach_login_state(db, [member])
+    _attach_next_of_kin(db, [member])
     return member
 
 
@@ -208,7 +262,16 @@ def create_member(
     if existing:
         raise HTTPException(status_code=409, detail="A member with this PSN already exists")
 
-    member = models.Member(**payload.model_dump())
+    # next_of_kin_is_member / next_of_kin_member_id (Member Relationship
+    # / Next-of-Kin Controlled Remediation, Section 1) aren't Member
+    # columns -- they're consumed below to create a MemberRelationship
+    # row instead, so they're popped out of the dict passed to the
+    # Member(**...) constructor.
+    payload_data = payload.model_dump()
+    next_of_kin_is_member = payload_data.pop("next_of_kin_is_member")
+    next_of_kin_member_id = payload_data.pop("next_of_kin_member_id")
+
+    member = models.Member(**payload_data)
     db.add(member)
     db.commit()
     db.refresh(member)
@@ -223,6 +286,17 @@ def create_member(
         new_values={"psn": member.psn, "name": member.name},
         request=request,
     )
+
+    if next_of_kin_is_member:
+        member_relationships.set_relationship(
+            db,
+            member=member,
+            related_member_id=next_of_kin_member_id,
+            actor=current_user,
+            request=request,
+        )
+
+    _attach_next_of_kin(db, [member])
     return member
 
 
@@ -250,6 +324,20 @@ def update_member(
     )
 
     changes = payload.model_dump(exclude_unset=True)
+
+    # next_of_kin_is_member / next_of_kin_member_id (Member Relationship
+    # / Next-of-Kin Controlled Remediation, Section 8) aren't Member
+    # columns -- pop them out before the generic setattr loop below,
+    # and apply the relationship transition separately via
+    # member_relationships.py. `"next_of_kin_is_member" in changes`
+    # (i.e. it was actually sent, via exclude_unset=True above) is what
+    # decides whether the Next-of-Kin relationship is touched at all --
+    # not whether its value is truthy -- so an ordinary edit that never
+    # mentions Next of Kin leaves the existing relationship (or lack of
+    # one) completely alone.
+    next_of_kin_is_member = changes.pop("next_of_kin_is_member", "unset")
+    next_of_kin_member_id = changes.pop("next_of_kin_member_id", None)
+
     previous = {field: getattr(member, field) for field in changes}
     for field, value in changes.items():
         setattr(member, field, value)
@@ -268,6 +356,19 @@ def update_member(
         new_values=changes,
         request=request,
     )
+
+    if next_of_kin_is_member is True:
+        member_relationships.set_relationship(
+            db,
+            member=member,
+            related_member_id=next_of_kin_member_id,
+            actor=current_user,
+            request=request,
+        )
+    elif next_of_kin_is_member is False:
+        member_relationships.clear_relationship(db, member=member, actor=current_user, request=request)
+
+    _attach_next_of_kin(db, [member])
     return member
 
 

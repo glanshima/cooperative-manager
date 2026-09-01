@@ -1356,3 +1356,240 @@ the failure mode from the prior session's outage.
   confirmation~~ **RESOLVED 2026-09-01 — see «Decision D — LOCKED» above.**
 - No frontend build/TypeScript check has been run (no network/Node
   modules in this sandbox) — same limitation as every prior pass.
+
+## Q. Member Relationship / Next-of-Kin Controlled Remediation (2026-09-01)
+
+New foundation: a first-class, reusable Member-to-Member relationship
+model (`MemberRelationship`), used first for the Next-of-Kin case
+(explicit "is this member's Next of Kin also a cooperative member?"
+question at Member creation/edit) and structured to support a future
+relationship type (e.g. guarantor) without another migration. A
+governance-only conflict-lookup helper (`has_member_conflict`) is also
+included as foundation, per the remediation prompt's explicit
+instruction NOT to wire it into any approval workflow in this pass.
+
+### Q.1 Data model
+
+New table `member_relationships` (`models.py`): `member_id` /
+`related_member_id` (both FK → `members.id`), `relationship_type`
+(currently only `next_of_kin`), `conflict_of_interest` (bool, default
+`true`), `status` (`active`/`removed`), plus the usual
+created/removed audit columns. No `relationship()` declared on this
+model or added to `Member` for it — same lesson as Section N's outage
+and Section P's "plain-Column/plain-query only" pattern: two FKs into
+the same table (`members.id`) would need `foreign_keys=[...]`
+disambiguation on any `relationship()`, so plain query methods
+(`get_member`/`get_related_member`) are used instead, at zero
+mapper-configuration risk.
+
+Two DB-level invariants, both primarily enforced in the application
+layer with the DB as a backstop (same pattern as every other
+constraint in this codebase):
+- **No self-reference** — `CHECK (member_id != related_member_id)`.
+  Primary enforcement is `member_relationships.set_relationship()`,
+  which raises a clean 409 `{"error": "self_reference", ...}` before
+  ever reaching the DB; the CHECK constraint only fires if that's
+  somehow bypassed.
+- **At most one ACTIVE relationship of a given type per member** — a
+  partial unique index, `(member_id, relationship_type) WHERE status =
+  'active'`. **Inspection finding, not an invented rule:** the
+  pre-existing `Member.next_of_kin*` columns are a single set of
+  fields, not a list — this cooperative's data model has always
+  implicitly treated Next of Kin as one person per member. This
+  remediation preserves that shape for the member-linked path rather
+  than introducing multiplicity the manual-entry path never had. If a
+  member should eventually be able to record more than one Next of
+  Kin, this is the index to revisit, not something this pass assumed
+  was requested.
+
+Changing to a **different** related member is remove-old-row +
+create-new-row (never an in-place `related_member_id` update), so the
+audit trail retains who the previous Next of Kin was and when the
+change happened. Within `set_relationship()`, the old row's UPDATE is
+explicitly `db.flush()`ed before the new row's INSERT is added — without
+that, SQLAlchemy's unit-of-work is free to order the INSERT first
+within the same flush, which would momentarily violate the partial
+unique index even though the net change is a clean swap. Both
+statements still commit together, so a later failure rolls back the
+whole swap atomically.
+
+### Q.2 Why a new table, not a `next_of_kin_member_id` column on `Member`
+
+Considered and rejected. Two reasons, both from the remediation prompt
+itself rather than a preference: (1) the prompt frames Next-of-Kin as
+the *first* of potentially several member-to-member relationship types
+this foundation needs to support later — a generic, typed table avoids
+a schema change for each new type a single FK column would require;
+(2) relationship *history* must be retained when it changes or is
+removed (the same Financial-History-Protection precedent this codebase
+already applies to `delete_member`, Change-Control C-2, applied here to
+relationship history instead of financial history) — a single mutable
+FK column on `Member` cannot represent "who was the Next of Kin before
+last Tuesday" at all.
+
+### Q.3 Existing data — deliberately not touched
+
+No backfill/auto-conversion of the 191 pre-existing members' free-text
+`next_of_kin` fields into `MemberRelationship` rows. Two reasons:
+first, doing so would require *inferring* which free-text Next-of-Kin
+entries refer to an existing Member record — the same class of
+heuristic-matching `self_conflict.py`'s module docstring explicitly
+forbids for the User↔Member link, for the same reason (a wrong
+inference either creates a bogus relationship or misses a real one).
+Second, nothing in the remediation prompt asked for a backfill. Every
+pre-existing member therefore reads as `next_of_kin_is_member: null`
+("never answered", not "answered no") until an admin explicitly edits
+that record and picks one of the two options — see `MemberOut`'s
+docstring in `schemas.py` and `_attach_next_of_kin`'s docstring in
+`routers/members.py` for the exact three-way `null`/`true`/`false`
+semantics.
+
+### Q.4 API changes
+
+- `POST /api/members` (`schemas.MemberCreate`): **new required field**
+  `next_of_kin_is_member: bool` (no default — omitting it is a 422, not
+  a silent pass), plus `next_of_kin_member_id: Optional[UUID]` (required
+  when `next_of_kin_is_member` is `true`, forbidden when `false`,
+  enforced by a Pydantic `model_validator`). This is an intentional
+  breaking change to the endpoint's contract for any caller that
+  predates this remediation, per the prompt's explicit "do not allow a
+  silently unknown/null state" instruction — see Q.6 for the one
+  pre-existing test payload this required updating.
+- `PUT /api/members/{id}` (`schemas.MemberUpdate`): same two fields,
+  both **optional**. Critically, *omitting* `next_of_kin_is_member`
+  from the request body (not sending it at all) means "don't touch the
+  Next-of-Kin relationship" — different from explicitly sending `false`
+  ("clear/replace with a non-member Next of Kin"). `routers/members.py`
+  distinguishes these via `payload.model_dump(exclude_unset=True)`
+  membership, not by truthiness, exactly mirroring how every other
+  optional field on this same endpoint already behaves.
+- `GET /api/members`, `GET /api/members/{id}`, `GET /api/members/me`
+  (`schemas.MemberOut`): two new response fields,
+  `next_of_kin_is_member` (`bool | null`) and `next_of_kin_member`
+  (a minimal `{id, psn, name, phone}` projection, never the full
+  `MemberOut` — someone editing/viewing another member's record as
+  "just the linked NOK" has no business reason to see that person's
+  bank/account/loan-restriction fields). Both are computed,
+  request-scoped attributes populated by `_attach_next_of_kin()`
+  (`routers/members.py`) via one bulk query per list/get call, the same
+  pattern `_attach_login_state()` already established for
+  `login_user_id`/`login_account_status` — never persisted columns on
+  `Member` itself.
+- **No new endpoint or permission code.** Next-of-Kin management reuses
+  the existing `member.create`/`member.update`/`member.view`
+  permissions (Next-of-Kin is a property of a member's record, not a
+  separate resource with its own access model) and the existing member
+  search (`GET /api/members?search=...`) for finding a candidate
+  Next-of-Kin member, the same endpoint `admin_users.py`'s Admin↔Member
+  linking UI already uses for exactly this kind of "search and pick a
+  member" flow (Section O).
+- `has_member_conflict(db, member_a_id, member_b_id)`
+  (`member_relationships.py`) is a plain importable function, **not**
+  exposed as an HTTP endpoint in this pass. It's governance foundation
+  only (Section 12-14 of the remediation prompt are explicit that
+  wiring member-to-member conflicts into loan/disbursement/repayment
+  approval is future work, not part of this remediation) — no
+  self-contained public use case for a standalone "check if two
+  arbitrary members conflict" endpoint exists yet, and adding one now
+  would be scope creep the prompt didn't ask for. Covered directly by
+  function-level tests (`db_session` fixture) rather than through the
+  API surface.
+
+### Q.5 Frontend changes
+
+`app/members/page.tsx`: the Next-of-Kin section of the Add/Edit form now
+opens with a required Yes/No question ("is a cooperative member" /
+"is not a cooperative member"), reusing the exact search-and-select
+pattern already established in `app/admin/users/page.tsx` for the
+Admin↔Member linking dialog (`listMembers({search, limit: 10})` +
+inline results list), rather than inventing a second one. Selecting
+"is a cooperative member" hides the manual next-of-kin text fields
+entirely and shows the search/select picker instead; selecting "is not"
+does the reverse — never both at once, so there's no way to submit an
+ambiguous state the backend would reject anyway. The member being
+edited is filtered out of their own Next-of-Kin search results
+client-side (the backend's self-reference 409 is still the actual
+enforcement; this is just so the person editing never sees a choice
+that would just bounce). A new "Next of kin" column was added to the
+Members table so the current relationship (manual name, or "PSN — Name
+(member)") is visible without opening Edit. `lib/api.ts`'s `Member`/
+`MemberInput` interfaces were extended with the same fields as the
+backend schema change; no changes were needed to `ApiError`/
+`describeError`, since the self-reference 409 reuses the existing
+`{"error", "message"}` shape that error handling already understands.
+
+### Q.6 Tests
+
+New `tests/test_member_relationships.py`: required-field enforcement on
+create (422 when omitted), manual-NOK create, member-linked-NOK create
+(including the `MemberRelationship` row's exact shape), the
+`model_validator` consistency rules in both directions, 404 for a
+nonexistent target member, changing to a different member (asserts
+BOTH the old row is preserved as `removed` and the new row is `active`
+— not just the visible end state), reverting a member-linked NOK back
+to manual, confirming an ordinary edit that never mentions Next of Kin
+leaves an existing relationship completely untouched, the self-reference
+409, a same-value resubmission being a true no-op (no extra row, no
+duplicate audit event), the partial unique index rejecting a second
+active row inserted directly against the DB (bypassing the application
+layer entirely), permission enforcement (403 without `member.create`),
+and four `has_member_conflict` cases (both directions from one stored
+row, unrelated members, false after removal, and the `None`/identical-id
+edge cases).
+
+`tests/test_database_integrity.py`'s two pre-existing
+`POST /api/members` payloads (`test_duplicate_psn_rejected`) were
+updated to include `next_of_kin_is_member: false` — the minimal change
+needed to keep that regression test passing under the new required
+field, not a weakening of what it verifies (duplicate-PSN rejection is
+unrelated to and unaffected by this remediation).
+
+**All written and `python -m py_compile`-verified across the full
+repository. None executed** — same standing sandbox limitation (no
+network, no reachable Postgres) as every prior pass in this engagement;
+see the top-level continuation prompt for why running the real suite
+against a disposable database remains the single highest-value next
+action.
+
+### Q.7 Files changed
+
+**Backend:** `models.py` (`RelationshipType`, `RelationshipStatus`,
+`MemberRelationship`), new `member_relationships.py` (service module —
+`get_active_relationship`, `set_relationship`, `clear_relationship`,
+`has_member_conflict`), `schemas.py` (`NextOfKinMemberSummary`,
+`MemberCreate`/`MemberUpdate`/`MemberOut` extensions),
+`routers/members.py` (`_attach_next_of_kin`, wired into
+`create_member`/`update_member`/`list_members`/`get_member`/
+`get_my_member_record`), new migration
+`scripts/manual_migration_2026_09_member_relationships.sql`.
+
+**Frontend:** `lib/api.ts` (`Member`/`MemberInput` extensions),
+`app/members/page.tsx` (Yes/No question, member search/select picker,
+Next-of-kin table column).
+
+**Tests:** new `tests/test_member_relationships.py`;
+`tests/test_database_integrity.py` (two payloads updated, see Q.6).
+
+### Q.8 What remains outstanding
+
+- **Migration not applied to any real database** —
+  `scripts/manual_migration_2026_09_member_relationships.sql` must be
+  run (Neon Console SQL Editor) before or in the same deploy step as
+  this backend code — never after, per this project's standing
+  migration-ordering lesson (see the migration file's own header
+  comment, and Section N).
+- **No automated test has been executed** — same standing gap as every
+  prior pass.
+- No frontend build/TypeScript check has been run — same limitation as
+  every prior pass; manual bracket-balance and line-by-line review were
+  used instead as a partial substitute (see this session's own working
+  notes).
+- **The four open business decisions from the Phase 0 Admin↔Member
+  Linking Assessment remain unresolved** and are unrelated to /
+  unaffected by this pass — noted here only so this report doesn't look
+  like it forgot them.
+- `has_member_conflict()` is intentionally unused by any approval path
+  in this pass (Q.4) — wiring it into loan/disbursement/repayment
+  authorization, and deciding exactly how it should interact with
+  `self_conflict.py`'s existing User↔Member check (additive? does one
+  take precedence?), is explicitly future work, not started here.

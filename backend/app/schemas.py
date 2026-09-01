@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from .models import (
     MemberStatus,
@@ -45,7 +45,45 @@ class MemberBase(BaseModel):
 
 
 class MemberCreate(MemberBase):
-    pass
+    """
+    Member Relationship / Next-of-Kin Controlled Remediation (2026-09),
+    Section 1: Member creation must explicitly ask "is this member's
+    Next of Kin also a cooperative member?" rather than silently
+    leaving that unknown -- next_of_kin_is_member is therefore a
+    REQUIRED field here (no default), not optional. This deliberately
+    breaks any caller of POST /api/members that doesn't yet send it
+    (see the Phase 1 report's remediation section for the one
+    pre-existing test payload that needed updating) -- an intentional,
+    explicit-choice-over-silent-default trade-off the remediation
+    prompt calls for ("Do not allow silently allowing an unknown/null
+    state unless existing business requirements technically require
+    it"), not an oversight.
+
+    When next_of_kin_is_member is True, next_of_kin_member_id is
+    required and the existing free-text next_of_kin* fields (inherited
+    from MemberBase) are expected to be left unset -- the authoritative
+    Next-of-Kin identity then comes from the linked Member record, not
+    from duplicated free text (see MemberRelationship's docstring,
+    "SELF-REFERENCE" aside: duplicating identity data would let the two
+    silently drift out of sync). When False, next_of_kin_member_id must
+    be omitted/null, and the pre-existing free-text fields are used
+    exactly as before this remediation.
+    """
+
+    next_of_kin_is_member: bool
+    next_of_kin_member_id: Optional[uuid.UUID] = None
+
+    @model_validator(mode="after")
+    def _validate_next_of_kin_choice(self):
+        if self.next_of_kin_is_member and self.next_of_kin_member_id is None:
+            raise ValueError(
+                "next_of_kin_member_id is required when next_of_kin_is_member is true"
+            )
+        if not self.next_of_kin_is_member and self.next_of_kin_member_id is not None:
+            raise ValueError(
+                "next_of_kin_member_id must not be set when next_of_kin_is_member is false"
+            )
+        return self
 
 
 class MemberUpdate(BaseModel):
@@ -65,10 +103,36 @@ class MemberUpdate(BaseModel):
     loan_restricted: Optional[bool] = None
     restriction_reason: Optional[str] = None
 
+    # Member Relationship / Next-of-Kin Controlled Remediation, Section
+    # 8 (changing an existing Next-of-Kin relationship): unlike
+    # MemberCreate, both fields are OPTIONAL here -- omitting
+    # next_of_kin_is_member entirely means "don't touch the Next-of-Kin
+    # relationship at all" (the vast majority of member edits have
+    # nothing to do with Next of Kin), which is different from
+    # explicitly sending next_of_kin_is_member=false (which means
+    # "clear/replace with a non-member Next of Kin"). routers/members.py
+    # distinguishes these via `"next_of_kin_is_member" in
+    # payload.model_dump(exclude_unset=True)`, not by whether the value
+    # is truthy.
+    next_of_kin_is_member: Optional[bool] = None
+    next_of_kin_member_id: Optional[uuid.UUID] = None
+
     _validate_email = field_validator("email")(validation.validate_email_format)
     _validate_noke = field_validator("next_of_kin_email")(validation.validate_email_format)
     _validate_phone = field_validator("phone")(validation.validate_phone_format)
     _validate_nokp = field_validator("next_of_kin_phone")(validation.validate_phone_format)
+
+    @model_validator(mode="after")
+    def _validate_next_of_kin_choice(self):
+        if self.next_of_kin_is_member is True and self.next_of_kin_member_id is None:
+            raise ValueError(
+                "next_of_kin_member_id is required when next_of_kin_is_member is true"
+            )
+        if self.next_of_kin_is_member is False and self.next_of_kin_member_id is not None:
+            raise ValueError(
+                "next_of_kin_member_id must not be set when next_of_kin_is_member is false"
+            )
+        return self
 
 
 class MemberLoginStatusUpdate(BaseModel):
@@ -80,6 +144,24 @@ class MemberLoginStatusUpdate(BaseModel):
 
     account_status: AccountStatus
     reason: Optional[str] = None
+
+
+class NextOfKinMemberSummary(BaseModel):
+    """Minimal, display-only projection of a linked Next-of-Kin Member --
+    deliberately NOT the full MemberOut (a member editing/viewing
+    another member's record as "just the NOK" has no business reason to
+    see that person's bank/account/loan-restriction fields). Populated
+    live from the Member table at read time (see
+    routers/members.py's _attach_next_of_kin), never persisted/cached,
+    so it can never go stale relative to the linked Member's own
+    record."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    psn: str
+    name: str
+    phone: Optional[str] = None
 
 
 class MemberOut(MemberBase):
@@ -100,6 +182,20 @@ class MemberOut(MemberBase):
     # Deactivate/Reactivate instead, never Create.
     login_user_id: Optional[uuid.UUID] = None
     login_account_status: Optional[AccountStatus] = None
+
+    # Member Relationship / Next-of-Kin Controlled Remediation (2026-09):
+    # computed, request-scoped fields populated by
+    # routers/members.py's _attach_next_of_kin -- never persisted
+    # columns on Member itself (see MemberRelationship's docstring for
+    # why this is a first-class relationship table, not a
+    # next_of_kin_member_id FK on Member). next_of_kin_is_member is None
+    # for a legacy record that has never had this question answered
+    # (predates this remediation and was NOT auto-converted -- see the
+    # Phase 1 report's "Existing Data" finding); True/False otherwise.
+    # next_of_kin_member is only ever populated when
+    # next_of_kin_is_member is True.
+    next_of_kin_is_member: Optional[bool] = None
+    next_of_kin_member: Optional[NextOfKinMemberSummary] = None
 
 
 class MemberListResponse(BaseModel):

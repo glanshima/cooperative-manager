@@ -193,6 +193,13 @@ export interface Member {
   // from any other field.
   login_user_id?: string | null;
   login_account_status?: LoginAccountStatus | null;
+  // Member Relationship / Next-of-Kin Controlled Remediation (2026-09):
+  // backend-computed, never inferred client-side. null means this
+  // member has never had the question answered (a legacy record from
+  // before this remediation, not auto-converted -- see the Phase 1
+  // report). See schemas.py's MemberOut docstring.
+  next_of_kin_is_member?: boolean | null;
+  next_of_kin_member?: { id: string; psn: string; name: string; phone?: string | null } | null;
 }
 
 export interface MemberInput {
@@ -212,6 +219,16 @@ export interface MemberInput {
   status: MemberStatus;
   loan_restricted?: boolean;
   restriction_reason?: string;
+  // Member Relationship / Next-of-Kin Controlled Remediation (2026-09):
+  // required on create (backend rejects a missing value with a 422 --
+  // see schemas.py's MemberCreate docstring); when true,
+  // next_of_kin_member_id is required and the manual next_of_kin*
+  // fields above should be left blank. On update, `undefined` (the
+  // field simply omitted from the request body) means "don't touch the
+  // existing Next-of-Kin relationship" -- see updateMember below and
+  // schemas.py's MemberUpdate docstring.
+  next_of_kin_is_member?: boolean;
+  next_of_kin_member_id?: string;
 }
 
 export interface MemberListResult {

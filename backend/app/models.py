@@ -133,6 +133,159 @@ class Member(Base):
         )
 
 
+# ---------------------------------------------------------------------------
+# Member-to-Member relationships (Member Relationship / Next-of-Kin
+# Controlled Remediation, 2026-09)
+#
+# Distinct from the pre-existing free-text next_of_kin/next_of_kin_phone/
+# next_of_kin_address/next_of_kin_email/next_of_kin_relationship columns
+# on Member above, which remain exactly as they were for a Next of Kin
+# who is NOT themselves a cooperative member (Section 2 of the
+# remediation prompt: "manual next-of-kin details" path). This table is
+# the authoritative record for the OTHER case -- a Next of Kin who IS
+# also a cooperative Member -- and is deliberately a first-class,
+# reusable relationship model (member_id / related_member_id / type)
+# rather than a single next_of_kin_member_id FK bolted onto Member,
+# since the remediation prompt frames Next-of-Kin as the first of
+# potentially several member-to-member relationship types this
+# foundation needs to support later (e.g. a future
+# guarantor/co-signer/household relationship), and a generic table
+# avoids a schema change for each new type.
+# ---------------------------------------------------------------------------
+
+
+class RelationshipType(str, enum.Enum):
+    NEXT_OF_KIN = "next_of_kin"
+
+
+class RelationshipStatus(str, enum.Enum):
+    ACTIVE = "active"
+    REMOVED = "removed"
+
+
+class MemberRelationship(Base):
+    """
+    A directed member-to-member relationship (currently only
+    next_of_kin), used both to record "who is this member's Next of
+    Kin, if that person is also a cooperative member" and, more
+    generally, as the foundation for future conflict-of-interest
+    lookups between two members (Section 12 of the remediation prompt).
+
+    DIRECTION: member_id is the member the relationship is recorded
+    FOR (e.g. the member filling out their own Next-of-Kin details);
+    related_member_id is the OTHER member (the Next of Kin). Conflict
+    lookups (has_member_conflict in member_relationships.py) check BOTH
+    directions from a single row -- there is deliberately no mirrored
+    reverse row, so "A's NOK is B" and any future reverse-direction
+    query never risk drifting out of sync with each other.
+
+    SELF-REFERENCE: a member can never be their own Next of Kin. This
+    is enforced twice -- a DB-level CHECK constraint below (defense in
+    depth, matching this codebase's existing pattern of CHECK
+    constraints backing up application-level validation -- see the
+    Phase 1 DB integrity constraints migration) and, primarily, an
+    explicit check in the router before the row is ever inserted (see
+    routers/members.py), so the rejection is a clean 409 with a
+    specific message rather than a raw IntegrityError.
+
+    AT MOST ONE ACTIVE next_of_kin PER member: enforced by the partial
+    unique index below (member_id, relationship_type WHERE status =
+    'active'). Inspection finding, not an invented rule: the
+    pre-existing Member.next_of_kin* columns are a single set of
+    fields (not a list), implying this cooperative's data model has
+    always treated Next of Kin as one person per member -- this
+    remediation preserves that same single-NOK shape for the
+    member-linked path rather than introducing multiplicity the
+    existing manual-entry path never had. Changing to a DIFFERENT
+    related member is handled as remove-old-row + create-new-row (see
+    member_relationships.py), not an in-place related_member_id
+    update, so the audit trail retains who the previous Next of Kin
+    was and when the change happened (Section 17 of the remediation
+    prompt).
+
+    HISTORY IS NEVER HARD-DELETED: removing a relationship (member
+    reverts to a non-member Next of Kin, or their linked Next of Kin
+    changes) sets status=REMOVED + removed_at/removed_by_user_id
+    rather than deleting the row -- consistent with this codebase's
+    existing Financial History Protection precedent (see
+    delete_member's Change-Control C-2 docstring) applied here to
+    relationship history instead of financial history.
+    """
+
+    __tablename__ = "member_relationships"
+    __table_args__ = (
+        CheckConstraint(
+            "member_id != related_member_id",
+            name="ck_member_relationships_no_self_reference",
+        ),
+        Index(
+            "ux_member_relationships_one_active_per_type",
+            "member_id",
+            "relationship_type",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+        Index("ix_member_relationships_related_member_id", "related_member_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    member_id = Column(
+        UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    related_member_id = Column(
+        UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False
+    )
+
+    relationship_type = Column(
+        Enum(RelationshipType, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=RelationshipType.NEXT_OF_KIN,
+    )
+
+    # Governance foundation only (Section 12-14 of the remediation
+    # prompt): marks whether this relationship should be treated as a
+    # conflict-of-interest pairing by a FUTURE authorization check.
+    # True by default for next_of_kin (a Next of Kin is the clearest
+    # possible conflict case). Nothing in this remediation pass reads
+    # this flag to actually block any action -- see
+    # member_relationships.has_member_conflict()'s docstring -- it
+    # exists so the data model doesn't need another migration once a
+    # later phase wires conflict checks into loan/disbursement/
+    # repayment approval, the same way self_conflict.py already does
+    # for the User<->Member self-dealing case.
+    conflict_of_interest = Column(Boolean, nullable=False, default=True)
+
+    status = Column(
+        Enum(RelationshipStatus, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=RelationshipStatus.ACTIVE,
+    )
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    removed_at = Column(DateTime, nullable=True)
+    removed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    # No relationship()s here, deliberately -- same rationale as
+    # Member.get_member_login_user()/get_admin_login_user() above
+    # (Section N hotfix lesson: a custom-disambiguation relationship()
+    # broke mapper configuration app-wide in production once already).
+    # This table has TWO foreign keys into members.id (member_id,
+    # related_member_id), which would need foreign_keys=[...]
+    # disambiguation on any relationship() declared here or back on
+    # Member -- plain query methods avoid that mapper-configuration
+    # surface entirely and are used everywhere else in this codebase
+    # for anything beyond a single, unambiguous FK.
+    def get_member(self, db):
+        return db.query(Member).filter(Member.id == self.member_id).first()
+
+    def get_related_member(self, db):
+        return db.query(Member).filter(Member.id == self.related_member_id).first()
+
+
 class LoanStatus(str, enum.Enum):
     ACTIVE = "active"
     COMPLETED = "completed"

@@ -82,13 +82,17 @@ def test_duplicate_psn_rejected(client, db_session, seed_permissions):
     admin = make_admin_user(db_session, username="dup_psn_admin")
     grant_permission(db_session, admin, "member.create")
 
-    payload = {"psn": "DUP-001", "name": "First Member"}
+    # next_of_kin_is_member is required as of the Member Relationship /
+    # Next-of-Kin Controlled Remediation (2026-09) -- see schemas.py's
+    # MemberCreate docstring for why this is an intentional break for
+    # any caller that predates it, not a regression to work around.
+    payload = {"psn": "DUP-001", "name": "First Member", "next_of_kin_is_member": False}
     res1 = client.post("/api/members", json=payload, headers=auth_headers(admin))
     assert res1.status_code == 201
 
     res2 = client.post(
         "/api/members",
-        json={"psn": "DUP-001", "name": "Second Member"},
+        json={"psn": "DUP-001", "name": "Second Member", "next_of_kin_is_member": False},
         headers=auth_headers(admin),
     )
     assert res2.status_code == 409
