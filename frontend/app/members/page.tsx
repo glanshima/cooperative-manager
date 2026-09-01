@@ -154,6 +154,24 @@ export default function MembersPage() {
       setMembers(result.items);
       setTotal(result.total);
       setSkip(effectiveSkip);
+      // Members Page Stale Action Error Controlled Remediation
+      // (2026-09): a successful list reload -- from ANY source
+      // (pagination, search, a filter change, or the success path of an
+      // edit/delete/login action) -- clears any stale mutation/action
+      // error still on screen. Root cause of the defect this fixes: this
+      // function already correctly cleared `listError` on every call,
+      // but never touched the separate `error` (action-error) state, so
+      // a self-conflict error from a prior failed edit stayed visible
+      // through any number of subsequent successful reloads. Placed
+      // inside this same `mySeq` guard (not in a `finally` or outside
+      // it) so a late/stale response can never clear an error that a
+      // newer, still-in-flight request will supersede -- same race
+      // protection this function already applies to `members`/`total`/
+      // `skip` above. Deliberately does NOT touch `listError` (a
+      // genuine current list-load failure must remain visible -- see
+      // the catch block below, which is unaffected by this change) or
+      // `success` (unrelated to this defect; scope stays minimal).
+      setError(null);
     } catch (e: any) {
       if (mySeq !== requestSeqRef.current) return;
       setListError(e.message);
@@ -313,6 +331,16 @@ export default function MembersPage() {
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this member?")) return;
+    // Same "clear previous action error before starting a new action"
+    // pattern already used by handleCreateLogin/handleDeactivateLogin/
+    // handleReactivateLogin below -- handleDelete was missing it
+    // (Members Page Stale Action Error Controlled Remediation, 2026-09).
+    // The refresh()-side fix above is the actual fix for the reported
+    // defect (a successful reload from anywhere clears a stale error);
+    // this is a smaller, secondary consistency fix so a failed delete
+    // doesn't display alongside an unrelated error from an earlier
+    // action that a reload hasn't yet run to clear.
+    setError(null);
     try {
       await deleteMember(id);
       await refresh();
