@@ -269,6 +269,31 @@ class CreateMemberLoginRequest(BaseModel):
     temporary_password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Initiates self-service password recovery."""
+    identifier: str  # PSN, username, or registered email
+
+
+class VerifyResetTokenRequest(BaseModel):
+    """Checks whether a recovery token is valid without consuming it."""
+    token: str
+
+
+class ResetPasswordRequest(BaseModel):
+    """Consumes a valid recovery token to set a new password."""
+    token: str
+    new_password: str
+
+
+class GenericMessageResponse(BaseModel):
+    message: str
+
+
+class AdminUserPasswordResetRequest(BaseModel):
+    """Admin-only: resets a staff/admin account's password with a temporary password."""
+    temporary_password: str
+
+
 class CreateAdminRequest(BaseModel):
     """Used only by the one-off seed script, not exposed over the API."""
     username: str

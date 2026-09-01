@@ -149,3 +149,29 @@ def repayment_rejected_email_html(member_name: str, loan_type_name: str, reason:
       <p>Please submit the receipt again with a valid reference.</p>
     </div>
     """
+
+
+def password_reset_email_html(recipient_name: str, reset_url: str, expires_minutes: int = 15) -> str:
+    return f"""
+    <div style="font-family: sans-serif; max-width: 600px; line-height: 1.5; color: #333;">
+      <h2>Password Reset Request</h2>
+      <p>Dear {recipient_name},</p>
+      <p>We received a request to reset your MACT Cooperative Manager password. Click the button below to set a new password:</p>
+      <p style="margin: 24px 0;">
+        <a href="{reset_url}" style="background-color: #0066cc; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
+          Reset Password
+        </a>
+      </p>
+      <p style="color: #666; font-size: 14px;">
+        Or copy and paste this link into your browser:<br/>
+        <a href="{reset_url}" style="color: #0066cc;">{reset_url}</a>
+      </p>
+      <p style="color: #666; font-size: 14px;">
+        This link is single-use and will expire in <strong>{expires_minutes} minutes</strong>.
+      </p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+      <p style="color: #999; font-size: 12px;">
+        If you did not request a password reset, you can safely ignore this email or notify the cooperative administrator. Your password will remain unchanged.
+      </p>
+    </div>
+    """
