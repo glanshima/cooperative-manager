@@ -10,7 +10,7 @@ from ..database import get_db
 from ..deps import get_current_user, require_admin, require_password_already_changed, require_permission, user_has_permission
 from ..email_utils import send_email, repayment_verified_email_html, repayment_rejected_email_html
 from ..idempotency import IdempotencyContext, idempotency_check
-from ..self_conflict import require_no_self_conflict
+from ..self_conflict import require_no_member_conflict
 
 router = APIRouter(tags=["loan-repayments"])
 
@@ -146,17 +146,21 @@ def verify_repayment(
         db.query(models.LoanRepayment)
         .options(joinedload(models.LoanRepayment.loan).joinedload(models.Loan.member))
         .filter(models.LoanRepayment.id == repayment_id)
-        .with_for_update()
+        # of=...: a bare FOR UPDATE with the joinedload outer joins above
+        # is rejected by Postgres ("FOR UPDATE cannot be applied to the
+        # nullable side of an outer join"); the loan row itself is locked
+        # separately below.
+        .with_for_update(of=models.LoanRepayment)
         .first()
     )
     if not repayment:
         raise HTTPException(status_code=404, detail="Repayment not found")
 
-    require_no_self_conflict(
+    require_no_member_conflict(
         db,
         current_user,
         repayment,
-        action_description="verify your own loan repayment",
+        action_description="verify this loan repayment",
         permission_code="repayment.verify",
         entity_type="loan_repayment",
         entity_id=str(repayment.id),

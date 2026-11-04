@@ -3,16 +3,12 @@ Member-to-Member Relationship / Next-of-Kin Controlled Remediation
 (2026-09).
 
 Central, reusable place for creating, changing, and removing
-MemberRelationship rows, plus a conflict-lookup helper
-(has_member_conflict) that is FOUNDATIONAL ONLY -- it deliberately is
-not called from any loan/disbursement/repayment approval path in this
-pass. Section 13 of the remediation prompt is explicit that wiring
-member-to-member conflicts into approval workflows is future work, not
-part of this remediation; that mirrors self_conflict.py's existing
-User<->Member self-dealing check, which this is a natural sibling to
-without duplicating or replacing it. Routers call the functions here
-rather than touching MemberRelationship rows directly, the same way
-they call self_conflict.require_no_self_conflict() and
+MemberRelationship rows, plus the conflict lookup
+(has_member_conflict) used by self_conflict.require_no_member_conflict
+to block administrative actions between members who are linked as Next
+of Kin (in either direction). Routers call the functions here rather
+than touching MemberRelationship rows directly, the same way they call
+self_conflict.require_no_member_conflict() and
 account_lifecycle.set_account_status() instead of hand-rolling that
 logic inline.
 
@@ -208,18 +204,15 @@ def has_member_conflict(
     member_b_id: Optional[uuid.UUID],
 ) -> bool:
     """
-    Governance foundation only (Section 12 of the remediation prompt):
-    answers "does an active, conflict-flagged MemberRelationship exist
+    Answers "does an active, conflict-flagged MemberRelationship exist
     between these two members, in either direction?" -- nothing more.
 
-    NOT WIRED INTO ANY APPROVAL PATH IN THIS PASS. This is intentional
-    (Section 13-14): loan/disbursement/repayment approval continues to
-    use only self_conflict.py's User.member_id-based check, exactly as
-    before. This function exists so a later phase can wire
-    member-to-member conflicts (e.g. "the Loan Officer approving this
-    application is the applicant's registered Next of Kin") into
-    approval authorization without another schema/migration pass --
-    see MemberRelationship's conflict_of_interest column docstring.
+    Called by self_conflict.require_no_member_conflict() (all
+    administrative mutation endpoints) and by
+    find_eligible_approvers() so a conflicted officer is never
+    recommended as the alternate approver. Member self-service actions
+    are unaffected: the target resolves to the actor's own member id,
+    and identical ids are never a meaningful pairing.
 
     Checks BOTH directions from the single stored row (see
     MemberRelationship's docstring on why there's no mirrored reverse

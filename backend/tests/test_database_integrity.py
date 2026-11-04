@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from sqlalchemy.exc import IntegrityError
 
-from tests.conftest import auth_headers, grant_permission, make_admin_user, make_member
+from tests.conftest import auth_headers, grant_permission, make_admin_user, make_member, make_loan_type
 
 
 def test_loan_negative_principal_rejected_by_db_constraint(db_session, seed_permissions):
@@ -11,9 +11,7 @@ def test_loan_negative_principal_rejected_by_db_constraint(db_session, seed_perm
     is bypassed (e.g. a direct insert)."""
     from app import models
 
-    loan_type = models.LoanType(name="Negative Principal Test Loan", is_active=True)
-    db_session.add(loan_type)
-    db_session.commit()
+    loan_type = make_loan_type(db_session, "Negative Principal Test Loan")
 
     member = make_member(db_session, psn="DBCONS-001", email="dbcons1@example.com")
 
@@ -41,9 +39,7 @@ def test_loan_negative_principal_rejected_by_db_constraint(db_session, seed_perm
 def test_loan_repayment_zero_amount_rejected_by_db_constraint(db_session, seed_permissions):
     from app import models
 
-    loan_type = models.LoanType(name="Zero Repayment Test Loan", is_active=True)
-    db_session.add(loan_type)
-    db_session.commit()
+    loan_type = make_loan_type(db_session, "Zero Repayment Test Loan")
 
     member = make_member(db_session, psn="DBCONS-002", email="dbcons2@example.com")
     loan = models.Loan(
@@ -124,9 +120,7 @@ def test_member_with_loan_history_cannot_be_hard_deleted(client, db_session, see
     grant_permission(db_session, admin, "member.deactivate")
 
     member = make_member(db_session, psn="DEL-001", email="del1@example.com")
-    loan_type = models.LoanType(name="Delete Test Loan", is_active=True)
-    db_session.add(loan_type)
-    db_session.commit()
+    loan_type = make_loan_type(db_session, "Delete Test Loan")
 
     loan = models.Loan(
         member_id=member.id,
@@ -167,9 +161,7 @@ def test_loan_cannot_be_deleted_at_all(client, db_session, seed_permissions):
 
     admin = make_admin_user(db_session, username="loan_delete_admin", super_admin=True)
     member = make_member(db_session, psn="DEL-003", email="del3@example.com")
-    loan_type = models.LoanType(name="Non-deletable Loan", is_active=True)
-    db_session.add(loan_type)
-    db_session.commit()
+    loan_type = make_loan_type(db_session, "Non-deletable Loan")
 
     loan = models.Loan(
         member_id=member.id,

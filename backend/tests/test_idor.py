@@ -1,4 +1,11 @@
-from tests.conftest import auth_headers, grant_permission, make_admin_user, make_member, make_member_user
+from tests.conftest import (
+    auth_headers,
+    grant_permission,
+    make_admin_user,
+    make_loan_type,
+    make_member,
+    make_member_user,
+)
 
 
 def test_member_cannot_fetch_another_members_record_by_id(client, db_session):
@@ -34,9 +41,7 @@ def test_member_cannot_view_another_members_loan(client, db_session):
     member_b = make_member(db_session, psn="PSN-F", email="f@example.com")
     user_a = make_member_user(db_session, member_a)
 
-    loan_type = models.LoanType(name="Test Loan IDOR", is_active=True)
-    db_session.add(loan_type)
-    db_session.commit()
+    loan_type = make_loan_type(db_session, "Test Loan IDOR")
 
     loan_b = models.Loan(
         member_id=member_b.id,

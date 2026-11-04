@@ -15,7 +15,7 @@ from ..deps import (
     user_has_permission,
 )
 from ..idempotency import IdempotencyContext, idempotency_check
-from ..self_conflict import require_no_self_conflict
+from ..self_conflict import require_no_member_conflict
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
 from ..email_utils import (
     send_email,
@@ -222,17 +222,21 @@ def verify_payment(
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
         .filter(models.LoanApplication.id == application_id)
-        .with_for_update()
+        # of=...: a bare FOR UPDATE with the joinedload outer joins above
+        # is rejected by Postgres ("FOR UPDATE cannot be applied to the
+        # nullable side of an outer join"); this locks only the
+        # loan_applications row, which is the row the race is about.
+        .with_for_update(of=models.LoanApplication)
         .first()
     )
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    require_no_self_conflict(
+    require_no_member_conflict(
         db,
         current_user,
         application,
-        action_description="review your own loan-form payment",
+        action_description="review the loan-form payment for this application",
         permission_code="loan.review",
         entity_type="loan_application",
         entity_id=str(application.id),
@@ -317,17 +321,21 @@ def decide_application(
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
         .filter(models.LoanApplication.id == application_id)
-        .with_for_update()
+        # of=...: a bare FOR UPDATE with the joinedload outer joins above
+        # is rejected by Postgres ("FOR UPDATE cannot be applied to the
+        # nullable side of an outer join"); this locks only the
+        # loan_applications row, which is the row the race is about.
+        .with_for_update(of=models.LoanApplication)
         .first()
     )
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    require_no_self_conflict(
+    require_no_member_conflict(
         db,
         current_user,
         application,
-        action_description="approve or reject your own loan application",
+        action_description="approve or reject this loan application",
         permission_code=required_permission,
         entity_type="loan_application",
         entity_id=str(application.id),
@@ -453,17 +461,21 @@ def disburse_application(
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
         .filter(models.LoanApplication.id == application_id)
-        .with_for_update()
+        # of=...: a bare FOR UPDATE with the joinedload outer joins above
+        # is rejected by Postgres ("FOR UPDATE cannot be applied to the
+        # nullable side of an outer join"); this locks only the
+        # loan_applications row, which is the row the race is about.
+        .with_for_update(of=models.LoanApplication)
         .first()
     )
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    require_no_self_conflict(
+    require_no_member_conflict(
         db,
         current_user,
         application,
-        action_description="disburse your own loan",
+        action_description="disburse this loan",
         permission_code="disbursement.submit",
         entity_type="loan_application",
         entity_id=str(application.id),

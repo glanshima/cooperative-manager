@@ -1,13 +1,18 @@
 # Backend
 backend/.venv/
-backend/__pycache__/
-backend/**/__pycache__/
 backend/.env
+
+# Python bytecode caches (backend and scripts/)
+__pycache__/
+*.pyc
 
 # Frontend
 frontend/node_modules/
 frontend/.next/
 frontend/.env.local
+
+# Local offline sandbox (embedded Postgres data dir, logs, generated URLs)
+.local/
 
 # OS
 .DS_Store

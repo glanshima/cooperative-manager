@@ -23,7 +23,7 @@ def test_admin_user_manage_can_link_admin_to_member(client, db_session, seed_per
     event = (
         db_session.query(models.AuditEvent)
         .filter(models.AuditEvent.event_type == "admin.user_member_link_changed")
-        .order_by(models.AuditEvent.created_at.desc())
+        .order_by(models.AuditEvent.timestamp.desc())
         .first()
     )
     assert event is not None
@@ -289,7 +289,7 @@ def test_self_link_denial_is_audited(client, db_session, seed_permissions):
     event = (
         db_session.query(models.AuditEvent)
         .filter(models.AuditEvent.event_type == "admin.member_link_self_conflict_denied")
-        .order_by(models.AuditEvent.created_at.desc())
+        .order_by(models.AuditEvent.timestamp.desc())
         .first()
     )
     assert event is not None

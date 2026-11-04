@@ -214,6 +214,10 @@ Refresh the live `/members` page — the migrated rows should now appear.
 
 ## Part G — Ongoing deploys
 
+> **Before pushing:** the offline test sandbox (sample data stays local)
+> and the throwaway-Neon-branch verification flow are documented in
+> [`LOCAL_TESTING_AND_PRE_PUSH.md`](LOCAL_TESTING_AND_PRE_PUSH.md).
+
 - **Every `git push` to `main`** triggers a production redeploy of whichever
   project(s) have changed files under their root directory. Since backend
   and frontend have separate root directories, changing only frontend code

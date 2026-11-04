@@ -364,7 +364,8 @@ def test_next_of_kin_requires_member_create_permission(client, db_session, seed_
 
 
 # ---------------------------------------------------------------------
-# member_relationships.has_member_conflict -- governance foundation
+# member_relationships.has_member_conflict -- used by the NOK conflict
+# guard (see test_nok_conflict_enforcement.py for endpoint enforcement)
 # ---------------------------------------------------------------------
 
 

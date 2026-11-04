@@ -9,17 +9,11 @@ inference guarantee.
 """
 from decimal import Decimal
 
-from tests.conftest import auth_headers, grant_permission, make_admin_user, make_member
+from tests.conftest import auth_headers, grant_permission, make_admin_user, make_loan_type, make_member
 
 
 def _make_loan_type(db_session, name="Self-Conflict Test Loan"):
-    from app import models
-
-    loan_type = models.LoanType(name=name, is_active=True)
-    db_session.add(loan_type)
-    db_session.commit()
-    db_session.refresh(loan_type)
-    return loan_type
+    return make_loan_type(db_session, name)
 
 
 def _make_pending_application(db_session, member, loan_type, requested_amount=Decimal("500")):
@@ -345,7 +339,7 @@ def test_conflict_denial_is_audited_without_credential_leakage(client, db_sessio
     event = (
         db_session.query(models.AuditEvent)
         .filter(models.AuditEvent.event_type == "conflict_of_interest.denied")
-        .order_by(models.AuditEvent.created_at.desc())
+        .order_by(models.AuditEvent.timestamp.desc())
         .first()
     )
     assert event is not None

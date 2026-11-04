@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import pytest
 from app import models, schemas
 from app.auth import create_access_token, hash_password, verify_password
-from conftest import (
+from tests.conftest import (
     auth_headers,
     grant_permission,
     make_admin_user,

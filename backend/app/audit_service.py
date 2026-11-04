@@ -114,7 +114,7 @@ def _client_meta(request: Optional[Request]):
 
 def _actor_snapshot(db: Session, actor: Optional[models.User]):
     if actor is None:
-        return None, None, None
+        return None, None
     office_names = []
     role_names = []
     for assignment in actor.role_assignments:

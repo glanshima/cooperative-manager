@@ -14,6 +14,7 @@ from ..account_lifecycle import (
 from ..auth import hash_password, verify_password, create_access_token
 from ..database import get_db
 from ..deps import get_current_user, require_admin
+from ..self_conflict import require_no_member_conflict
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -191,6 +192,16 @@ def create_member_login(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    require_no_member_conflict(
+        db,
+        current_user,
+        member,
+        action_description="create a self-service login for this member",
+        entity_type="member",
+        entity_id=str(member.id),
+        request=request,
+    )
+
     # Login State Reconciliation Addendum: scoped to role == MEMBER
     # specifically. An admin-role account can independently hold this
     # same member_id (see self_conflict.py / Controlled Remediation
@@ -251,6 +262,16 @@ def reset_member_password(
     ).first()
     if not user:
         raise HTTPException(status_code=404, detail="This member doesn't have a login yet")
+
+    require_no_member_conflict(
+        db,
+        current_user,
+        user.member_id,
+        action_description="reset this member's password",
+        entity_type="user",
+        entity_id=str(user.id),
+        request=request,
+    )
 
     error = validate_password_strength(payload.temporary_password)
     if error:

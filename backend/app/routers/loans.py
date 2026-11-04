@@ -9,7 +9,7 @@ from .. import models, schemas, audit_service
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission, user_has_permission
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
-from ..self_conflict import require_no_self_conflict
+from ..self_conflict import require_no_member_conflict
 
 router = APIRouter(prefix="/api/loans", tags=["loans"])
 
@@ -106,6 +106,17 @@ def create_loan(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    require_no_member_conflict(
+        db,
+        current_user,
+        member,
+        action_description="create a direct loan for this member",
+        permission_code="disbursement.submit",
+        entity_type="member",
+        entity_id=str(member.id),
+        request=request,
+    )
+
     loan_type = (
         db.query(models.LoanType).filter(models.LoanType.id == payload.loan_type_id).first()
     )
@@ -181,11 +192,11 @@ def update_loan(
     if not loan:
         raise HTTPException(status_code=404, detail="Loan not found")
 
-    require_no_self_conflict(
+    require_no_member_conflict(
         db,
         current_user,
         loan,
-        action_description="adjust your own loan",
+        action_description="adjust this loan",
         permission_code="accounting.adjust",
         entity_type="loan",
         entity_id=str(loan.id),

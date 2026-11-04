@@ -7,7 +7,9 @@ from tests.conftest import auth_headers, grant_permission, make_admin_user, make
 
 
 def _member_row(members_response, member_id):
-    return next(m for m in members_response if m["id"] == str(member_id))
+    # GET /api/members returns the pagination wrapper (MemberListResponse),
+    # not a bare list -- see schemas.py.
+    return next(m for m in members_response["items"] if m["id"] == str(member_id))
 
 
 # ---------------------------------------------------------------------------

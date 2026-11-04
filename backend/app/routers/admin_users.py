@@ -136,12 +136,12 @@ def update_admin_user_member_link(
     could either wrongly block an unrelated person or, worse, fail to
     catch a real conflict).
 
-    Once linked, self_conflict.require_no_self_conflict() uses this
+    Once linked, self_conflict.require_no_member_conflict() uses this
     field to block this admin from approving, disbursing, verifying, or
-    otherwise administratively acting on their own member record or
-    financial transactions -- a protection that applies even if this
-    admin is a super-admin (see self_conflict.py; super-admin status is
-    never checked there).
+    otherwise administratively acting on their own member record,
+    financial transactions, or a member linked to them as Next of Kin
+    -- a protection that applies even if this admin is a super-admin
+    (see self_conflict.py; super-admin status is never checked there).
     """
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:

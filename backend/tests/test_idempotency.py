@@ -1,15 +1,21 @@
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from tests.conftest import auth_headers, grant_permission, make_admin_user, make_member, make_member_user
+from tests.conftest import (
+    auth_headers,
+    grant_permission,
+    make_admin_user,
+    make_loan_type,
+    make_member,
+    make_member_user,
+)
 
 
 def _make_active_loan(db_session, member, principal=Decimal("1000")):
     from app import models
 
-    loan_type = models.LoanType(name="Idempotency Test Loan", is_active=True)
-    db_session.add(loan_type)
-    db_session.commit()
+    loan_type = make_loan_type(db_session, "Idempotency Test Loan")
 
     loan = models.Loan(
         member_id=member.id,
@@ -209,7 +215,7 @@ def test_stale_pending_reservation_can_be_reclaimed(client, db_session, seed_per
     PENDING_RECORD_STALE_SECONDS is treated as an abandoned/crashed
     attempt and the key becomes usable again."""
     from app import models
-    from app.idempotency import PENDING_RECORD_STALE_SECONDS
+    from app.idempotency import PENDING_RECORD_STALE_SECONDS, _hash_body
 
     member = make_member(db_session, psn="IDEM-005", email="idem5@example.com")
     admin = make_admin_user(db_session, username="idem_stale_admin")
@@ -228,11 +234,18 @@ def test_stale_pending_reservation_can_be_reclaimed(client, db_session, seed_per
     db_session.commit()
     db_session.refresh(repayment)
 
+    # The reservation's stored hash must match the retry's body exactly as
+    # the client serializes it (json.dumps default separators, e.g.
+    # b'{"approved": true}'), because a hash mismatch is a client error
+    # (409) even for a stale record -- this test models a faithful retry
+    # of a crashed request, same key AND same body.
+    retry_body = json.dumps({"approved": True}).encode("utf-8")
+
     stale_reservation = models.IdempotencyRecord(
         user_id=admin.id,
         endpoint=f"POST /api/loan-repayments/{repayment.id}/verify",
         idempotency_key="stale-key-1",
-        request_hash="irrelevant",
+        request_hash=_hash_body(retry_body),
         created_at=datetime.utcnow() - timedelta(seconds=PENDING_RECORD_STALE_SECONDS + 5),
     )
     db_session.add(stale_reservation)

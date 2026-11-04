@@ -167,9 +167,11 @@ class MemberRelationship(Base):
     """
     A directed member-to-member relationship (currently only
     next_of_kin), used both to record "who is this member's Next of
-    Kin, if that person is also a cooperative member" and, more
-    generally, as the foundation for future conflict-of-interest
-    lookups between two members (Section 12 of the remediation prompt).
+    Kin, if that person is also a cooperative member" and, when
+    conflict_of_interest is set, as the conflict-of-interest pairing
+    that self_conflict.require_no_member_conflict() enforces on
+    administrative actions between the two members (Section 12 of the
+    remediation prompt).
 
     DIRECTION: member_id is the member the relationship is recorded
     FOR (e.g. the member filling out their own Next-of-Kin details);
@@ -243,17 +245,12 @@ class MemberRelationship(Base):
         default=RelationshipType.NEXT_OF_KIN,
     )
 
-    # Governance foundation only (Section 12-14 of the remediation
-    # prompt): marks whether this relationship should be treated as a
-    # conflict-of-interest pairing by a FUTURE authorization check.
-    # True by default for next_of_kin (a Next of Kin is the clearest
-    # possible conflict case). Nothing in this remediation pass reads
-    # this flag to actually block any action -- see
-    # member_relationships.has_member_conflict()'s docstring -- it
-    # exists so the data model doesn't need another migration once a
-    # later phase wires conflict checks into loan/disbursement/
-    # repayment approval, the same way self_conflict.py already does
-    # for the User<->Member self-dealing case.
+    # Marks whether this relationship is treated as a conflict-of-interest
+    # pairing by require_no_member_conflict (self_conflict.py). True by
+    # default for next_of_kin (a Next of Kin is the clearest possible
+    # conflict case); setting it False leaves the relationship recorded
+    # for display/history while authorizing the two members to act on
+    # each other's records.
     conflict_of_interest = Column(Boolean, nullable=False, default=True)
 
     status = Column(

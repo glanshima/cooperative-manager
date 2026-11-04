@@ -6,8 +6,10 @@ from tests.conftest import auth_headers, grant_permission, make_admin_user, make
 
 
 def _role_manager(db_session, username="rmr_manager"):
+    # Two permissions: admin.role_manage gates the assignment endpoints,
+    # admin.user_manage gates PATCH .../member-link (admin_users.py).
     admin = make_admin_user(db_session, username=username)
-    grant_permission(db_session, admin, "admin.role_manage")
+    grant_permission(db_session, admin, "admin.role_manage", "admin.user_manage")
     return admin
 
 

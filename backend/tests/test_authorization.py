@@ -1,7 +1,10 @@
+from decimal import Decimal
+
 from tests.conftest import (
     auth_headers,
     grant_permission,
     make_admin_user,
+    make_loan_type,
     make_member,
 )
 
@@ -89,14 +92,13 @@ def test_segregation_of_duties_approve_vs_reject(client, db_session, seed_permis
     member = make_member(db_session)
     from app import models
 
-    loan_type = models.LoanType(name="Test Loan", is_active=True)
-    db_session.add(loan_type)
-    db_session.commit()
+    loan_type = make_loan_type(db_session, "Test Loan")
 
     application = models.LoanApplication(
         member_id=member.id,
         loan_type_id=loan_type.id,
         requested_amount=1000,
+        form_fee_amount=Decimal("10"),
         payment_reference="ref-1",
         receipt_image_base64="aGVsbG8=",
         receipt_content_type="image/png",

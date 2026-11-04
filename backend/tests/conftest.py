@@ -19,6 +19,7 @@ leak data into each other and don't require a fresh database per run.
 """
 import os
 import uuid
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -106,6 +107,16 @@ def make_member(db_session, psn="PSN-0001", name="Test Member", email="member@ex
     db_session.commit()
     db_session.refresh(member)
     return member
+
+
+def make_loan_type(db_session, name, interest_rate=Decimal("0.15"), tenure_months=12, **extra):
+    loan_type = models.LoanType(
+        name=name, interest_rate=interest_rate, tenure_months=tenure_months, **extra
+    )
+    db_session.add(loan_type)
+    db_session.commit()
+    db_session.refresh(loan_type)
+    return loan_type
 
 
 def make_member_user(db_session, member, password="Passw0rd!"):

@@ -8,7 +8,7 @@ from sqlalchemy import or_
 from .. import models, schemas, audit_service, member_relationships
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission
-from ..self_conflict import require_no_self_conflict
+from ..self_conflict import require_no_member_conflict
 
 router = APIRouter(prefix="/api/members", tags=["members"])
 
@@ -312,11 +312,11 @@ def update_member(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    require_no_self_conflict(
+    require_no_member_conflict(
         db,
         current_user,
         member,
-        action_description="administratively edit your own member record",
+        action_description="administratively edit this member record",
         permission_code="member.update",
         entity_type="member",
         entity_id=str(member.id),
@@ -409,11 +409,11 @@ def update_member_login_status(
             detail="This member doesn't have a login yet. Use Create Login instead.",
         )
 
-    require_no_self_conflict(
+    require_no_member_conflict(
         db,
         current_user,
         member,
-        action_description="change your own login's active status",
+        action_description="change the active status of this member's login",
         permission_code="member.deactivate",
         entity_type="member",
         entity_id=str(member.id),
@@ -482,11 +482,11 @@ def delete_member(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    require_no_self_conflict(
+    require_no_member_conflict(
         db,
         current_user,
         member,
-        action_description="deactivate or delete your own member record",
+        action_description="deactivate or delete this member record",
         permission_code="member.deactivate",
         entity_type="member",
         entity_id=str(member.id),

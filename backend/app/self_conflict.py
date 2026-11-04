@@ -31,6 +31,16 @@ NOT folded into user_has_permission()/require_permission() -- so there
 is no path where "holds a permission" alone can satisfy it, and no
 single shared dependency that a future endpoint could accidentally omit
 without it being visible in that endpoint's own code.
+
+MEMBER-TO-MEMBER CONFLICTS (2026-11): require_no_member_conflict()
+extends the same boundary to an active, conflict-flagged
+MemberRelationship (currently Next of Kin) between the actor's linked
+member and the target member -- in either direction. It delegates to
+require_no_self_conflict() first, so every self-record denial keeps
+its existing "self_conflict" contract; only then does it check the
+relationship. find_eligible_approvers() likewise excludes candidates
+who are themselves Next of Kin of the target, so the "who else can do
+this" hint never points at another conflicted officer.
 """
 import uuid
 from typing import Iterable, Optional, Union
@@ -38,7 +48,7 @@ from typing import Iterable, Optional, Union
 from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 
-from . import audit_service, models
+from . import audit_service, member_relationships, models
 
 MemberLike = Union[
     None,
@@ -112,12 +122,17 @@ def find_eligible_approvers(
     for candidate in candidates:
         if candidate.id in exclude_ids:
             continue
-        if (
-            conflicted_member_id is not None
-            and candidate.member_id is not None
-            and candidate.member_id == conflicted_member_id
-        ):
-            continue
+        if conflicted_member_id is not None and candidate.member_id is not None:
+            if candidate.member_id == conflicted_member_id:
+                continue
+            # A candidate who is the target's Next of Kin (or whose Next
+            # of Kin is the target) is just as conflicted as the caller
+            # who was just denied -- recommending them would move the
+            # action from one conflicted officer to another.
+            if member_relationships.has_member_conflict(
+                db, candidate.member_id, conflicted_member_id
+            ):
+                continue
         if user_has_permission(db, candidate, permission_code):
             eligible.append(candidate)
     return eligible
@@ -189,6 +204,99 @@ def require_no_self_conflict(
             "message": (
                 f"You cannot {action_description} because it belongs to your own "
                 "member record. This action requires another eligible officer."
+            ),
+            "eligible_approvers": [
+                {"id": str(u.id), "username": u.username} for u in eligible_approvers
+            ],
+            "no_eligible_approver_available": bool(permission_code) and not eligible_approvers,
+        },
+    )
+
+
+def require_no_member_conflict(
+    db: Session,
+    current_user: models.User,
+    target: MemberLike,
+    *,
+    action_description: str,
+    permission_code: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    request: Optional[Request] = None,
+) -> None:
+    """
+    Raise HTTP 409 if `current_user` is administratively acting on:
+      1. their own member record or financial object (delegated to
+         require_no_self_conflict, unchanged "self_conflict" contract), or
+      2. a member linked to the actor's member by an active,
+         conflict-flagged MemberRelationship in EITHER direction -- e.g.
+         the actor is the target's Next of Kin, or the target is the
+         actor's Next of Kin.
+
+    This is the guard administrative mutation endpoints should call
+    instead of require_no_self_conflict. It deliberately does NOT apply
+    to member self-service endpoints (submitting one's own application,
+    repayment, etc.): those targets resolve to the actor's own member id,
+    which has_member_conflict() treats as "not a pairing".
+
+    Same audit-trail and alternate-approver guarantees as
+    require_no_self_conflict; `eligible_approvers` additionally excludes
+    officers who are themselves conflicted with the target member.
+    """
+    require_no_self_conflict(
+        db,
+        current_user,
+        target,
+        action_description=action_description,
+        permission_code=permission_code,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        request=request,
+    )
+
+    if current_user.member_id is None:
+        return
+
+    target_member_id = resolve_owning_member_id(db, target)
+    if target_member_id is None:
+        return
+
+    if not member_relationships.has_member_conflict(db, current_user.member_id, target_member_id):
+        return
+
+    eligible_approvers = []
+    if permission_code:
+        eligible_approvers = find_eligible_approvers(
+            db,
+            target_member_id,
+            permission_code,
+            exclude_user_ids=[current_user.id],
+        )
+
+    if entity_type is not None:
+        audit_service.log_event(
+            db,
+            actor=current_user,
+            event_type="conflict_of_interest.denied",
+            action="deny",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            reason=(
+                "Blocked: attempted to "
+                f"{action_description} on a member record linked to the actor's "
+                "member by an active conflict-of-interest relationship (Next of Kin)."
+            ),
+            request=request,
+        )
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "error": "member_conflict",
+            "message": (
+                f"You cannot {action_description} because this record belongs to a "
+                "member linked to you by an active conflict-of-interest relationship "
+                "(Next of Kin). This action requires another eligible officer."
             ),
             "eligible_approvers": [
                 {"id": str(u.id), "username": u.username} for u in eligible_approvers
