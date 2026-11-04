@@ -197,3 +197,126 @@ def test_direct_api_assignment_call_is_still_rejected_for_unlinked_user(client, 
         headers=auth_headers(manager),
     )
     assert res.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# 13. Flipping requires_member_link on an existing role (flag-flip gap)
+# ---------------------------------------------------------------------------
+
+def test_flipping_requires_member_link_rejected_while_active_assignee_is_unlinked(
+    client, db_session, seed_permissions
+):
+    """The same invalid state must not be creatable by editing the role
+    instead of assigning it: an active role cannot start requiring
+    Member linkage while an unlinked account holds it."""
+    manager = _role_manager(db_session, "rmr_manager_13")
+    target = make_admin_user(db_session, username="rmr_target_13")
+    role = make_role(db_session, name="Exco Role 13", requires_member_link=False)
+    assert _assign(client, manager, target.id, role.id).status_code == 201
+
+    res = client.put(
+        f"/api/roles/{role.id}",
+        json={"requires_member_link": True},
+        headers=auth_headers(manager),
+    )
+    assert res.status_code == 409
+    detail = res.json()["detail"]
+    assert detail["error"] == "member_link_required"
+    assert detail["unlinked_usernames"] == [target.username]
+
+    db_session.refresh(role)
+    assert role.requires_member_link is False, "rejected flip must not persist"
+
+
+def test_flipping_requires_member_link_allowed_when_all_active_assignees_are_linked(
+    client, db_session, seed_permissions
+):
+    manager = _role_manager(db_session, "rmr_manager_14")
+    member = make_member(db_session, psn="RMR-014", email="rmr14@example.com")
+    target = make_admin_user(db_session, username="rmr_target_14", member_id=member.id)
+    role = make_role(db_session, name="Exco Role 14", requires_member_link=False)
+    assert _assign(client, manager, target.id, role.id).status_code == 201
+
+    res = client.put(
+        f"/api/roles/{role.id}",
+        json={"requires_member_link": True},
+        headers=auth_headers(manager),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["requires_member_link"] is True
+
+    db_session.refresh(role)
+    assert role.requires_member_link is True
+
+
+def test_flipping_requires_member_link_allowed_after_assignee_is_revoked(
+    client, db_session, seed_permissions
+):
+    manager = _role_manager(db_session, "rmr_manager_15")
+    target = make_admin_user(db_session, username="rmr_target_15")
+    role = make_role(db_session, name="Exco Role 15", requires_member_link=False)
+    assignment = _assign(client, manager, target.id, role.id)
+    assert assignment.status_code == 201
+
+    revoke = client.delete(
+        f"/api/admin/users/{target.id}/assignments/{assignment.json()['id']}",
+        headers=auth_headers(manager),
+    )
+    assert revoke.status_code == 204
+
+    res = client.put(
+        f"/api/roles/{role.id}",
+        json={"requires_member_link": True},
+        headers=auth_headers(manager),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["requires_member_link"] is True
+
+
+# ---------------------------------------------------------------------------
+# 16. Activating a dormant member-required role is covered too
+# ---------------------------------------------------------------------------
+
+def test_activating_member_required_role_rejected_while_unlinked_assignee_exists(
+    client, db_session, seed_permissions
+):
+    """Role.is_active is part of the invariant: an inactive role doesn't
+    count as 'active' for the unlink guard, so flipping it on must be
+    re-validated. (The direct assignment row simulates legacy state,
+    which predates assignment-time enforcement.)"""
+    from app import models
+
+    manager = _role_manager(db_session, "rmr_manager_16")
+    target = make_admin_user(db_session, username="rmr_target_16")
+    role = make_role(db_session, name="Dormant Exco Role 16", requires_member_link=True)
+    role.is_active = False
+    db_session.add(models.UserRoleAssignment(user_id=target.id, role_id=role.id))
+    db_session.commit()
+
+    res = client.put(
+        f"/api/roles/{role.id}",
+        json={"is_active": True},
+        headers=auth_headers(manager),
+    )
+    assert res.status_code == 409
+    assert res.json()["detail"]["error"] == "member_link_required"
+
+    db_session.refresh(role)
+    assert role.is_active is False, "rejected activation must not persist"
+
+    # The repair path stays open: dropping the linkage requirement saves.
+    repair = client.put(
+        f"/api/roles/{role.id}",
+        json={"requires_member_link": False},
+        headers=auth_headers(manager),
+    )
+    assert repair.status_code == 200, repair.text
+    assert repair.json()["requires_member_link"] is False
+
+    activate = client.put(
+        f"/api/roles/{role.id}",
+        json={"is_active": True},
+        headers=auth_headers(manager),
+    )
+    assert activate.status_code == 200, activate.text
+    assert activate.json()["is_active"] is True

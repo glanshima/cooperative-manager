@@ -127,6 +127,31 @@ def update_role(
             raise HTTPException(status_code=400, detail=f"Unknown permission code(s): {', '.join(unknown)}")
         _set_role_permissions(db, role, permission_codes)
 
+    # Governance Objective 1, Section 4: the invalid state (an ACTIVE
+    # member-required role held by an account with no linked Member) must
+    # not be creatable by flipping the role's flags instead of assigning
+    # it. Assignment and unlink are already guarded in admin_users.py;
+    # this closes the third door. Deactivating the role, or flipping
+    # requires_member_link back off, remains available as the repair path.
+    if role.is_active and role.requires_member_link:
+        unlinked_usernames = _unlinked_active_assignees(db, role.id)
+        if unlinked_usernames:
+            message = (
+                f"Cannot save role '{role.name}' as Member-linkage-required while it is "
+                "active and assigned to account(s) without a linked Member: "
+                f"{', '.join(unlinked_usernames)}. Link those accounts to a Member or "
+                "revoke their assignment first."
+            )
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "member_link_required",
+                    "message": message,
+                    "unlinked_usernames": unlinked_usernames,
+                },
+            )
+
     db.commit()
     db.refresh(role)
 
@@ -151,6 +176,25 @@ def _unknown_codes(db: Session, codes: List[str]) -> List[str]:
         p.code for p in db.query(models.Permission).filter(models.Permission.code.in_(codes)).all()
     }
     return [c for c in codes if c not in found]
+
+
+def _unlinked_active_assignees(db: Session, role_id: uuid.UUID) -> List[str]:
+    """Usernames of accounts holding an ACTIVE assignment of `role_id`
+    whose User.member_id is NULL. Mirrors admin_users.py's active-role
+    convention (UserRoleAssignment.is_active, and the role itself being
+    active is the caller's precondition)."""
+    rows = (
+        db.query(models.User.username)
+        .join(models.UserRoleAssignment, models.UserRoleAssignment.user_id == models.User.id)
+        .filter(
+            models.UserRoleAssignment.role_id == role_id,
+            models.UserRoleAssignment.is_active.is_(True),
+            models.User.member_id.is_(None),
+        )
+        .order_by(models.User.username)
+        .all()
+    )
+    return [username for (username,) in rows]
 
 
 def _set_role_permissions(db: Session, role: models.Role, codes: List[str]) -> None:
