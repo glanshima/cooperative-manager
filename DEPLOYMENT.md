@@ -126,11 +126,11 @@ unless you have a reason to split them.
 1. Click **Deploy**.
 2. Vercel builds and deploys; watch the **Build Logs** panel for errors.
 3. Once it says "Ready," click **Visit** to get the deployment URL, e.g.
-   `https://mact-app-backend.vercel.app`.
+   `https://cooperative-manager-backend.vercel.app`.
 
 ### C6. Verify
-Open `https://mact-app-backend.vercel.app/api/health` in a browser. You
-should see:
+Open `https://cooperative-manager-backend.vercel.app/api/health` in a
+browser. You should see:
 ```json
 {"status": "ok"}
 ```
@@ -159,16 +159,16 @@ most common cause at this stage is a malformed `DATABASE_URL` (missing
 ### D3. Environment variables
 | Name | Value |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | the backend URL from C5, e.g. `https://mact-app-backend.vercel.app` |
+| `NEXT_PUBLIC_API_URL` | the backend URL from C5, e.g. `https://cooperative-manager-backend.vercel.app` |
 
 ### D4. Deploy
 Click **Deploy** and wait for the build to finish. Visit the resulting
-URL, e.g. `https://mact-app-frontend.vercel.app`.
+URL, e.g. `https://sidgaks-cooperative-manager.vercel.app`.
 
 ### D5. Verify
-Go to `https://mact-app-frontend.vercel.app/members`. The page will load
-but the member list will likely fail to fetch — that's expected, and
-fixed in Part E.
+Go to `https://sidgaks-cooperative-manager.vercel.app/members`. The page
+will load but the member list will likely fail to fetch — that's expected,
+and fixed in Part E.
 
 ---
 
@@ -181,17 +181,25 @@ it to also allow the live frontend:
    Variables**.
 2. Edit `ALLOWED_ORIGINS` to:
    ```
-   https://mact-app-frontend.vercel.app
+   https://sidgaks-cooperative-manager.vercel.app
    ```
    (Add `http://localhost:3000` too, comma-separated, if you still want to
-   test locally against the live backend: `http://localhost:3000,https://mact-app-frontend.vercel.app`)
+   test locally against the live backend: `http://localhost:3000,https://sidgaks-cooperative-manager.vercel.app`)
 3. Go to **Deployments** → find the latest deployment → click the **⋯**
    menu → **Redeploy**. Environment variable changes don't take effect
    until redeploy.
 
+> **Use the stable alias, not the per-deployment URL.** Vercel also exposes
+> a unique URL for each deployment (e.g.
+> `https://cooperative-manager-boi2-9h0scjc6y-<team>.vercel.app`). Those
+> are protected by Vercel Deployment Protection (they redirect anonymous
+> visitors to a Vercel login), and they are not in `ALLOWED_ORIGINS`, so
+> the frontend hosted there gets `Failed to fetch` on every API call. Test
+> against the stable alias above.
+
 ### Verify end-to-end
-Reload `https://mact-app-frontend.vercel.app/members`. The member list
-should load (empty, unless you've already migrated data), and adding a
+Reload `https://sidgaks-cooperative-manager.vercel.app/members`. The member
+list should load (empty, unless you've already migrated data), and adding a
 member through the form should persist and reappear on refresh.
 
 ---
