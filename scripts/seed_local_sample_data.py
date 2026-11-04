@@ -2,8 +2,9 @@
 Seeds the LOCAL OFFLINE SANDBOX with sample data: permissions/roles
 authoritative catalogue, a super-admin login, sample members (+ a
 member-to-member next-of-kin link), sample loan types with rate
-versions, and two member logins (one normal, one forcing the
-first-login password reset flow).
+versions, two member logins (one normal, one forcing the first-login
+password reset flow), and a member-linked admin fixture for the smoke
+test's Next-of-Kin conflict check.
 
 THIS SCRIPT IS LOCAL-ONLY. It refuses to run unless DATABASE_URL points
 at the sandbox Postgres (127.0.0.1:55432, see scripts/local_db.py).
@@ -85,6 +86,15 @@ ADMIN_USERNAME = "localadmin"
 ADMIN_PASSWORD = "LocalAdmin#2026"
 MEMBER_PASSWORD = "MemberTest#2026"
 
+# Fixture for scripts/smoke_test.py's opt-in Next-of-Kin conflict check:
+# an admin account linked to its own Member, whose Next of Kin is
+# MCT-0001. The fixture member has no login; it exists only to give the
+# admin a linked member so the conflict guard treats MCT-0001 as
+# off-limits.
+SMOKE_NOK_ADMIN_USERNAME = "smoke_nok_admin"
+SMOKE_NOK_ADMIN_PASSWORD = "SmokeNok#2026"
+SMOKE_NOK_FIXTURE_PSN = "MCT-9001"
+
 SAMPLE_MEMBERS = [
     # (psn, name, gender, department, phone, email, status, bank, account_no,
     #  next_of_kin, nok_phone, loan_restricted, restriction_reason)
@@ -160,6 +170,69 @@ def seed_relationship(session):
     print("Member relationship MCT-0001 -> MCT-0002 (NOK): created.")
 
 
+def seed_conflict_fixture(session):
+    """
+    Admin account linked to a fixture member whose Next of Kin is
+    MCT-0001. This is what lets scripts/smoke_test.py prove -- against a
+    live server -- that a conflicted officer cannot list, read, or update
+    that member, while an unconflicted admin still can.
+
+    The fixture admin is a super admin on purpose: is_super_admin is
+    explicitly NOT an escape hatch for conflict enforcement, so this
+    exercises the guard at its strongest permission level. Idempotent;
+    re-running repairs a missing link rather than duplicating anything.
+    """
+    actor = session.execute(select(Member).where(Member.psn == "MCT-0001")).scalar_one()
+
+    fixture = session.execute(
+        select(Member).where(Member.psn == SMOKE_NOK_FIXTURE_PSN)
+    ).scalar_one_or_none()
+    if fixture is None:
+        fixture = Member(
+            psn=SMOKE_NOK_FIXTURE_PSN,
+            name="Smoke NOK Fixture (no login)",
+            status=MemberStatus.NON_FINANCIAL,
+        )
+        session.add(fixture)
+        session.flush()
+        print(f"Member {SMOKE_NOK_FIXTURE_PSN} (smoke conflict fixture): created.")
+    else:
+        print(f"Member {SMOKE_NOK_FIXTURE_PSN} (smoke conflict fixture): already exists.")
+
+    relationship = session.execute(
+        select(MemberRelationship).where(
+            MemberRelationship.member_id == fixture.id,
+            MemberRelationship.related_member_id == actor.id,
+            MemberRelationship.relationship_type == RelationshipType.NEXT_OF_KIN,
+            MemberRelationship.status == RelationshipStatus.ACTIVE,
+        )
+    ).scalar_one_or_none()
+    if relationship is None:
+        session.add(MemberRelationship(
+            member_id=fixture.id, related_member_id=actor.id,
+            relationship_type=RelationshipType.NEXT_OF_KIN,
+            status=RelationshipStatus.ACTIVE,
+            conflict_of_interest=True,
+        ))
+        print(f"Member relationship {SMOKE_NOK_FIXTURE_PSN} -> MCT-0001 (NOK, conflict): created.")
+    elif not relationship.conflict_of_interest:
+        relationship.conflict_of_interest = True
+        print(f"Member relationship {SMOKE_NOK_FIXTURE_PSN} -> MCT-0001: conflict flag re-enabled.")
+    else:
+        print(f"Member relationship {SMOKE_NOK_FIXTURE_PSN} -> MCT-0001 (NOK, conflict): already exists.")
+
+    seed_user(
+        session, SMOKE_NOK_ADMIN_USERNAME, SMOKE_NOK_ADMIN_PASSWORD,
+        UserRole.ADMIN, member=fixture, is_super_admin=True,
+    )
+    admin = session.execute(
+        select(User).where(User.username == SMOKE_NOK_ADMIN_USERNAME)
+    ).scalar_one()
+    if admin.member_id != fixture.id:
+        admin.member_id = fixture.id
+        print(f"User {SMOKE_NOK_ADMIN_USERNAME!r}: linked to {SMOKE_NOK_FIXTURE_PSN}.")
+
+
 def seed_loan_types(session):
     created = 0
     for name, description, rate, tenure, flat, open_for_app in SAMPLE_LOAN_TYPES:
@@ -211,6 +284,7 @@ def main():
         seed_members(session)
         seed_relationship(session)
         seed_loan_types(session)
+        seed_conflict_fixture(session)
 
         m1 = session.execute(select(Member).where(Member.psn == "MCT-0001")).scalar_one()
         m3 = session.execute(select(Member).where(Member.psn == "MCT-0003")).scalar_one()
@@ -227,6 +301,9 @@ def main():
     print(f"  Admin:        {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
     print(f"  Member 1:     MCT-0001 / {MEMBER_PASSWORD}")
     print(f"  Member 2:     MCT-0003 / {MEMBER_PASSWORD}  (must_change_password=True: exercises the reset flow)")
+    print(f"  Smoke NOK:    {SMOKE_NOK_ADMIN_USERNAME} / {SMOKE_NOK_ADMIN_PASSWORD}  "
+          f"(admin linked to {SMOKE_NOK_FIXTURE_PSN}, whose NOK is MCT-0001; pass to "
+          "smoke_test.py as --conflict-admin-user/--conflict-admin-pass)")
 
 
 if __name__ == "__main__":

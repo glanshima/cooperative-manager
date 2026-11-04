@@ -5,8 +5,8 @@ Stage 2 of the offline-testing plan: after code is tested locally and
 deployed to a disposable environment (a Vercel Preview wired to a
 throwaway Neon branch), this script verifies the DEPLOYED system
 actually works end to end -- health, admin login, member lookup, member
-login, loan-application submission, read-back -- over real HTTP against
-a base URL you pass in.
+login, loan-application submission, read-back -- and, when a conflict
+fixture admin is supplied, that Next-of-Kin conflicts block reads.
 
 This is deliberately NOT a replacement for the pytest suite in tests/:
   * pytest exercises business-rule edge cases against a database
@@ -25,12 +25,21 @@ host the script refuses to run unless you pass --yes, as an explicit
 acknowledgement that the target is a throwaway environment. Never point
 this at production.
 
+The conflict check (steps 9-10) is opt-in: pass --conflict-admin-user /
+--conflict-admin-pass for an ADMIN account that is linked to a Member
+whose Next of Kin is --member-user (the local seed creates
+smoke_nok_admin for exactly this; a Neon branch gate needs an equivalent
+temporary account seeded on the branch). The check itself only reads the
+conflicted member; the one update it attempts re-sends that member's
+existing name, so a regression cannot change data. The primary
+--admin-user must NOT be that linked account.
+
 Usage (local sandbox -- the defaults match seed_local_sample_data.py):
     backend/.venv/Scripts/python.exe scripts/smoke_test.py \
         --base-url http://127.0.0.1:8000
 
 Usage (remote disposable preview):
-    python scripts/smoke_test.py --base-url https://mact-preview.vercel.app \
+    python scripts/smoke_test.py --base-url https://<preview-deployment> \
         --admin-user <preview-admin> --admin-pass <...> \
         --member-user MCT-0001 --member-pass <...> --yes
 """
@@ -100,11 +109,28 @@ def main():
     parser.add_argument("--amount", type=int, default=100000, help="Loan amount for the test application")
     parser.add_argument("--timeout", type=float, default=30.0, help="Per-request timeout in seconds (Vercel cold starts can take a few)")
     parser.add_argument(
+        "--conflict-admin-user",
+        default=None,
+        help=(
+            "Optional: an ADMIN account linked to a Member whose Next of Kin is "
+            "--member-user. Enables the Next-of-Kin conflict check (steps 9-10)."
+        ),
+    )
+    parser.add_argument(
+        "--conflict-admin-pass",
+        default=None,
+        help="Password for --conflict-admin-user.",
+    )
+    parser.add_argument(
         "--yes",
         action="store_true",
         help="Acknowledge that a non-localhost target will receive a real loan application row",
     )
     args = parser.parse_args()
+
+    if bool(args.conflict_admin_user) != bool(args.conflict_admin_pass):
+        print("ERROR: pass both --conflict-admin-user and --conflict-admin-pass, or neither.")
+        return 2
 
     base_url = args.base_url.rstrip("/")
     host = urlparse(base_url).hostname
@@ -125,12 +151,15 @@ def main():
     client = httpx.Client(base_url=base_url, timeout=args.timeout)
 
     step = 0
-    total_steps = 8
+    conflict_enabled = bool(args.conflict_admin_user)
+    total_steps = 10 if conflict_enabled else 8
 
     def begin(name):
         nonlocal step
         step += 1
         print(f"[{step}/{total_steps}] {name}")
+
+    admin_token = None
 
     try:
         begin("GET /api/health")
@@ -219,6 +248,64 @@ def main():
         if readback["id"] != application_id:
             raise SmokeFailure(f"read-back: id mismatch {readback['id']} != {application_id}")
         print("      ok")
+
+        if conflict_enabled:
+            begin(f"Login as the conflict-fixture admin '{args.conflict_admin_user}'")
+            conflict_login = login(
+                client, args.conflict_admin_user, args.conflict_admin_pass,
+                "conflict admin login",
+            )
+            conflict_token = conflict_login["access_token"]
+            if conflict_login["role"] != "admin":
+                raise SmokeFailure(
+                    f"conflict admin login: role is {conflict_login['role']!r}, expected 'admin'"
+                )
+            print("      ok (role=admin)")
+
+            begin("NOK conflict enforced: member hidden from lists, direct read/update return 409")
+            hidden = api_call(
+                client, "GET", f"/api/members?search={member['psn']}",
+                token=conflict_token,
+                label="conflicted search",
+            )
+            if hidden["items"] or hidden["total"] != 0:
+                raise SmokeFailure(
+                    "conflicted search: expected the NOK member to be hidden while the "
+                    f"conflict is active, got total={hidden['total']}. Is the fixture "
+                    f"admin actually linked to a Member whose NOK is {args.member_user!r}?"
+                )
+            read_detail = api_call(
+                client, "GET", f"/api/members/{member['id']}",
+                token=conflict_token, expect=409, label="conflicted read",
+            )
+            if read_detail.get("detail", {}).get("error") != "member_conflict":
+                raise SmokeFailure(f"conflicted read: unexpected 409 payload {read_detail}")
+            # Same-value update: if the guard ever regressed, this writes the
+            # member's existing name back -- no destructive change.
+            update_detail = api_call(
+                client, "PUT", f"/api/members/{member['id']}",
+                token=conflict_token, json_body={"name": member["name"]},
+                expect=409, label="conflicted update",
+            )
+            if update_detail.get("detail", {}).get("error") != "member_conflict":
+                raise SmokeFailure(f"conflicted update: unexpected 409 payload {update_detail}")
+
+            # The denial must be specific to the conflicted officer, not global.
+            still_visible = api_call(
+                client, "GET", f"/api/members/{member['id']}",
+                token=admin_token, label="unconflicted read",
+            )
+            if still_visible["psn"] != member["psn"]:
+                raise SmokeFailure(
+                    f"unconflicted read: PSN mismatch {still_visible['psn']!r} "
+                    f"!= {member['psn']!r}"
+                )
+            print("      ok (list hidden, read/update 409 member_conflict; unconflicted admin still reads)")
+        else:
+            print(
+                "\n(skipping the Next-of-Kin conflict check: pass --conflict-admin-user "
+                "and --conflict-admin-pass with a fixture admin to enable it)"
+            )
 
     except SmokeFailure as exc:
         print(f"\nFAILED at step {step}/{total_steps}: {exc}")

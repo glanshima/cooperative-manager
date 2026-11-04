@@ -18,7 +18,7 @@ never pushed, never seeded into Neon, never deployed. Only **code** and
 | `scripts/apply_manual_migrations.py` | Applies `scripts/manual_migration_*.sql` in a fixed dependency order, in one pass, idempotently (re-runs are safe). Sandbox by default (reads `backend/.env`); a Neon **branch** requires `--allow-remote`. Never writes sample data — schema only. | repo root |
 | `scripts/seed_local_sample_data.py` | Creates the sample admin/members/logins/loan types described below. **Refuses to run** unless `DATABASE_URL` points at `127.0.0.1:55432` — this guard is deliberate; do not bypass it. Idempotent (safe to re-run). | repo root |
 | `backend/tests/` | The pytest suite. Needs a real Postgres via `DATABASE_URL`; runs per-test rollback, but still truncates/creates freely — always point it at `mact_test`, never at real data. | `backend/` |
-| `scripts/smoke_test.py` | 8-step end-to-end check over real HTTP against a running backend (health → admin login → member lookup → loan types → member login → member self → submit application → read back). **Step 7 creates a real loan-application row** in the target database. | repo root |
+| `scripts/smoke_test.py` | End-to-end check over real HTTP against a running backend (health → admin login → member lookup → loan types → member login → member self → submit application → read back). Passing `--conflict-admin-user`/`--conflict-admin-pass` adds the Next-of-Kin conflict check (login as a member-linked admin, member hidden from lists, direct read/update return `409 member_conflict`, unconflicted admin still reads) for 10 steps total. **Step 7 creates a real loan-application row** in the target database. | repo root |
 
 ## 2. One-time setup
 
@@ -68,6 +68,7 @@ Sandbox logins (these exist **only** in the sandbox):
 | `localadmin` | `LocalAdmin#2026` | Super admin |
 | `MCT-0001` | `MemberTest#2026` | Normal member login |
 | `MCT-0003` | `MemberTest#2026` | Starts in the forced first-login password-reset flow (the stored password changes once you complete it) |
+| `smoke_nok_admin` | `SmokeNok#2026` | Super admin linked to fixture member `MCT-9001`, whose Next of Kin is `MCT-0001` — used only by the smoke test's `--conflict-admin-user` check |
 
 ## 4. Test gates before pushing
 
@@ -92,6 +93,17 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py --base-url http://127.0.0
 Defaults already match the seeded sandbox (`localadmin` / `MCT-0001`). It
 leaves behind one pending loan application (payment reference `SMOKE-...`)
 in `mact_local` — that is sample data and stays local.
+
+To include the Next-of-Kin conflict check (steps 9–10), pass the seeded
+fixture admin; the primary admin must not be that linked account:
+
+```bash
+backend/.venv/Scripts/python.exe scripts/smoke_test.py --base-url http://127.0.0.1:8000 \
+    --conflict-admin-user smoke_nok_admin --conflict-admin-pass 'SmokeNok#2026'
+```
+
+Without the flags the script runs the 8 core steps and prints that it
+skipped the conflict check. With them it expects **10/10**.
 
 ## 5. Stage 2 — verify on a throwaway Neon branch
 
@@ -135,6 +147,15 @@ production.
        --admin-user <...> --admin-pass <...> \
        --member-user <PSN> --member-pass <...> --yes
    ```
+
+   To cover the Next-of-Kin conflict steps on the branch, it needs the
+   same fixture shape as the sandbox: an **admin** account linked to a
+   member whose Next of Kin is the smoke member (the relationship must be
+   `active` with `conflict_of_interest = true`). If the branch's inherited
+   data already has one, add `--conflict-admin-user`/`--conflict-admin-pass`
+   and expect 10/10. Otherwise run the 8 core steps and rely on Gate 1 for
+   the conflict rules — do not write a throwaway fixture to any database
+   other than a disposable branch.
 
 5. **Tear the branch down** when the verification is done.
 
