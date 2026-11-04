@@ -9,7 +9,11 @@ from .. import models, schemas, audit_service
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission, user_has_permission
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
-from ..self_conflict import require_no_member_conflict
+from ..self_conflict import (
+    get_conflicted_member_ids,
+    require_no_member_conflict,
+    require_no_nok_read_conflict,
+)
 
 router = APIRouter(prefix="/api/loans", tags=["loans"])
 
@@ -61,6 +65,9 @@ def list_loans(
     else:
         if not user_has_permission(db, current_user, "loan.view"):
             raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
+        conflicted_member_ids = get_conflicted_member_ids(db, current_user)
+        if conflicted_member_ids:
+            query = query.filter(models.Loan.member_id.notin_(conflicted_member_ids))
         if member_id:
             query = query.filter(models.Loan.member_id == member_id)
 
@@ -76,6 +83,7 @@ def list_loans(
 @router.get("/{loan_id}", response_model=schemas.LoanOutWithDetails)
 def get_loan(
     loan_id: uuid.UUID,
+    request: Request,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -92,6 +100,16 @@ def get_loan(
             raise HTTPException(status_code=403, detail="You can only view your own loans")
     elif not user_has_permission(db, current_user, "loan.view"):
         raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
+
+    require_no_nok_read_conflict(
+        db,
+        current_user,
+        loan.member_id,
+        action_description="view this loan",
+        entity_type="loan",
+        entity_id=str(loan.id),
+        request=request,
+    )
     return _to_detail_schema(loan)
 
 
@@ -269,6 +287,7 @@ def delete_loan(
 @router.get("/member/{member_id}/balance", response_model=dict)
 def get_member_loan_balance(
     member_id: uuid.UUID,
+    request: Request,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -280,6 +299,16 @@ def get_member_loan_balance(
             raise HTTPException(status_code=403, detail="You can only view your own balance")
     elif not user_has_permission(db, current_user, "loan.view"):
         raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
+
+    require_no_nok_read_conflict(
+        db,
+        current_user,
+        member_id,
+        action_description="view this member's loan balance",
+        entity_type="member",
+        entity_id=str(member_id),
+        request=request,
+    )
 
     loans = (
         db.query(models.Loan)

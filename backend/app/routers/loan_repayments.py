@@ -10,7 +10,11 @@ from ..database import get_db
 from ..deps import get_current_user, require_admin, require_password_already_changed, require_permission, user_has_permission
 from ..email_utils import send_email, repayment_verified_email_html, repayment_rejected_email_html
 from ..idempotency import IdempotencyContext, idempotency_check
-from ..self_conflict import require_no_member_conflict
+from ..self_conflict import (
+    get_conflicted_member_ids,
+    require_no_member_conflict,
+    require_no_nok_read_conflict,
+)
 
 router = APIRouter(tags=["loan-repayments"])
 
@@ -69,6 +73,7 @@ def submit_repayment(
 )
 def list_repayments_for_loan(
     loan_id: uuid.UUID,
+    request: Request,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -76,6 +81,16 @@ def list_repayments_for_loan(
     if not loan:
         raise HTTPException(status_code=404, detail="Loan not found")
     _assert_can_view_loan(loan, current_user, db)
+
+    require_no_nok_read_conflict(
+        db,
+        current_user,
+        loan.member_id,
+        action_description="view this loan's repayments",
+        entity_type="loan",
+        entity_id=str(loan.id),
+        request=request,
+    )
 
     return (
         db.query(models.LoanRepayment)
@@ -96,6 +111,9 @@ def list_all_repayments(
 ):
     """Admin-only: cross-loan queue of repayments awaiting verification."""
     query = db.query(models.LoanRepayment)
+    conflicted_member_ids = get_conflicted_member_ids(db, current_user)
+    if conflicted_member_ids:
+        query = query.filter(models.LoanRepayment.member_id.notin_(conflicted_member_ids))
     if status:
         query = query.filter(models.LoanRepayment.status == status)
     return query.order_by(models.LoanRepayment.created_at.desc()).all()
@@ -107,6 +125,7 @@ def list_all_repayments(
 )
 def get_repayment(
     repayment_id: uuid.UUID,
+    request: Request,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -118,6 +137,16 @@ def get_repayment(
             raise HTTPException(status_code=403, detail="You can only view your own repayments")
     elif not user_has_permission(db, current_user, "repayment.view"):
         raise HTTPException(status_code=403, detail="You do not have the 'repayment.view' permission")
+
+    require_no_nok_read_conflict(
+        db,
+        current_user,
+        repayment.member_id,
+        action_description="view this loan repayment",
+        entity_type="loan_repayment",
+        entity_id=str(repayment.id),
+        request=request,
+    )
     return repayment
 
 

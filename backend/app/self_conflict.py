@@ -41,11 +41,19 @@ its existing "self_conflict" contract; only then does it check the
 relationship. find_eligible_approvers() likewise excludes candidates
 who are themselves Next of Kin of the target, so the "who else can do
 this" hint never points at another conflicted officer.
+
+READ ACCESS (2026-11): the same boundary applies to administrative
+*reads*. require_no_nok_read_conflict() blocks direct reads of a
+conflicted member's records, and get_conflicted_member_ids() lets list
+endpoints exclude those members (and their loans/applications/
+repayments) from results and counts. Reading one's own record is not
+blocked -- there is no conflict in seeing one's own data.
 """
 import uuid
 from typing import Iterable, Optional, Union
 
 from fastapi import HTTPException, Request
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from . import audit_service, member_relationships, models
@@ -136,6 +144,46 @@ def find_eligible_approvers(
         if user_has_permission(db, candidate, permission_code):
             eligible.append(candidate)
     return eligible
+
+
+def get_conflicted_member_ids(
+    db: Session, current_user: models.User
+) -> set[uuid.UUID]:
+    """
+    Member ids the actor must not read administratively: the other side
+    of every active, conflict-flagged MemberRelationship involving the
+    actor's linked member, in EITHER direction. Empty for an unlinked
+    user.
+
+    List endpoints use this to exclude conflicted members from their
+    results (and from `total`), so the read boundary can't be walked
+    around through pagination or search.
+    """
+    if current_user.member_id is None:
+        return set()
+
+    relationships = (
+        db.query(models.MemberRelationship)
+        .filter(
+            models.MemberRelationship.status == models.RelationshipStatus.ACTIVE,
+            models.MemberRelationship.conflict_of_interest.is_(True),
+            or_(
+                models.MemberRelationship.member_id == current_user.member_id,
+                models.MemberRelationship.related_member_id == current_user.member_id,
+            ),
+        )
+        .all()
+    )
+    hidden = set()
+    for relationship in relationships:
+        other_id = (
+            relationship.related_member_id
+            if relationship.member_id == current_user.member_id
+            else relationship.member_id
+        )
+        if other_id != current_user.member_id:
+            hidden.add(other_id)
+    return hidden
 
 
 def require_no_self_conflict(
@@ -302,5 +350,64 @@ def require_no_member_conflict(
                 {"id": str(u.id), "username": u.username} for u in eligible_approvers
             ],
             "no_eligible_approver_available": bool(permission_code) and not eligible_approvers,
+        },
+    )
+
+
+def require_no_nok_read_conflict(
+    db: Session,
+    current_user: models.User,
+    target_member_id: Optional[uuid.UUID],
+    *,
+    action_description: str,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    request: Optional[Request] = None,
+) -> None:
+    """
+    Read-side counterpart to require_no_member_conflict(): raise HTTP 409
+    when the target member is linked to the actor's member by an active,
+    conflict-flagged MemberRelationship in either direction.
+
+    Deliberately narrower than the mutation guard: reading one's OWN
+    member record is not a conflict (there is nothing to conceal from
+    oneself), so identical member ids are allowed. No
+    `eligible_approvers` list is returned -- a read has no approval path;
+    another officer must review or serve the record.
+    """
+    if current_user.member_id is None or target_member_id is None:
+        return
+    if target_member_id == current_user.member_id:
+        return
+    if not member_relationships.has_member_conflict(
+        db, current_user.member_id, target_member_id
+    ):
+        return
+
+    if entity_type is not None:
+        audit_service.log_event(
+            db,
+            actor=current_user,
+            event_type="conflict_of_interest.denied",
+            action="deny",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            reason=(
+                "Blocked: attempted to "
+                f"{action_description} on a member record linked to the actor's "
+                "member by an active conflict-of-interest relationship (Next of Kin)."
+            ),
+            request=request,
+        )
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "error": "member_conflict",
+            "message": (
+                f"You cannot {action_description} because this record belongs to a "
+                "member linked to you by an active conflict-of-interest relationship "
+                "(Next of Kin). Another eligible officer must handle it."
+            ),
         },
     )

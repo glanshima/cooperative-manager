@@ -8,7 +8,11 @@ from sqlalchemy import or_
 from .. import models, schemas, audit_service, member_relationships
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission
-from ..self_conflict import require_no_member_conflict
+from ..self_conflict import (
+    get_conflicted_member_ids,
+    require_no_member_conflict,
+    require_no_nok_read_conflict,
+)
 
 router = APIRouter(prefix="/api/members", tags=["members"])
 
@@ -196,6 +200,14 @@ def list_members(
     """
     query = db.query(models.Member)
 
+    # Read-side conflict boundary: a member linked to the caller's linked
+    # member by an active conflict-of-interest relationship is excluded
+    # from both the page and `total`, so it can't be reached via search
+    # or pagination either.
+    conflicted_member_ids = get_conflicted_member_ids(db, current_user)
+    if conflicted_member_ids:
+        query = query.filter(models.Member.id.notin_(conflicted_member_ids))
+
     normalized_search = search.strip() if search else ""
     if normalized_search:
         like = f"%{normalized_search}%"
@@ -226,6 +238,7 @@ def list_members(
 @router.get("/{member_id}", response_model=schemas.MemberOut)
 def get_member(
     member_id: uuid.UUID,
+    request: Request,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -242,6 +255,16 @@ def get_member(
 
         if not user_has_permission(db, current_user, "member.view"):
             raise HTTPException(status_code=403, detail="You do not have the 'member.view' permission")
+
+    require_no_nok_read_conflict(
+        db,
+        current_user,
+        member_id,
+        action_description="view this member's record",
+        entity_type="member",
+        entity_id=str(member_id),
+        request=request,
+    )
 
     member = db.query(models.Member).filter(models.Member.id == member_id).first()
     if not member:

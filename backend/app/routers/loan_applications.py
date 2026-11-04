@@ -15,7 +15,11 @@ from ..deps import (
     user_has_permission,
 )
 from ..idempotency import IdempotencyContext, idempotency_check
-from ..self_conflict import require_no_member_conflict
+from ..self_conflict import (
+    get_conflicted_member_ids,
+    require_no_member_conflict,
+    require_no_nok_read_conflict,
+)
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
 from ..email_utils import (
     send_email,
@@ -168,6 +172,12 @@ def list_applications(
         query = query.filter(models.LoanApplication.member_id == current_user.member_id)
     elif not user_has_permission(db, current_user, "loan.view"):
         raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
+    else:
+        conflicted_member_ids = get_conflicted_member_ids(db, current_user)
+        if conflicted_member_ids:
+            query = query.filter(
+                models.LoanApplication.member_id.notin_(conflicted_member_ids)
+            )
 
     if status:
         query = query.filter(models.LoanApplication.status == status)
@@ -190,6 +200,7 @@ def list_applications(
 @router.get("/{application_id}", response_model=schemas.LoanApplicationOutWithReceipt)
 def get_application(
     application_id: uuid.UUID,
+    request: Request,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -203,6 +214,15 @@ def get_application(
         raise HTTPException(status_code=404, detail="Application not found")
 
     _assert_can_view(application, current_user, db)
+    require_no_nok_read_conflict(
+        db,
+        current_user,
+        application.member_id,
+        action_description="view this loan application",
+        entity_type="loan_application",
+        entity_id=str(application.id),
+        request=request,
+    )
     return _to_receipt_schema(application)
 
 
