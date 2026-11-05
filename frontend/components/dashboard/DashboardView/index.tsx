@@ -19,16 +19,30 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
         </p>
       )}
 
-      {model.member?.loan_restricted && <RestrictionBanner settings={model.settings} />}
+      {model.member?.loan_restricted && model.loansEnabled && (
+        <RestrictionBanner settings={model.settings} />
+      )}
 
       {model.feedback.error && <StatusMessage tone="error">{model.feedback.error}</StatusMessage>}
       {model.feedback.success && (
         <StatusMessage tone="success">{model.feedback.success}</StatusMessage>
       )}
 
-      <ApplyForLoan apply={model.apply} member={model.member} settings={model.settings} />
-      <ApplicationsSection applications={model.applications} />
-      <LoansSection loans={model.loans} />
+      {model.loansEnabled ? (
+        <>
+          <ApplyForLoan apply={model.apply} member={model.member} settings={model.settings} />
+          <ApplicationsSection applications={model.applications} />
+          <LoansSection loans={model.loans} />
+        </>
+      ) : (
+        <section style={{ marginTop: 24, padding: 16, border: "1px solid #ddd" }}>
+          <h2>Loans module disabled</h2>
+          <p>
+            The Loans module has been disabled by an administrator. Loan applications and
+            repayments are unavailable until it is re-enabled.
+          </p>
+        </section>
+      )}
     </main>
   );
 }

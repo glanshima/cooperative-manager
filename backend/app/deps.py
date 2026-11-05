@@ -176,3 +176,38 @@ def require_permission(code: str):
         return current_user
 
     return _dependency
+
+
+# Business modules controlled by the Settings module toggles. Auth,
+# administration, audit and settings routes are deliberately NOT gated so
+# a disabled module can always be re-enabled.
+MODULE_FLAGS = {
+    "members": ("members_module_enabled", "Members"),
+    "loans": ("loans_module_enabled", "Loans"),
+    "deductions": ("deductions_module_enabled", "Deductions"),
+    "cashbook": ("cashbook_module_enabled", "Cashbook"),
+    "dividends": ("dividends_module_enabled", "Dividends"),
+}
+
+
+def require_module_enabled(module: str):
+    """
+    Dependency factory: require_module_enabled("loans") returns a
+    dependency that 403s while the Loans module is disabled in Settings,
+    and allows the request when the module is enabled (or when no Settings
+    row exists yet -- the column defaults are all True).
+    """
+    try:
+        column, label = MODULE_FLAGS[module]
+    except KeyError:
+        raise ValueError(f"Unknown module: {module!r}")
+
+    def _dependency(db: Session = Depends(get_db)) -> None:
+        settings = db.query(models.Settings).first()
+        if settings is not None and not getattr(settings, column):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {label} module is disabled by an administrator.",
+            )
+
+    return _dependency

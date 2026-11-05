@@ -7,7 +7,7 @@ from sqlalchemy import or_
 
 from .. import models, schemas, audit_service, member_relationships
 from ..database import get_db
-from ..deps import require_admin, get_current_user, require_permission
+from ..deps import require_admin, get_current_user, require_permission, require_module_enabled
 from ..self_conflict import (
     get_conflicted_member_ids,
     require_no_member_conflict,
@@ -15,6 +15,11 @@ from ..self_conflict import (
 )
 
 router = APIRouter(prefix="/api/members", tags=["members"])
+
+# Member management is part of the Members module. GET /me is deliberately
+# left ungated: it powers the member's own dashboard and is self-service,
+# not the module's administration surface.
+_member_management_gate = [Depends(require_module_enabled("members"))]
 
 
 def _attach_next_of_kin(db: Session, members: List[models.Member]) -> None:
@@ -118,7 +123,11 @@ def get_my_member_record(
     return member
 
 
-@router.get("/filter-options", response_model=schemas.MemberFilterOptions)
+@router.get(
+    "/filter-options",
+    response_model=schemas.MemberFilterOptions,
+    dependencies=_member_management_gate,
+)
 def get_member_filter_options(
     current_user: models.User = Depends(require_permission("member.view")),
     db: Session = Depends(get_db),
@@ -152,7 +161,7 @@ def get_member_filter_options(
     )
 
 
-@router.get("", response_model=schemas.MemberListResponse)
+@router.get("", response_model=schemas.MemberListResponse, dependencies=_member_management_gate)
 def list_members(
     search: Optional[str] = Query(None, description="Matches member number/PSN, name, or phone"),
     bank_name: Optional[str] = Query(None, description="Exact match against Member.bank_name"),
@@ -235,7 +244,7 @@ def list_members(
     return schemas.MemberListResponse(items=members, total=total, skip=skip, limit=limit)
 
 
-@router.get("/{member_id}", response_model=schemas.MemberOut)
+@router.get("/{member_id}", response_model=schemas.MemberOut, dependencies=_member_management_gate)
 def get_member(
     member_id: uuid.UUID,
     request: Request,
@@ -274,7 +283,9 @@ def get_member(
     return member
 
 
-@router.post("", response_model=schemas.MemberOut, status_code=201)
+@router.post(
+    "", response_model=schemas.MemberOut, status_code=201, dependencies=_member_management_gate
+)
 def create_member(
     payload: schemas.MemberCreate,
     request: Request,
@@ -323,7 +334,7 @@ def create_member(
     return member
 
 
-@router.put("/{member_id}", response_model=schemas.MemberOut)
+@router.put("/{member_id}", response_model=schemas.MemberOut, dependencies=_member_management_gate)
 def update_member(
     member_id: uuid.UUID,
     payload: schemas.MemberUpdate,
@@ -395,7 +406,11 @@ def update_member(
     return member
 
 
-@router.patch("/{member_id}/login-status", response_model=schemas.MemberOut)
+@router.patch(
+    "/{member_id}/login-status",
+    response_model=schemas.MemberOut,
+    dependencies=_member_management_gate,
+)
 def update_member_login_status(
     member_id: uuid.UUID,
     payload: schemas.MemberLoginStatusUpdate,
@@ -477,7 +492,7 @@ def update_member_login_status(
     return member
 
 
-@router.delete("/{member_id}", status_code=204)
+@router.delete("/{member_id}", status_code=204, dependencies=_member_management_gate)
 def delete_member(
     member_id: uuid.UUID,
     request: Request,

@@ -7,7 +7,13 @@ from sqlalchemy.orm import Session, joinedload
 
 from .. import models, schemas, audit_service
 from ..database import get_db
-from ..deps import require_admin, get_current_user, require_permission, user_has_permission
+from ..deps import (
+    require_admin,
+    get_current_user,
+    require_permission,
+    require_module_enabled,
+    user_has_permission,
+)
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
 from ..self_conflict import (
     get_conflicted_member_ids,
@@ -15,7 +21,11 @@ from ..self_conflict import (
     require_no_nok_read_conflict,
 )
 
-router = APIRouter(prefix="/api/loans", tags=["loans"])
+router = APIRouter(
+    prefix="/api/loans",
+    tags=["loans"],
+    dependencies=[Depends(require_module_enabled("loans"))],
+)
 
 
 def _to_detail_schema(loan: models.Loan) -> schemas.LoanOutWithDetails:

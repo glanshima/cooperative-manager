@@ -7,10 +7,14 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas, audit_service
 from ..database import get_db
-from ..deps import require_admin, get_current_user, require_permission
+from ..deps import require_admin, get_current_user, require_permission, require_module_enabled
 from ..loan_calc import sync_loan_type_cache
 
-router = APIRouter(prefix="/api/loan-types", tags=["loan-types"])
+router = APIRouter(
+    prefix="/api/loan-types",
+    tags=["loan-types"],
+    dependencies=[Depends(require_module_enabled("loans"))],
+)
 
 
 @router.get("", response_model=List[schemas.LoanTypeOut])

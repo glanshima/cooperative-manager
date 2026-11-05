@@ -13,6 +13,7 @@ import {
   listRoles,
   listOffices,
   listMembers,
+  getSettings,
   CurrentUser,
   UserRoleAssignment,
   Role,
@@ -32,6 +33,7 @@ export function useAdminUsersPage(authLoading: boolean, logout: () => void) {
   // Built from the existing GET /api/members endpoint rather than adding a
   // new backend endpoint for this.
   const [memberDirectory, setMemberDirectory] = useState<Map<string, Member>>(new Map());
+  const [membersEnabled, setMembersEnabled] = useState(true);
 
   const [loading, setLoading] = useState(true);
 
@@ -84,17 +86,23 @@ export function useAdminUsersPage(authLoading: boolean, logout: () => void) {
     setLoading(true);
     setListError(null);
     try {
-      const [u, r, o, memberResult] = await Promise.all([
+      const [u, r, o, settingsData] = await Promise.all([
         listAdminUsers(),
         listRoles(),
         listOffices(),
-        listMembers({ limit: 1000 }),
+        getSettings(),
       ]);
+      // Member lookup is only available while the Members module is on;
+      // everything else on this page keeps working regardless.
+      const memberResult = settingsData.members_module_enabled
+        ? await listMembers({ limit: 1000 })
+        : null;
       if (mySeq !== listSeqRef.current) return;
       setUsers(u);
       setRoles(r);
       setOffices(o);
-      setMemberDirectory(new Map(memberResult.items.map((m) => [m.id, m])));
+      setMembersEnabled(settingsData.members_module_enabled);
+      setMemberDirectory(new Map((memberResult?.items ?? []).map((m) => [m.id, m])));
     } catch (e: any) {
       if (mySeq !== listSeqRef.current) return;
       setListError(e.message);
@@ -109,7 +117,7 @@ export function useAdminUsersPage(authLoading: boolean, logout: () => void) {
   }, [authLoading]);
 
   async function searchMembersFor(query: string, setResults: (m: Member[]) => void) {
-    if (!query.trim()) {
+    if (!membersEnabled || !query.trim()) {
       setResults([]);
       return;
     }
@@ -311,6 +319,7 @@ export function useAdminUsersPage(authLoading: boolean, logout: () => void) {
   return {
     auth: { logout },
     loading,
+    membersEnabled,
     feedback: {
       actionError,
       success,

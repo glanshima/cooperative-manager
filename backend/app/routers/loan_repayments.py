@@ -7,7 +7,14 @@ from sqlalchemy.orm import Session, joinedload
 
 from .. import models, schemas, audit_service
 from ..database import get_db
-from ..deps import get_current_user, require_admin, require_password_already_changed, require_permission, user_has_permission
+from ..deps import (
+    get_current_user,
+    require_admin,
+    require_module_enabled,
+    require_password_already_changed,
+    require_permission,
+    user_has_permission,
+)
 from ..email_utils import send_email, repayment_verified_email_html, repayment_rejected_email_html
 from ..idempotency import IdempotencyContext, idempotency_check
 from ..self_conflict import (
@@ -16,7 +23,10 @@ from ..self_conflict import (
     require_no_nok_read_conflict,
 )
 
-router = APIRouter(tags=["loan-repayments"])
+router = APIRouter(
+    tags=["loan-repayments"],
+    dependencies=[Depends(require_module_enabled("loans"))],
+)
 
 
 def _assert_can_view_loan(loan: models.Loan, current_user: models.User, db: Session):

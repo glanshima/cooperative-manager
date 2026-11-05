@@ -2,6 +2,7 @@
 
 import LoanRepaymentsView from "@/components/loan-repayments/LoanRepaymentsView";
 import { useLoanRepaymentsPage } from "@/components/loan-repayments/hooks/useLoanRepaymentsPage";
+import ModuleGate from "@/components/ui/ModuleGate";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminLoanRepaymentsPage() {
@@ -10,9 +11,18 @@ export default function AdminLoanRepaymentsPage() {
     requirePasswordChanged: true,
     requireRole: "admin",
   });
-  const model = useLoanRepaymentsPage(authLoading, logout);
 
   if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
+
+  return (
+    <ModuleGate module="loans">
+      <LoanRepaymentsPageContent logout={logout} />
+    </ModuleGate>
+  );
+}
+
+function LoanRepaymentsPageContent({ logout }: { logout: () => void }) {
+  const model = useLoanRepaymentsPage(false, logout);
 
   return <LoanRepaymentsView model={model} />;
 }

@@ -2,7 +2,13 @@ import type { AdminUsersPageModel } from "../hooks/useAdminUsersPage";
 import MemberPicker from "../MemberPicker";
 import { describeMember } from "../utils";
 
-export default function CreateStaffForm({ create }: { create: AdminUsersPageModel["create"] }) {
+export default function CreateStaffForm({
+  create,
+  membersEnabled,
+}: {
+  create: AdminUsersPageModel["create"];
+  membersEnabled: boolean;
+}) {
   const { member } = create;
 
   return (
@@ -40,25 +46,33 @@ export default function CreateStaffForm({ create }: { create: AdminUsersPageMode
 
       <div style={{ marginTop: 12, padding: 12, border: "1px solid #ddd", maxWidth: 480 }}>
         <strong>Optional: link to an existing Member</strong>
-        <p style={{ color: "#666", fontSize: 13, margin: "4px 0" }}>
-          Only needed if this staff member is also an elected officer / cooperative member (e.g. Treasurer).
-          Not required otherwise.
-        </p>
-        {member.selected ? (
-          <p>
-            Selected: <strong>{describeMember(member.selected)}</strong>{" "}
-            <button type="button" onClick={member.clear}>
-              Clear
-            </button>
+        {!membersEnabled ? (
+          <p style={{ color: "#666", fontSize: 13, margin: "4px 0" }}>
+            Member linking is unavailable while the Members module is disabled.
           </p>
         ) : (
-          <MemberPicker
-            query={member.query}
-            results={member.results}
-            onQueryChange={member.setQuery}
-            onSearch={member.search}
-            onSelect={member.select}
-          />
+          <>
+            <p style={{ color: "#666", fontSize: 13, margin: "4px 0" }}>
+              Only needed if this staff member is also an elected officer / cooperative member (e.g. Treasurer).
+              Not required otherwise.
+            </p>
+            {member.selected ? (
+              <p>
+                Selected: <strong>{describeMember(member.selected)}</strong>{" "}
+                <button type="button" onClick={member.clear}>
+                  Clear
+                </button>
+              </p>
+            ) : (
+              <MemberPicker
+                query={member.query}
+                results={member.results}
+                onQueryChange={member.setQuery}
+                onSearch={member.search}
+                onSelect={member.select}
+              />
+            )}
+          </>
         )}
       </div>
     </section>

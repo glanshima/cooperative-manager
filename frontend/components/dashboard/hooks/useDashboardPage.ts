@@ -72,18 +72,27 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
     setLoading(true);
     setError(null);
     try {
-      const [memberData, appsData, loansData, typesData, settingsData] = await Promise.all([
+      const [memberData, settingsData] = await Promise.all([
         getMyMemberRecord(),
-        listLoanApplications(),
-        listLoans(),
-        listLoanTypes(),
         getSettings(),
       ]);
       setMember(memberData);
-      setApplications(appsData);
-      setLoans(loansData);
-      setLoanTypes(typesData);
       setSettings(settingsData);
+
+      if (settingsData.loans_module_enabled) {
+        const [appsData, loansData, typesData] = await Promise.all([
+          listLoanApplications(),
+          listLoans(),
+          listLoanTypes(),
+        ]);
+        setApplications(appsData);
+        setLoans(loansData);
+        setLoanTypes(typesData);
+      } else {
+        setApplications([]);
+        setLoans([]);
+        setLoanTypes([]);
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -248,6 +257,7 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
     loading,
     member,
     settings,
+    loansEnabled: settings ? settings.loans_module_enabled : true,
     feedback: { error, success },
     apply: {
       showForm: showApplyForm,

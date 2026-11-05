@@ -29,8 +29,8 @@ export default function AdminUsersView({ model }: { model: AdminUsersPageModel }
         <StatusMessage tone="error">Unable to load staff accounts: {model.feedback.listError}</StatusMessage>
       )}
 
-      <CreateStaffForm create={model.create} />
-      <StaffTable table={model.table} />
+      <CreateStaffForm create={model.create} membersEnabled={model.membersEnabled} />
+      <StaffTable table={model.table} membersEnabled={model.membersEnabled} />
     </main>
   );
 }

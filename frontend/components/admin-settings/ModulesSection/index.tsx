@@ -1,33 +1,35 @@
-import type { SettingsPageModel } from "../hooks/useSettingsPage";
-
-const MODULE_TOGGLES = [
-  ["members_module_enabled", "Members"],
-  ["loans_module_enabled", "Loans"],
-  ["deductions_module_enabled", "Deductions"],
-  ["cashbook_module_enabled", "Cashbook"],
-  ["dividends_module_enabled", "Dividends"],
-] as const;
+import type { Settings } from "@/lib/api";
+import { MODULE_FLAGS, MODULE_KEYS, MODULE_LABELS } from "@/lib/modules";
+import type { ModuleFlag } from "@/lib/modules";
 
 export default function ModulesSection({
   settings,
   setField,
 }: {
-  settings: NonNullable<SettingsPageModel["settings"]>;
-  setField: SettingsPageModel["setField"];
+  settings: Settings;
+  setField: <K extends ModuleFlag>(key: K, value: Settings[K]) => void;
 }) {
   return (
     <section>
       <h2>Modules</h2>
-      {MODULE_TOGGLES.map(([key, label]) => (
-        <label key={key} style={{ display: "block", marginBottom: 8 }}>
-          <input
-            type="checkbox"
-            checked={settings[key]}
-            onChange={(e) => setField(key, e.target.checked)}
-          />{" "}
-          {label} module enabled
-        </label>
-      ))}
+      <p style={{ color: "#555", fontSize: 14 }}>
+        Disabling a module hides it from navigation and blocks its API for everyone. Staff
+        accounts, roles, the audit log and this Settings page stay available so a disabled module
+        can always be re-enabled. Save changes to apply them.
+      </p>
+      {MODULE_KEYS.map((module) => {
+        const flag = MODULE_FLAGS[module];
+        return (
+          <label key={flag} style={{ display: "block", marginBottom: 8 }}>
+            <input
+              type="checkbox"
+              checked={settings[flag]}
+              onChange={(e) => setField(flag, e.target.checked)}
+            />{" "}
+            {MODULE_LABELS[module]} module enabled
+          </label>
+        );
+      })}
     </section>
   );
 }

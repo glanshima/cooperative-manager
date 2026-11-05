@@ -2,6 +2,7 @@
 
 import DisbursementsView from "@/components/disbursements/DisbursementsView";
 import { useDisbursementsPage } from "@/components/disbursements/hooks/useDisbursementsPage";
+import ModuleGate from "@/components/ui/ModuleGate";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminDisbursementsPage() {
@@ -10,9 +11,18 @@ export default function AdminDisbursementsPage() {
     requirePasswordChanged: true,
     requireRole: "admin",
   });
-  const model = useDisbursementsPage(authLoading, logout);
 
   if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
+
+  return (
+    <ModuleGate module="loans">
+      <DisbursementsPageContent logout={logout} />
+    </ModuleGate>
+  );
+}
+
+function DisbursementsPageContent({ logout }: { logout: () => void }) {
+  const model = useDisbursementsPage(false, logout);
 
   return <DisbursementsView model={model} />;
 }

@@ -12,6 +12,7 @@ from ..deps import (
     require_admin,
     require_password_already_changed,
     require_permission,
+    require_module_enabled,
     user_has_permission,
 )
 from ..idempotency import IdempotencyContext, idempotency_check
@@ -29,7 +30,11 @@ from ..email_utils import (
 )
 from .settings import _get_or_create_settings
 
-router = APIRouter(prefix="/api/loan-applications", tags=["loan-applications"])
+router = APIRouter(
+    prefix="/api/loan-applications",
+    tags=["loan-applications"],
+    dependencies=[Depends(require_module_enabled("loans"))],
+)
 
 
 def _to_detail_schema(app: models.LoanApplication) -> schemas.LoanApplicationOutWithDetails:

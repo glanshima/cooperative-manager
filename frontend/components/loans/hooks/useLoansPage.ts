@@ -73,14 +73,18 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
     setLoading(true);
     setError(null);
     try {
-      const [loansData, typesData, membersData] = await Promise.all([
-        listLoans(),
-        listLoanTypes(),
-        listMembers({ limit: 1000 }),
-      ]);
+      const [loansData, typesData] = await Promise.all([listLoans(), listLoanTypes()]);
       setLoans(loansData);
       setLoanTypes(typesData);
-      setMembers(membersData.items);
+      // The member picker needs the directory, but member management may be
+      // disabled on its own. Treat that lookup as best-effort so the rest of
+      // the Loans page still works.
+      try {
+        const membersData = await listMembers({ limit: 1000 });
+        setMembers(membersData.items);
+      } catch {
+        setMembers([]);
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {

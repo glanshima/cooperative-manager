@@ -1,33 +1,10 @@
-import Link from "next/link";
+"use client";
+
+import HomeView from "@/components/home/HomeView";
+import { useHomePage } from "@/components/home/hooks/useHomePage";
 
 export default function Home() {
-  return (
-    <main style={{ padding: 32 }}>
-      <h1>MACT Cooperative Manager</h1>
-      <p>
-        <Link href="/login">Log in &rarr;</Link>
-      </p>
-      <p>
-        <Link href="/members">Go to Members module &rarr;</Link>
-      </p>
-      <p>
-        <Link href="/loans">Go to Loans module &rarr;</Link>
-      </p>
-      <p>
-        <Link href="/admin/loan-applications">Go to Loan Applications (admin review) &rarr;</Link>
-      </p>
-      <p>
-        <Link href="/admin/disbursements">Go to Disbursements (admin) &rarr;</Link>
-      </p>
-      <p>
-        <Link href="/admin/loan-repayments">Go to Loan Repayments (admin review) &rarr;</Link>
-      </p>
-      <p>
-        <Link href="/admin/settings">Go to Settings (admin) &rarr;</Link>
-      </p>
-      <p>
-        <Link href="/dashboard">Go to Member Dashboard &rarr;</Link>
-      </p>
-    </main>
-  );
+  const model = useHomePage();
+
+  return <HomeView model={model} />;
 }

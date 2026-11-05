@@ -6,7 +6,13 @@ import ResetPasswordRow from "../ResetPasswordRow";
 import RoleAssignmentsRow from "../RoleAssignmentsRow";
 import { describeMember } from "../utils";
 
-export default function StaffTable({ table }: { table: AdminUsersPageModel["table"] }) {
+export default function StaffTable({
+  table,
+  membersEnabled,
+}: {
+  table: AdminUsersPageModel["table"];
+  membersEnabled: boolean;
+}) {
   const { users, roles, offices, memberDirectory, expandedUserId, assignments, link, reset } = table;
 
   return (
@@ -58,14 +64,15 @@ export default function StaffTable({ table }: { table: AdminUsersPageModel["tabl
                     {u.account_status !== "deactivated" && (
                       <button onClick={() => table.onStatusChange(u, "deactivated")}>Deactivate</button>
                     )}
-                    {u.member_id ? (
-                      <>
-                        <button onClick={() => link.open(u)}>Change Member</button>
-                        <button onClick={() => table.onUnlink(u)}>Unlink Member</button>
-                      </>
-                    ) : (
-                      <button onClick={() => link.open(u)}>Link Member</button>
-                    )}
+                    {membersEnabled &&
+                      (u.member_id ? (
+                        <>
+                          <button onClick={() => link.open(u)}>Change Member</button>
+                          <button onClick={() => table.onUnlink(u)}>Unlink Member</button>
+                        </>
+                      ) : (
+                        <button onClick={() => link.open(u)}>Link Member</button>
+                      ))}
                     <button onClick={() => reset.toggle(u.id)}>
                       {reset.userId === u.id ? "Cancel Reset" : "Reset Password"}
                     </button>
