@@ -43,17 +43,19 @@ function makeModel({
   currentSettings = null,
   membersEnabled = false,
   loansEnabled = false,
+  deductionsEnabled = false,
 }: {
   user?: CurrentUser | null;
   currentSettings?: Settings | null;
   membersEnabled?: boolean;
   loansEnabled?: boolean;
+  deductionsEnabled?: boolean;
 }): HomePageModel {
   return {
     auth: { user, loading: false, logout: vi.fn() },
     settings: currentSettings,
     settingsError: null,
-    modules: { membersEnabled, loansEnabled },
+    modules: { membersEnabled, loansEnabled, deductionsEnabled },
   };
 }
 
@@ -85,6 +87,27 @@ describe("HomeView", () => {
     expect(
       screen.queryByRole("link", { name: "Loan Applications (admin review)" })
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Payroll Deductions (admin)" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the deductions link to admins while the module is enabled", () => {
+    render(
+      <HomeView
+        model={makeModel({
+          user: admin,
+          currentSettings: settings,
+          membersEnabled: true,
+          loansEnabled: true,
+          deductionsEnabled: true,
+        })}
+      />
+    );
+
+    expect(
+      screen.getByRole("link", { name: "Payroll Deductions (admin)" })
+    ).toBeInTheDocument();
   });
 
   it("shows a member only their dashboard and enabled modules", () => {

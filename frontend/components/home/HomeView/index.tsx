@@ -16,7 +16,7 @@ export default function HomeView({ model }: { model: HomePageModel }) {
     );
   }
 
-  const { membersEnabled, loansEnabled } = model.modules;
+  const { membersEnabled, loansEnabled, deductionsEnabled } = model.modules;
 
   return (
     <main style={{ padding: 32 }}>
@@ -70,6 +70,11 @@ export default function HomeView({ model }: { model: HomePageModel }) {
                 <a href="/admin/loan-repayments">Loan Repayments (admin review)</a>
               </li>
             </>
+          )}
+          {user.role === "admin" && deductionsEnabled && (
+            <li>
+              <a href="/admin/deductions">Payroll Deductions (admin)</a>
+            </li>
           )}
           {user.role === "admin" && (
             <>

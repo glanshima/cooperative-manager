@@ -22,6 +22,11 @@ from ..self_conflict import (
     require_no_nok_read_conflict,
 )
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
+from ..loan_rules import (
+    assert_no_other_active_loan_of_type,
+    commit_or_conflict,
+    flush_or_conflict,
+)
 from ..email_utils import (
     send_email,
     loan_disbursed_email_html,
@@ -566,6 +571,21 @@ def disburse_application(
             ),
         )
 
+    assert_no_other_active_loan_of_type(
+        db,
+        application.member_id,
+        loan_type.id,
+        exclude_loan_ids=[old_loan.id for old_loan in loans_to_deduct],
+    )
+
+    # Close out offset loans before inserting the new row: the partial
+    # unique index on (member_id, loan_type_id) WHERE status='active'
+    # would otherwise see the old same-type loan still ACTIVE and reject
+    # the disbursement that is replacing it.
+    for old_loan in loans_to_deduct:
+        old_loan.amount_repaid = old_loan.total_repayable
+        old_loan.status = models.LoanStatus.COMPLETED
+
     loan = models.Loan(
         member_id=application.member_id,
         loan_type_id=loan_type.id,
@@ -584,11 +604,9 @@ def disburse_application(
         notes=f"Disbursed from application {application.id}",
     )
     db.add(loan)
-    db.flush()  # get loan.id without a full commit yet
+    flush_or_conflict(db)  # get loan.id without a full commit yet
 
     for old_loan in loans_to_deduct:
-        old_loan.amount_repaid = old_loan.total_repayable
-        old_loan.status = models.LoanStatus.COMPLETED
         old_loan.notes = (
             (old_loan.notes + " " if old_loan.notes else "")
             + f"Closed out via offset against new loan {loan.id} disbursed {disbursement_date}."
@@ -596,7 +614,7 @@ def disburse_application(
 
     application.resulting_loan_id = loan.id
 
-    db.commit()
+    commit_or_conflict(db)
     db.refresh(application)
 
     send_email(
