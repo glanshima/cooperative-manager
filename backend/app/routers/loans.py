@@ -15,6 +15,7 @@ from ..deps import (
     user_has_permission,
 )
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
+from ..loan_rules import assert_no_other_active_loan_of_type, commit_or_conflict
 from ..self_conflict import (
     get_conflicted_member_ids,
     require_no_member_conflict,
@@ -153,6 +154,8 @@ def create_loan(
     if not loan_type.is_active:
         raise HTTPException(status_code=400, detail="This loan type is no longer active")
 
+    assert_no_other_active_loan_of_type(db, payload.member_id, payload.loan_type_id)
+
     # --- Core disbursement calculation, mirrors the spreadsheet's IFS formulas ---
     # (see app/loan_calc.py -- shared with application-approval disbursement)
     # Direct admin disbursement uses the rate effective as of the chosen
@@ -184,7 +187,7 @@ def create_loan(
         notes=payload.notes,
     )
     db.add(loan)
-    db.commit()
+    commit_or_conflict(db)
     db.refresh(loan)
 
     audit_service.log_event(
@@ -233,16 +236,27 @@ def update_loan(
 
     changes = payload.model_dump(exclude_unset=True)
     previous = {field: getattr(loan, field) for field in changes}
-    for field, value in changes.items():
-        setattr(loan, field, value)
 
     # Auto-complete a loan once it's fully repaid, unless the caller
     # explicitly set a different status in this same request.
+    prospective_status = changes.get("status", loan.status)
     if "status" not in changes:
-        if loan.amount_repaid >= loan.total_repayable:
-            loan.status = models.LoanStatus.COMPLETED
+        prospective_repaid = changes.get("amount_repaid", loan.amount_repaid)
+        if prospective_repaid >= loan.total_repayable:
+            prospective_status = models.LoanStatus.COMPLETED
 
-    db.commit()
+    # Validate before mutating: assigning then querying would autoflush the
+    # rejected status into the session and outlive the raised 409.
+    if prospective_status == models.LoanStatus.ACTIVE:
+        assert_no_other_active_loan_of_type(
+            db, loan.member_id, loan.loan_type_id, exclude_loan_ids=[loan.id]
+        )
+
+    for field, value in changes.items():
+        setattr(loan, field, value)
+    loan.status = prospective_status
+
+    commit_or_conflict(db)
     db.refresh(loan)
 
     audit_service.log_event(

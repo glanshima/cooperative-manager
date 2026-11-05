@@ -17,6 +17,7 @@ from .routers import (
     offices,
     roles,
     audit,
+    payroll_deductions,
 )
 
 load_dotenv()
@@ -48,6 +49,7 @@ app.include_router(admin_users.router)
 app.include_router(offices.router)
 app.include_router(roles.router)
 app.include_router(audit.router)
+app.include_router(payroll_deductions.router)
 
 
 @app.get("/api/health")

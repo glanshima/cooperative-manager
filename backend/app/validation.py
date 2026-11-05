@@ -9,10 +9,12 @@ belongs in the router layer, close to the data it needs to check against.
 """
 import base64
 import re
+from datetime import date
 from decimal import Decimal
 from typing import Optional
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+DEDUCTION_MONTH_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 # Digits, spaces, +, -, () -- covers most phone formats without being a
 # strict E.164 validator (the source spreadsheet data predates any such
 # constraint, so this Phase 1 pass validates format sanity, not a rewrite
@@ -64,6 +66,23 @@ def validate_positive_amount_optional(value: Optional[Decimal]) -> Optional[Deci
     if value is None:
         return value
     return validate_positive_amount(value)
+
+
+def validate_deduction_month(value: str) -> str:
+    """Accepts only the payroll month label ('YYYY-MM'), which is what the
+    printed schedule and payroll department both key on. Stored normalized
+    to the first day of that month."""
+    if not isinstance(value, str):
+        raise ValueError("deduction_month must be in YYYY-MM format")
+    value = value.strip()
+    if not DEDUCTION_MONTH_RE.match(value):
+        raise ValueError("deduction_month must be in YYYY-MM format")
+    return value
+
+
+def deduction_month_start(value: str) -> date:
+    year, month = validate_deduction_month(value).split("-")
+    return date(int(year), int(month), 1)
 
 
 def validate_receipt_content_type(value: str) -> str:

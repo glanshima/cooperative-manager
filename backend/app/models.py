@@ -1,6 +1,7 @@
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Column,
@@ -427,6 +428,15 @@ class Loan(Base):
         CheckConstraint("total_repayable > 0", name="ck_loans_total_repayable_positive"),
         CheckConstraint("monthly_installment > 0", name="ck_loans_monthly_installment_positive"),
         CheckConstraint("amount_repaid >= 0", name="ck_loans_amount_repaid_nonnegative"),
+        # A member can hold at most one ACTIVE loan of each loan type.
+        Index(
+            "uq_loans_member_loan_type_active",
+            "member_id",
+            "loan_type_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1122,6 +1132,176 @@ class LoanRepayment(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     loan = relationship("Loan", back_populates="repayments")
+
+
+# ---------------------------------------------------------------------------
+# Payroll Deductions (monthly staff-payroll deduction ledger)
+# ---------------------------------------------------------------------------
+
+class PayrollDeductionStatus(str, enum.Enum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    CONFIRMED = "confirmed"
+    NOT_DEDUCTED = "not_deducted"
+    VOID = "void"
+
+
+class PayrollDeductionLineCategory(str, enum.Enum):
+    MONTHLY_CONTRIBUTION = "monthly_contribution"
+    LOAN_REPAYMENT = "loan_repayment"
+    OTHER = "other"
+
+
+class PayrollDeduction(Base):
+    """
+    One member's month-end payroll deduction for one month: monthly
+    contribution, repayments of specific loans, and any other requested
+    deduction.
+
+    Lifecycle (the printed schedule is what payroll actually acts on):
+      draft -> submitted -> confirmed      (payroll deducted and remitted)
+                         -> not_deducted   (payroll skipped it; member pays
+                              by bank/cash and uses the existing repayment
+                              evidence flow instead)
+      any non-void status -> void          (append-only correction; voids a
+                              confirmed record by reversing its loan credits)
+
+    Loan.amount_repaid only changes at `confirmed` -- never when a
+    deduction is drafted or submitted -- because until payroll actually
+    remits, the cooperative has not received the money.
+    """
+
+    __tablename__ = "payroll_deductions"
+    __table_args__ = (
+        # One live record per member per month. Voided records are excluded
+        # so a correction can be re-entered without deleting history.
+        Index(
+            "uq_payroll_deductions_member_month_active",
+            "member_id",
+            "deduction_month",
+            unique=True,
+            postgresql_where=text("status <> 'void'"),
+            sqlite_where=text("status <> 'void'"),
+        ),
+        Index("ix_payroll_deductions_deduction_month", "deduction_month"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    member_id = Column(UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
+
+    # Always normalized to the first day of the month being deducted.
+    deduction_month = Column(Date, nullable=False)
+    payroll_reference = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+
+    status = Column(
+        Enum(PayrollDeductionStatus, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=PayrollDeductionStatus.DRAFT,
+    )
+
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    submitted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
+
+    confirmed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+
+    not_deducted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    not_deducted_at = Column(DateTime, nullable=True)
+    not_deducted_reason = Column(Text, nullable=True)
+
+    # Set when a submitted schedule is sent back to draft for correction.
+    returned_at = Column(DateTime, nullable=True)
+    return_reason = Column(Text, nullable=True)
+
+    voided_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    voided_at = Column(DateTime, nullable=True)
+    void_reason = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    member = relationship("Member")
+    lines = relationship(
+        "PayrollDeductionLine",
+        back_populates="deduction",
+        cascade="all, delete-orphan",
+        order_by="PayrollDeductionLine.created_at",
+    )
+
+    def _total(self, category: PayrollDeductionLineCategory) -> Decimal:
+        return sum((line.amount for line in self.lines if line.category == category), Decimal("0"))
+
+    @property
+    def contribution_total(self) -> Decimal:
+        return self._total(PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION)
+
+    @property
+    def loan_total(self) -> Decimal:
+        return self._total(PayrollDeductionLineCategory.LOAN_REPAYMENT)
+
+    @property
+    def other_total(self) -> Decimal:
+        return self._total(PayrollDeductionLineCategory.OTHER)
+
+    @property
+    def grand_total(self) -> Decimal:
+        return sum((line.amount for line in self.lines), Decimal("0"))
+
+    @property
+    def member_name(self):
+        return self.member.name if self.member else None
+
+    @property
+    def member_psn(self):
+        return self.member.psn if self.member else None
+
+
+class PayrollDeductionLine(Base):
+    """
+    One category amount inside a member's monthly deduction. Loan lines
+    carry an explicit loan_id (the member's own allocation across loans);
+    'other' lines carry a free-text label; contribution lines are totalled
+    directly from here (no separate savings ledger yet).
+    """
+
+    __tablename__ = "payroll_deduction_lines"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_payroll_deduction_lines_amount_positive"),
+        CheckConstraint(
+            "(category = 'loan_repayment' AND loan_id IS NOT NULL) "
+            "OR (category <> 'loan_repayment' AND loan_id IS NULL)",
+            name="ck_payroll_deduction_lines_loan_link",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    deduction_id = Column(
+        UUID(as_uuid=True), ForeignKey("payroll_deductions.id", ondelete="CASCADE"), nullable=False
+    )
+
+    category = Column(
+        Enum(PayrollDeductionLineCategory, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+    )
+    loan_id = Column(UUID(as_uuid=True), ForeignKey("loans.id"), nullable=True)
+    label = Column(String, nullable=True)
+    amount = Column(Numeric(14, 2), nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    deduction = relationship("PayrollDeduction", back_populates="lines")
+    loan = relationship("Loan")
+
+    @property
+    def loan_type_name(self):
+        if self.loan and self.loan.loan_type:
+            return self.loan.loan_type.name
+        return None
 
 
 # ---------------------------------------------------------------------------

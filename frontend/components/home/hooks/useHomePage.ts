@@ -34,6 +34,7 @@ export function useHomePage() {
     modules: {
       membersEnabled: settings ? isModuleEnabled(settings, "members") : false,
       loansEnabled: settings ? isModuleEnabled(settings, "loans") : false,
+      deductionsEnabled: settings ? isModuleEnabled(settings, "deductions") : false,
     },
   };
 }

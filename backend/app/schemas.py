@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models import (
     MemberStatus,
@@ -14,6 +14,8 @@ from .models import (
     PaymentVerificationStatus,
     LoanRestrictionBehavior,
     RepaymentVerificationStatus,
+    PayrollDeductionStatus,
+    PayrollDeductionLineCategory,
     AccountStatus,
 )
 from . import validation
@@ -699,6 +701,169 @@ class LoanRepaymentOut(BaseModel):
 
 class LoanRepaymentOutWithReceipt(LoanRepaymentOut):
     receipt_image_base64: str
+
+
+# ---------------------------------------------------------------------------
+# Payroll Deductions
+# ---------------------------------------------------------------------------
+
+class PayrollDeductionLineInput(BaseModel):
+    category: PayrollDeductionLineCategory
+    loan_id: Optional[uuid.UUID] = None
+    label: Optional[str] = None
+    amount: Decimal
+
+    _validate_amount = field_validator("amount")(validation.validate_positive_amount)
+
+    @field_validator("label")
+    @classmethod
+    def _strip_label(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def _validate_category_shape(self):
+        if self.category == PayrollDeductionLineCategory.LOAN_REPAYMENT:
+            if self.loan_id is None:
+                raise ValueError("A loan_repayment line requires loan_id")
+        else:
+            if self.loan_id is not None:
+                raise ValueError("Only loan_repayment lines may reference a loan")
+            if self.category == PayrollDeductionLineCategory.OTHER and not self.label:
+                raise ValueError("An 'other' deduction requires a label")
+        return self
+
+
+def _validate_line_set(lines: List[PayrollDeductionLineInput]) -> List[PayrollDeductionLineInput]:
+    if not lines:
+        raise ValueError("At least one deduction line is required")
+    loan_ids = [line.loan_id for line in lines if line.loan_id is not None]
+    if len(loan_ids) != len(set(loan_ids)):
+        raise ValueError("Each loan may only appear once per monthly deduction")
+    contributions = [
+        line for line in lines if line.category == PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION
+    ]
+    if len(contributions) > 1:
+        raise ValueError("A monthly deduction can only have one contribution line")
+    return lines
+
+
+class PayrollDeductionCreate(BaseModel):
+    member_id: uuid.UUID
+    deduction_month: str
+    payroll_reference: Optional[str] = None
+    note: Optional[str] = None
+    lines: List[PayrollDeductionLineInput]
+
+    _validate_month = field_validator("deduction_month")(validation.validate_deduction_month)
+    _validate_lines = field_validator("lines")(_validate_line_set)
+
+
+class PayrollDeductionUpdate(BaseModel):
+    """Draft-only edit. Omitted fields are left unchanged; sending `lines`
+    replaces the whole set (lines are a single unit, not individually
+    editable)."""
+
+    deduction_month: Optional[str] = None
+    payroll_reference: Optional[str] = None
+    note: Optional[str] = None
+    lines: Optional[List[PayrollDeductionLineInput]] = None
+
+    _validate_month = field_validator("deduction_month")(validation.validate_deduction_month)
+    _validate_line_set = field_validator("lines")(_validate_line_set)
+
+
+class PayrollDeductionReasonRequest(BaseModel):
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def _require_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A reason is required")
+        return value
+
+
+class PayrollDeductionBulkRequest(BaseModel):
+    ids: List[uuid.UUID]
+    reason: Optional[str] = None
+
+    @field_validator("ids")
+    @classmethod
+    def _require_ids(cls, value: List[uuid.UUID]) -> List[uuid.UUID]:
+        if not value:
+            raise ValueError("At least one deduction id is required")
+        return value
+
+
+class PayrollDeductionLineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    category: PayrollDeductionLineCategory
+    loan_id: Optional[uuid.UUID] = None
+    label: Optional[str] = None
+    amount: Decimal
+    loan_type_name: Optional[str] = None
+
+
+class PayrollDeductionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    member_id: uuid.UUID
+    member_name: Optional[str] = None
+    member_psn: Optional[str] = None
+    deduction_month: date
+    payroll_reference: Optional[str] = None
+    note: Optional[str] = None
+    status: PayrollDeductionStatus
+
+    contribution_total: Decimal
+    loan_total: Decimal
+    other_total: Decimal
+    grand_total: Decimal
+
+    submitted_at: Optional[datetime] = None
+    confirmed_at: Optional[datetime] = None
+    not_deducted_at: Optional[datetime] = None
+    not_deducted_reason: Optional[str] = None
+    returned_at: Optional[datetime] = None
+    return_reason: Optional[str] = None
+    voided_at: Optional[datetime] = None
+    void_reason: Optional[str] = None
+
+    created_at: datetime
+    updated_at: datetime
+
+    lines: List[PayrollDeductionLineOut] = Field(default_factory=list)
+
+
+class PayrollDeductionTotals(BaseModel):
+    contribution_total: Decimal
+    loan_total: Decimal
+    other_total: Decimal
+    grand_total: Decimal
+
+
+class PayrollDeductionScheduleOut(BaseModel):
+    month: date
+    records: List[PayrollDeductionOut]
+    totals: PayrollDeductionTotals
+
+
+class PayrollDeductionBulkResult(BaseModel):
+    id: uuid.UUID
+    ok: bool
+    status: Optional[PayrollDeductionStatus] = None
+    detail: Optional[str] = None
+
+
+class PayrollDeductionBulkResponse(BaseModel):
+    results: List[PayrollDeductionBulkResult]
 
 
 # ---------------------------------------------------------------------------

@@ -3,9 +3,9 @@
 © SIDGAKS Tech
 
 Web app replacement for the legacy Excel-based cooperative ledger.
-This scaffold covers the **Members module** end-to-end (DB → API → UI) as
-the first vertical slice. Loans, deductions, cashbook, and dividends follow
-the same pattern module by module.
+Built module by module end-to-end (DB → API → UI): members, loans, loan
+applications, repayments, disbursements, and month-end payroll deductions.
+Cashbook and dividends follow the same pattern.
 
 ## Structure
 
@@ -99,11 +99,16 @@ migration, and a troubleshooting table). Short version:
    Now includes `loan_restricted` / `restriction_reason` (admin-set manual
    flag, not a salary calculation) and admin-provisioned member logins.
 2. **Loans** — `loan_types` (rate + tenure + flat charge + open-for-application
-   toggle) and `loans` (one row per disbursement). Interest = principal ×
-   rate, total repayable = principal + interest + flat charge, monthly
-   installment = total repayable / tenure. See earlier notes on the
-   "CR R&O" workbook inconsistency and the confirmed-zero historical loan
-   data finding.
+   toggle) and `loans` (one row per disbursement). A member may hold
+   several active loans at once as long as they are of **different loan
+   types**; a second active loan of the same type is rejected (409) by
+   every activation path (direct create, status update, application
+   disbursement, and deduction-void reopen). A partial unique index
+   (`uq_loans_member_loan_type_active`) enforces the same rule in the
+   database for concurrent requests. Interest = principal × rate, total
+   repayable = principal + interest + flat charge, monthly installment =
+   total repayable / tenure. See earlier notes on the "CR R&O" workbook
+   inconsistency and the confirmed-zero historical loan data finding.
 3. **Auth** — `users` table, PSN-based login for members (admin-provisioned,
    temporary password, forced reset on first login), separate admin
    accounts, JWT sessions. No self-registration by design.
@@ -117,8 +122,9 @@ migration, and a troubleshooting table). Short version:
    `loan_restricted` is either blocked or flagged for admin attention on
    submission, per an admin-configurable setting.
 5. **Settings** — single-row table: loan-restriction behavior (block/warn),
-   loan form fee amount, and per-module enable/disable toggles (not yet
-   enforced on the frontend nav — see Next steps).
+   loan form fee amount, and per-module enable/disable toggles. Toggles are
+   enforced in both the UI (nav links + `ModuleGate` on gated routes) and
+   the API (`require_module_enabled` returns 403 for a disabled module).
 6. **Interest-at-source loan model** — confirmed with MACT: interest is
    deducted from what's disbursed (`net_disbursed = principal -
    interest_amount`), not added on top of what's repaid
@@ -156,18 +162,49 @@ migration, and a troubleshooting table). Short version:
 11. **Next of kin expansion** — `Member` now also has
     `next_of_kin_address`, `next_of_kin_email`, and
     `next_of_kin_relationship` alongside the existing name/phone fields.
+12. **Payroll deductions** — month-end staff deductions keyed by member +
+    payroll month. A record holds monthly-contribution lines, explicit
+    per-loan repayment lines, and free-form "other" lines. Lifecycle is
+    append-only: `draft → submitted → confirmed`, plus `not deducted`
+    (payroll omitted it; member pays by bank/cash and the existing
+    receipt/evidence repayment flow applies) and `void` (reverses applied
+    loan credits and reopens any loan a confirmed record completed).
+    Loan balances change **only on confirmation**, never on entry or
+    submission. Duplicate active records per member/month are blocked by
+    a partial unique index. Admins can act per record or in bulk, and
+    print a monthly schedule with contribution/loan/other/total columns
+    (`/admin/deductions`). Permissions: `deduction.view/create/submit/
+    confirm/void`; seeded roles get them via `seed_permissions.py`, but
+    **existing custom roles are not updated automatically** — grant the
+    new permissions to any existing Treasurer/Loan Officer/Auditor roles
+    you rely on.
 
-### IMPORTANT — before redeploying: run TWO manual DB migrations, in order
+### IMPORTANT — before redeploying: run the manual DB migrations, in order
 
-1. `scripts/manual_migration_2026_08_add_loan_application_columns.sql`
-   (from the previous session, if not already run)
-2. `scripts/manual_migration_2026_08_loan_features_batch2.sql` (this
-   session) — adds next-of-kin columns, `net_disbursed` +
-   `disbursement_account_number` on `loans` (with a backfill for any
-   existing loan rows), and the tenure/disbursement-preference columns
-   on `loan_applications`. New tables (`loan_type_rate_versions`,
-   `loan_repayments`) are created automatically by `create_all()` on
-   first deploy — no manual step needed for those.
+Use the ordered runner rather than applying files by hand:
+
+```bash
+# local sandbox (defaults to backend/.env)
+backend/.venv/Scripts/python.exe scripts/apply_manual_migrations.py
+
+# a Neon branch / other disposable DB
+DATABASE_URL="postgresql://...branch..." \
+  backend/.venv/Scripts/python.exe scripts/apply_manual_migrations.py --allow-remote
+```
+
+The runner calls `create_all()` first (so genuinely new tables appear)
+and then applies every file in `ORDERED_MIGRATIONS`, ending with
+`manual_migration_2026_11_unique_active_loan_type.sql`. That file
+pre-checks for members who already hold more than one active loan of the
+same type and aborts with the offending member/loan IDs if any are
+found — close those loans first, then re-run. It then creates the
+partial unique index `uq_loans_member_loan_type_active`.
+`manual_migration_2026_11_payroll_deductions.sql` (new enums, both
+deduction tables, the deduction-month unique index, and the month index)
+runs just before it. Every file is idempotent, so re-running is safe.
+Tables like
+`loan_type_rate_versions` and `loan_repayments` are created by
+`create_all()` on first deploy — no separate manual step.
 
 **Known gap, not fixed by the migration:** if you already have a real
 disbursed loan from before this session (e.g. a test 900,000 Capital
@@ -279,11 +316,9 @@ here since no explicit `name=` was set on that column).
 
 ## Next steps
 
-- **Enforce the module enable/disable toggles** — `Settings` stores them,
-  but nothing currently hides a disabled module's nav links or blocks its
-  API routes. Worth doing before relying on them.
-- **Deductions / transactions module** — replaces the 59 monthly deduction
-  tables with one time-series table filtered by date range.
+- **Bulk / Excel deduction entry** — deductions currently support
+  per-member entry, bulk lifecycle actions, and a printable schedule;
+  spreadsheet import/export is the natural next step.
 - **Cashbook & financial statements** — signed transaction amounts,
   aggregated into income/expenditure and assets/liabilities views.
 - **Dividends** — reserve %, honorarium %, member payout % applied to net

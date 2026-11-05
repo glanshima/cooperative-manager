@@ -4,5 +4,6 @@ export * from "./members";
 export * from "./loans";
 export * from "./applications";
 export * from "./repayments";
+export * from "./deductions";
 export * from "./settings";
 export * from "./admin";
