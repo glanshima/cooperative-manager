@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Optional
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-DEDUCTION_MONTH_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
+MONTH_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 # Digits, spaces, +, -, () -- covers most phone formats without being a
 # strict E.164 validator (the source spreadsheet data predates any such
 # constraint, so this Phase 1 pass validates format sanity, not a rewrite
@@ -23,6 +23,11 @@ PHONE_RE = re.compile(r"^[0-9+\-() ]{6,20}$")
 
 MAX_RECEIPT_BASE64_CHARS = 7_000_000  # ~5MB decoded, generous for a phone photo
 ALLOWED_RECEIPT_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "application/pdf"}
+
+# Cooperative policy: the floor for a member's monthly contribution. Kept
+# here rather than duplicated as a SQL CHECK so there is one place to
+# change it (see scripts/manual_migration_2026_11_contribution_amounts.sql).
+MINIMUM_MONTHLY_CONTRIBUTION = Decimal("5000")
 
 
 def validate_email_format(value: Optional[str]) -> Optional[str]:
@@ -68,20 +73,36 @@ def validate_positive_amount_optional(value: Optional[Decimal]) -> Optional[Deci
     return validate_positive_amount(value)
 
 
-def validate_deduction_month(value: str) -> str:
-    """Accepts only the payroll month label ('YYYY-MM'), which is what the
-    printed schedule and payroll department both key on. Stored normalized
-    to the first day of that month."""
-    if not isinstance(value, str):
-        raise ValueError("deduction_month must be in YYYY-MM format")
-    value = value.strip()
-    if not DEDUCTION_MONTH_RE.match(value):
-        raise ValueError("deduction_month must be in YYYY-MM format")
+def validate_contribution_amount(value: Decimal) -> Decimal:
+    value = validate_positive_amount(value)
+    if value < MINIMUM_MONTHLY_CONTRIBUTION:
+        raise ValueError(
+            f"The monthly contribution cannot be below {MINIMUM_MONTHLY_CONTRIBUTION}"
+        )
     return value
 
 
-def deduction_month_start(value: str) -> date:
-    year, month = validate_deduction_month(value).split("-")
+def validate_contribution_amount_optional(value: Optional[Decimal]) -> Optional[Decimal]:
+    if value is None:
+        return value
+    return validate_contribution_amount(value)
+
+
+def validate_month(value: str) -> str:
+    """Accepts only a month label ('YYYY-MM') -- what the printed payroll
+    schedule, the payroll department and a repayment's payment month all
+    key on. Pydantic names the field in the error, so the message stays
+    generic. Stored normalized to the first day of that month."""
+    if not isinstance(value, str):
+        raise ValueError("Must be in YYYY-MM format")
+    value = value.strip()
+    if not MONTH_RE.match(value):
+        raise ValueError("Must be in YYYY-MM format")
+    return value
+
+
+def month_start_from_label(value: str) -> date:
+    year, month = validate_month(value).split("-")
     return date(int(year), int(month), 1)
 
 

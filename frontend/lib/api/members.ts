@@ -24,6 +24,18 @@ export interface Member {
   status: MemberStatus;
   loan_restricted: boolean;
   restriction_reason?: string | null;
+  // The agreed monthly savings contribution payroll deducts. Null until an
+  // officer bootstraps it; from then on it only moves through an approved
+  // contribution change request. contribution_effective_from is the first
+  // payroll month the stored figure applies to (server-set).
+  monthly_contribution_amount?: string | null;
+  contribution_effective_from?: string | null;
+  // Membership exit (see POST /api/members/{id}/withdraw). A non-null
+  // exit date means the member formally LEFT the cooperative, which is
+  // different from `non_financial` alone -- that also covers a member who
+  // simply fell behind on contributions.
+  membership_exit_date?: string | null;
+  membership_exit_reason?: string | null;
   created_at: string;
   updated_at: string;
   // Login State Reconciliation Addendum: authoritative, backend-computed
@@ -40,6 +52,10 @@ export interface Member {
   // report). See schemas.py's MemberOut docstring.
   next_of_kin_is_member?: boolean | null;
   next_of_kin_member?: { id: string; psn: string; name: string; phone?: string | null } | null;
+  // True when this member is linked to the signed-in officer by an active
+  // conflict-of-interest relationship: the record stays visible, but every
+  // action on it is refused (409) until another officer acts.
+  conflicted?: boolean;
 }
 
 export interface MemberInput {
@@ -59,6 +75,11 @@ export interface MemberInput {
   status: MemberStatus;
   loan_restricted?: boolean;
   restriction_reason?: string;
+  // Bootstrap only: an officer records the initial figure here while it is
+  // still unset. Once on file the backend refuses a direct edit (409) or a
+  // clear (422) -- later changes go through a contribution change request.
+  // Omit entirely on edits that aren't bootstrapping (see useMembersPage).
+  monthly_contribution_amount?: number | null;
   // Member Relationship / Next-of-Kin Controlled Remediation (2026-09):
   // required on create (backend rejects a missing value with a 422 --
   // see schemas.py's MemberCreate docstring); when true,
@@ -81,6 +102,18 @@ export interface MemberListResult {
 export interface MemberFilterOptions {
   banks: string[];
   departments: string[];
+}
+
+// What a membership exit means financially. The backend REPORTS the
+// savings offset (a member's savings is their accumulated monthly
+// contribution) against the loans still outstanding; it never posts it,
+// so applying the offset stays on the audited repayment flow.
+export interface MemberWithdrawal {
+  member: Member;
+  savings_balance: string;
+  active_loan_count: number;
+  active_loan_outstanding: string;
+  payroll_recovery_still_due: string;
 }
 
 export interface MemberListParams {
@@ -133,5 +166,16 @@ export async function updateMemberLoginStatus(
   return apiFetch<Member>(`/api/members/${id}/login-status`, {
     method: "PATCH",
     body: { account_status: accountStatus, reason: reason ?? null },
+  });
+}
+
+export async function withdrawMember(
+  id: string,
+  reason: string,
+  exitDate?: string
+): Promise<MemberWithdrawal> {
+  return apiFetch<MemberWithdrawal>(`/api/members/${id}/withdraw`, {
+    method: "POST",
+    body: { reason, exit_date: exitDate ?? null },
   });
 }

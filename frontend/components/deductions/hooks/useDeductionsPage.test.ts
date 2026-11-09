@@ -6,12 +6,13 @@ import {
   confirmDeduction,
   createDeduction,
   getDeductionSchedule,
+  getDeductionWorklist,
   listDeductions,
   listLoans,
   listMembers,
   voidDeduction,
 } from "@/lib/api";
-import type { PayrollDeduction, PayrollDeductionSchedule } from "@/lib/api";
+import type { DeductionWorklistItem, PayrollDeduction, PayrollDeductionSchedule } from "@/lib/api";
 
 import { useDeductionsPage } from "./useDeductionsPage";
 
@@ -20,6 +21,7 @@ vi.mock("@/lib/api", () => ({
   confirmDeduction: vi.fn(),
   createDeduction: vi.fn(),
   getDeductionSchedule: vi.fn(),
+  getDeductionWorklist: vi.fn(),
   listDeductions: vi.fn(),
   listLoans: vi.fn(),
   listMembers: vi.fn(),
@@ -32,6 +34,7 @@ vi.mock("@/lib/api", () => ({
 
 const listDeductionsMock = vi.mocked(listDeductions);
 const getScheduleMock = vi.mocked(getDeductionSchedule);
+const getWorklistMock = vi.mocked(getDeductionWorklist);
 const listMembersMock = vi.mocked(listMembers);
 const listLoansMock = vi.mocked(listLoans);
 const confirmDeductionMock = vi.mocked(confirmDeduction);
@@ -81,6 +84,34 @@ function makeSchedule(records: PayrollDeduction[]): PayrollDeductionSchedule {
   };
 }
 
+function makeWorklistItem(overrides: Partial<DeductionWorklistItem> = {}): DeductionWorklistItem {
+  return {
+    member_id: "member-1",
+    member_name: "Test Member",
+    member_psn: "PSN-1",
+    member_status: "financial",
+    membership_exit_date: null,
+    due_reasons: ["Monthly contribution due"],
+    lines: [
+      { category: "monthly_contribution", amount: "5000.00", arrears: "0.00", months_behind: 0 },
+      {
+        category: "loan_repayment",
+        amount: "1000.00",
+        loan_id: "loan-1",
+        loan_type_name: "Regular loan",
+        arrears: "0.00",
+        months_behind: 0,
+      },
+    ],
+    warnings: [],
+    expected_total: "6000.00",
+    deduction_id: null,
+    deduction_status: null,
+    conflicted: false,
+    ...overrides,
+  };
+}
+
 const logout = vi.fn();
 
 describe("useDeductionsPage", () => {
@@ -91,6 +122,13 @@ describe("useDeductionsPage", () => {
     getScheduleMock.mockResolvedValue(makeSchedule(records));
     listMembersMock.mockResolvedValue({ items: [], total: 0, skip: 0, limit: 1000 });
     listLoansMock.mockResolvedValue([]);
+    getWorklistMock.mockResolvedValue({
+      month: "2026-11-01",
+      items: [],
+      due_count: 0,
+      entered_count: 0,
+      expected_total: "0.00",
+    });
   });
 
   it("loads the month's deductions and schedule totals", async () => {
@@ -193,5 +231,147 @@ describe("useDeductionsPage", () => {
       lines: [{ category: "monthly_contribution", amount: 2000 }],
     });
     expect(result.current.feedback.message).toBe("Draft created.");
+  });
+});
+
+describe("useDeductionsPage enter queue", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const records = [makeDeduction()];
+    listDeductionsMock.mockResolvedValue(records);
+    getScheduleMock.mockResolvedValue(makeSchedule(records));
+    listMembersMock.mockResolvedValue({ items: [], total: 0, skip: 0, limit: 1000 });
+    listLoansMock.mockResolvedValue([]);
+    getWorklistMock.mockResolvedValue({
+      month: "2026-11-01",
+      items: [makeWorklistItem()],
+      due_count: 1,
+      entered_count: 0,
+      expected_total: "6000.00",
+    });
+  });
+
+  it("loads the worklist on mount without entered members", async () => {
+    const { result } = renderHook(() => useDeductionsPage(logout));
+
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    expect(getWorklistMock).toHaveBeenCalledWith(expect.any(String), false);
+    expect(result.current.tab).toBe("enter");
+    expect(result.current.worklist.data?.items).toHaveLength(1);
+    expect(result.current.worklist.data?.due_count).toBe(1);
+    expect(result.current.worklist.error).toBeNull();
+  });
+
+  it("opens the form prefilled with the server's expected amounts", async () => {
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    act(() => {
+      result.current.worklist.openItem(makeWorklistItem());
+    });
+
+    expect(result.current.form.open).toBe(true);
+    expect(result.current.form.editing).toBeNull();
+    expect(result.current.form.prefill).toEqual({
+      memberId: "member-1",
+      memberName: "Test Member",
+      memberStatus: "financial",
+      month: result.current.filters.month,
+      contribution: "5000.00",
+      loanLines: [{ loanId: "loan-1", label: "Regular loan", amount: "1000.00" }],
+      conflicted: false,
+    });
+  });
+
+  it("carries the conflict flag through to the prefill", async () => {
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    act(() => {
+      result.current.worklist.openItem(makeWorklistItem({ conflicted: true }));
+    });
+
+    expect(result.current.form.prefill?.conflicted).toBe(true);
+  });
+
+  it("offers a one-click undo after creating a draft from the queue", async () => {
+    createDeductionMock.mockResolvedValue(makeDeduction({ id: "deduction-new" }));
+    voidDeductionMock.mockResolvedValue(makeDeduction({ id: "deduction-new", status: "void" }));
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    act(() => {
+      result.current.worklist.openItem(makeWorklistItem());
+    });
+    await act(async () => {
+      await result.current.form.save({
+        member_id: "member-1",
+        deduction_month: "2026-11",
+        lines: [
+          { category: "monthly_contribution", amount: 5000 },
+          { category: "loan_repayment", loan_id: "loan-1", amount: 1000 },
+        ],
+      });
+    });
+
+    expect(result.current.worklist.lastEntered).toEqual({
+      id: "deduction-new",
+      memberName: "Test Member",
+    });
+    expect(result.current.form.open).toBe(false);
+    expect(result.current.form.prefill).toBeNull();
+
+    await act(async () => {
+      await result.current.worklist.undo();
+    });
+
+    expect(voidDeductionMock).toHaveBeenCalledWith("deduction-new", "Entered in error");
+    await waitFor(() => expect(result.current.worklist.lastEntered).toBeNull());
+    expect(result.current.feedback.message).toBe("Entry for Test Member undone.");
+  });
+
+  it("does not offer undo for a draft created outside the queue", async () => {
+    createDeductionMock.mockResolvedValue(makeDeduction({ id: "deduction-new" }));
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    act(() => {
+      result.current.form.openCreate();
+    });
+    await act(async () => {
+      await result.current.form.save({
+        member_id: "member-1",
+        deduction_month: "2026-11",
+        lines: [{ category: "monthly_contribution", amount: 5000 }],
+      });
+    });
+
+    expect(result.current.worklist.lastEntered).toBeNull();
+  });
+
+  it("reloads the worklist with entered members when toggled on", async () => {
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    await act(async () => {
+      result.current.worklist.setIncludeEntered(true);
+    });
+
+    await waitFor(() =>
+      expect(getWorklistMock).toHaveBeenCalledWith(result.current.filters.month, true)
+    );
+    expect(result.current.worklist.includeEntered).toBe(true);
+  });
+
+  it("surfaces a worklist load failure without breaking the ledger", async () => {
+    getWorklistMock.mockRejectedValue(new Error("Deductions module is disabled"));
+    const { result } = renderHook(() => useDeductionsPage(logout));
+
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    expect(result.current.worklist.error).toBe("Deductions module is disabled");
+    expect(result.current.worklist.data).toBeNull();
+    expect(result.current.table.items).toHaveLength(1);
   });
 });

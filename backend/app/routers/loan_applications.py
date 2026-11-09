@@ -18,11 +18,13 @@ from ..deps import (
 from ..idempotency import IdempotencyContext, idempotency_check
 from ..self_conflict import (
     get_conflicted_member_ids,
+    log_conflicted_view,
+    mark_conflicted_reads,
     require_no_member_conflict,
-    require_no_nok_read_conflict,
 )
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
 from ..loan_rules import (
+    assert_member_may_borrow,
     assert_no_other_active_loan_of_type,
     commit_or_conflict,
     flush_or_conflict,
@@ -47,6 +49,9 @@ def _to_detail_schema(app: models.LoanApplication) -> schemas.LoanApplicationOut
         **{
             field: getattr(app, field)
             for field in schemas.LoanApplicationOut.model_fields
+            # Request-scoped, not a column: mark_conflicted_reads() fills
+            # this in for whoever is doing the reading.
+            if field != "conflicted"
         },
         member_name=app.member.name,
         member_psn=app.member.psn,
@@ -82,6 +87,8 @@ def submit_application(
     member = db.query(models.Member).filter(models.Member.id == current_user.member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member record not found")
+
+    assert_member_may_borrow(db, member)
 
     loan_type = (
         db.query(models.LoanType).filter(models.LoanType.id == payload.loan_type_id).first()
@@ -167,6 +174,7 @@ def submit_application(
 
 @router.get("", response_model=List[schemas.LoanApplicationOutWithDetails])
 def list_applications(
+    request: Request,
     status: Optional[models.LoanApplicationStatus] = None,
     payment_status: Optional[models.PaymentVerificationStatus] = None,
     undisbursed_only: bool = False,
@@ -178,16 +186,16 @@ def list_applications(
         joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type)
     )
 
+    conflicted_member_ids = set()
     if current_user.role == models.UserRole.MEMBER:
         query = query.filter(models.LoanApplication.member_id == current_user.member_id)
     elif not user_has_permission(db, current_user, "loan.view"):
         raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
     else:
+        # Conflicted applications stay in the queue and in every count --
+        # flagged so the review/disbursal actions are the only things
+        # that go quiet (see self_conflict.py's read policy).
         conflicted_member_ids = get_conflicted_member_ids(db, current_user)
-        if conflicted_member_ids:
-            query = query.filter(
-                models.LoanApplication.member_id.notin_(conflicted_member_ids)
-            )
 
     if status:
         query = query.filter(models.LoanApplication.status == status)
@@ -204,7 +212,17 @@ def list_applications(
         query = query.filter(models.LoanApplication.loan_type_id == loan_type_id)
 
     applications = query.order_by(models.LoanApplication.created_at.desc()).all()
-    return [_to_detail_schema(a) for a in applications]
+    items = [_to_detail_schema(a) for a in applications]
+    flagged = mark_conflicted_reads(items, conflicted_member_ids)
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=flagged,
+        action_description="browsed the loan applications",
+        entity_type="loan_application",
+        request=request,
+    )
+    return items
 
 
 @router.get("/{application_id}", response_model=schemas.LoanApplicationOutWithReceipt)
@@ -224,16 +242,20 @@ def get_application(
         raise HTTPException(status_code=404, detail="Application not found")
 
     _assert_can_view(application, current_user, db)
-    require_no_nok_read_conflict(
-        db,
-        current_user,
-        application.member_id,
-        action_description="view this loan application",
-        entity_type="loan_application",
-        entity_id=str(application.id),
-        request=request,
-    )
-    return _to_receipt_schema(application)
+    conflicted = application.member_id in get_conflicted_member_ids(db, current_user)
+    if conflicted:
+        log_conflicted_view(
+            db,
+            current_user,
+            conflicted_count=1,
+            action_description="viewed a loan application",
+            entity_type="loan_application",
+            entity_id=str(application.id),
+            request=request,
+        )
+    item = _to_receipt_schema(application)
+    item.conflicted = conflicted
+    return item
 
 
 @router.post("/{application_id}/verify-payment", response_model=schemas.LoanApplicationOutWithDetails)
@@ -516,6 +538,11 @@ def disburse_application(
         raise HTTPException(status_code=400, detail="Only approved applications can be disbursed")
     if application.resulting_loan_id:
         raise HTTPException(status_code=400, detail="This application has already been disbursed")
+
+    # Re-checked here, not only at submission: approval and payout can be
+    # weeks apart, and a member who went non-financial in between (e.g.
+    # applied to withdraw) must not receive new credit.
+    assert_member_may_borrow(db, application.member)
 
     loan_type = application.loan_type
     disbursement_date = date.today().replace(day=1)

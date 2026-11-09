@@ -5,6 +5,8 @@ export interface LoanRepayment {
   id: string;
   loan_id: string;
   member_id: string;
+  // Null on records submitted before the payment month was captured.
+  payment_month?: string | null;
   amount_claimed: string;
   payment_reference: string;
   receipt_content_type: string;
@@ -13,6 +15,9 @@ export interface LoanRepayment {
   verified_at?: string | null;
   created_at: string;
   updated_at: string;
+  // True when this record belongs to a member the signed-in officer is
+  // conflicted against: visible, but every action on it is refused (409).
+  conflicted?: boolean;
 }
 
 export interface LoanRepaymentWithReceipt extends LoanRepayment {
@@ -21,6 +26,9 @@ export interface LoanRepaymentWithReceipt extends LoanRepayment {
 
 export interface LoanRepaymentInput {
   amount_claimed: number;
+  // 'YYYY-MM' — the payroll month the payment covers, so payroll doesn't
+  // deduct the same instalment again.
+  payment_month: string;
   payment_reference: string;
   receipt_image_base64: string;
   receipt_content_type: string;

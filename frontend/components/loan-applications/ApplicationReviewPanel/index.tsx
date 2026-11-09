@@ -1,4 +1,5 @@
 import ReceiptPreview from "@/components/ui/ReceiptPreview";
+import { ConflictNotice } from "@/components/ui/ConflictMarker";
 import type { LoanApplicationsPageModel } from "../hooks/useLoanApplicationsPage";
 
 export default function ApplicationReviewPanel({
@@ -9,6 +10,10 @@ export default function ApplicationReviewPanel({
   const expanded = review.application;
   const form = review.form;
   if (!expanded) return null;
+
+  // Opening an application is a read, which the conflict policy permits;
+  // every decision below is a write, so the panel comes up without them.
+  const readOnly = Boolean(expanded.conflicted);
 
   return (
     <section
@@ -52,7 +57,9 @@ export default function ApplicationReviewPanel({
         />
       </div>
 
-      {expanded.payment_status === "awaiting_verification" && (
+      {readOnly && <ConflictNotice entity="application" />}
+
+      {!readOnly && expanded.payment_status === "awaiting_verification" && (
         <div style={{ display: "grid", gap: 8 }}>
           <h3>Step 1: Verify payment</h3>
           <input
@@ -67,7 +74,7 @@ export default function ApplicationReviewPanel({
         </div>
       )}
 
-      {expanded.payment_status === "verified" && expanded.status === "pending" && (
+      {!readOnly && expanded.payment_status === "verified" && expanded.status === "pending" && (
         <div style={{ display: "grid", gap: 8 }}>
           <h3>Step 2: Loan decision</h3>
           <input
@@ -109,7 +116,7 @@ export default function ApplicationReviewPanel({
         </div>
       )}
 
-      {expanded.status === "approved" && !expanded.resulting_loan_id && (
+      {!readOnly && expanded.status === "approved" && !expanded.resulting_loan_id && (
         <div style={{ display: "grid", gap: 8 }}>
           <h3>Step 3: Disburse</h3>
           <p style={{ color: "#555" }}>

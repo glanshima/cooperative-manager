@@ -1,4 +1,5 @@
 import Table from "@/components/ui/Table";
+import { ConflictMarker } from "@/components/ui/ConflictMarker";
 import type { LoansPageModel } from "../hooks/useLoansPage";
 
 export default function LoansTable({ table }: { table: LoansPageModel["table"] }) {
@@ -34,8 +35,14 @@ export default function LoansTable({ table }: { table: LoansPageModel["table"] }
                 <td>{loan.status}</td>
                 <td>{loan.disbursement_date}</td>
                 <td>
-                  <button onClick={() => table.onRecordRepayment(loan)}>Record repayment</button>{" "}
-                  <button onClick={() => table.onDelete(loan.id)}>Delete</button>
+                  {loan.conflicted ? (
+                    <ConflictMarker />
+                  ) : (
+                    <>
+                      <button onClick={() => table.onRecordRepayment(loan)}>Record repayment</button>{" "}
+                      <button onClick={() => table.onDelete(loan.id)}>Delete</button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}

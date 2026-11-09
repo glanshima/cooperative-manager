@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import type { MemberStatus } from "./members";
 
 export type PayrollDeductionStatus =
   | "draft"
@@ -15,6 +16,9 @@ export interface PayrollDeductionLine {
   loan_id?: string | null;
   label?: string | null;
   amount: string;
+  // What the server computed this line should be for its month. Null when
+  // nothing on file predicts it; a different amount is an override.
+  expected_amount?: string | null;
   loan_type_name?: string | null;
 }
 
@@ -41,6 +45,9 @@ export interface PayrollDeduction {
   void_reason?: string | null;
   created_at: string;
   updated_at: string;
+  // See Member.conflicted -- this month's record stays in the schedule and
+  // in every total, but only another officer may act on it.
+  conflicted?: boolean;
   lines: PayrollDeductionLine[];
 }
 
@@ -158,5 +165,51 @@ export async function bulkDeductions(
   return apiFetch<PayrollDeductionBulkResponse>(`/api/payroll-deductions/bulk/${action}`, {
     method: "POST",
     body: { ids, reason },
+  });
+}
+
+// --- Enter queue (worklist) ---
+// Who still needs entering for a month, with the amounts the server expects.
+// The queue shrinks as drafts are created; expected amounts come from the
+// backend so the officer never has to compute an instalment by hand.
+
+export interface DeductionWorklistLine {
+  category: PayrollDeductionLineCategory;
+  amount: string;
+  loan_id?: string | null;
+  loan_type_name?: string | null;
+  arrears: string;
+  months_behind: number;
+}
+
+export interface DeductionWorklistItem {
+  member_id: string;
+  member_name: string;
+  member_psn: string;
+  member_status: MemberStatus;
+  membership_exit_date?: string | null;
+  due_reasons: string[];
+  lines: DeductionWorklistLine[];
+  warnings: string[];
+  expected_total: string;
+  deduction_id?: string | null;
+  deduction_status?: PayrollDeductionStatus | null;
+  conflicted: boolean;
+}
+
+export interface DeductionWorklistOut {
+  month: string;
+  items: DeductionWorklistItem[];
+  due_count: number;
+  entered_count: number;
+  expected_total: string;
+}
+
+export async function getDeductionWorklist(
+  month: string,
+  includeEntered = false
+): Promise<DeductionWorklistOut> {
+  return apiFetch<DeductionWorklistOut>("/api/payroll-deductions/worklist", {
+    searchParams: { month, include_entered: includeEntered ? "true" : undefined },
   });
 }

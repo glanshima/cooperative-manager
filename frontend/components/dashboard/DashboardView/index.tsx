@@ -2,6 +2,7 @@ import StatusMessage from "@/components/ui/StatusMessage";
 import type { DashboardPageModel } from "../hooks/useDashboardPage";
 import ApplicationsSection from "../ApplicationsSection";
 import ApplyForLoan from "../ApplyForLoan";
+import ContributionCard from "../ContributionCard";
 import LoansSection from "../LoansSection";
 import RestrictionBanner from "../RestrictionBanner";
 
@@ -18,6 +19,8 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
           {model.member.name} · PSN {model.member.psn}
         </p>
       )}
+
+      {model.member && <ContributionCard member={model.member} />}
 
       {model.member?.loan_restricted && model.loansEnabled && (
         <RestrictionBanner settings={model.settings} />

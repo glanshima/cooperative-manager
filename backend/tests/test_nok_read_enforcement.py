@@ -1,14 +1,24 @@
 """
-Tests for Next-of-Kin READ enforcement (2026-11): an admin whose linked
-member is connected to the target member by an active, conflict-flagged
-MemberRelationship -- in EITHER direction -- must not be able to read
-that member's record, loans, loan applications, or repayments.
+Tests for the conflict-of-interest READ policy (2026-11).
 
-Lists exclude conflicted members (including from `total`), direct reads
-return 409 `member_conflict`, and reading one's own record stays allowed
-because there is no conflict in seeing one's own data. Member
-self-service reads are unaffected. Removed relationships and
-conflict_of_interest=False relationships do not block.
+The contract these tests pin down:
+
+  - An admin whose linked member is connected to the target member by an
+    active, conflict-flagged MemberRelationship -- in EITHER direction --
+    can still READ that member's record, loans, applications, repayments
+    and payroll deductions. Nothing is hidden and no count shrinks:
+    separation of duties is about who may CHANGE a record, not who may
+    see it.
+  - Every such row arrives with `conflicted: true` so the caller can
+    present it read-only.
+  - A conflicted view leaves an audit trail
+    (conflict_of_interest.viewed) that does not fail the request.
+  - Actions remain refused: the same officer still gets 409
+    `member_conflict` when they try to change the record.
+  - Reading one's OWN record is never flagged -- there is no conflict in
+    seeing one's own data -- and member self-service reads are
+    unaffected. Removed relationships and conflict_of_interest=False
+    relationships are not flagged either.
 """
 from decimal import Decimal
 from datetime import date
@@ -106,16 +116,13 @@ def _make_awaiting_repayment(db_session, loan, member):
     return repayment
 
 
-def _assert_member_conflict(res):
-    assert res.status_code == 409, res.text
-    assert res.json()["detail"]["error"] == "member_conflict"
-
-
 # ---------------------------------------------------------------------------
 # Member list / detail
 # ---------------------------------------------------------------------------
 
-def test_member_list_excludes_nok_member_from_items_and_total(client, db_session, seed_permissions):
+def test_member_list_keeps_the_conflicted_member_in_items_and_total(
+    client, db_session, seed_permissions
+):
     own_member, admin = _admin_with_member(
         db_session, "nok_read_list_admin", "NOK-READ-LA", "nokreadla@example.com", "member.view"
     )
@@ -126,21 +133,26 @@ def test_member_list_excludes_nok_member_from_items_and_total(client, db_session
     res = client.get("/api/members", params={"limit": 100}, headers=auth_headers(admin))
     assert res.status_code == 200, res.text
     body = res.json()
-    psns = {item["psn"] for item in body["items"]}
-    assert psns == {own_member.psn, unrelated.psn}
-    assert body["total"] == 2
+    by_psn = {item["psn"]: item for item in body["items"]}
+    assert set(by_psn) == {own_member.psn, target.psn, unrelated.psn}
+    assert body["total"] == 3
+    assert by_psn[target.psn]["conflicted"] is True
+    assert by_psn[own_member.psn]["conflicted"] is False
+    assert by_psn[unrelated.psn]["conflicted"] is False
 
-    # Search can't be used to walk around the list exclusion either.
+    # Search reaches the conflicted record too -- it is a record the
+    # officer is allowed to see, not a gap in the register.
     res = client.get(
         "/api/members", params={"search": target.psn}, headers=auth_headers(admin)
     )
     assert res.status_code == 200
     body = res.json()
-    assert body["items"] == []
-    assert body["total"] == 0
+    assert body["total"] == 1
+    assert body["items"][0]["psn"] == target.psn
+    assert body["items"][0]["conflicted"] is True
 
 
-def test_member_list_shows_everything_to_unlinked_admin(client, db_session, seed_permissions):
+def test_member_list_flags_nothing_for_an_unlinked_admin(client, db_session, seed_permissions):
     admin = make_admin_user(db_session, username="nok_read_unlinked_admin")
     grant_permission(db_session, admin, "member.view")
     make_member(db_session, psn="NOK-READ-UL1", email="nokreadul1@example.com")
@@ -148,10 +160,14 @@ def test_member_list_shows_everything_to_unlinked_admin(client, db_session, seed
 
     res = client.get("/api/members", params={"limit": 100}, headers=auth_headers(admin))
     assert res.status_code == 200
-    assert res.json()["total"] == 2
+    body = res.json()
+    assert body["total"] == 2
+    assert all(item["conflicted"] is False for item in body["items"])
 
 
-def test_member_detail_blocked_when_actor_is_the_next_of_kin(client, db_session, seed_permissions):
+def test_member_detail_is_visible_and_flagged_when_actor_is_the_next_of_kin(
+    client, db_session, seed_permissions
+):
     own_member, admin = _admin_with_member(
         db_session, "nok_read_detail_a", "NOK-READ-DA", "nokreadda@example.com", "member.view"
     )
@@ -159,10 +175,11 @@ def test_member_detail_blocked_when_actor_is_the_next_of_kin(client, db_session,
     _link_nok(db_session, own_member, target)
 
     res = client.get(f"/api/members/{target.id}", headers=auth_headers(admin))
-    _assert_member_conflict(res)
+    assert res.status_code == 200, res.text
+    assert res.json()["conflicted"] is True
 
 
-def test_member_detail_blocked_when_target_lists_actor_as_next_of_kin(
+def test_member_detail_is_visible_and_flagged_when_target_lists_actor_as_next_of_kin(
     client, db_session, seed_permissions
 ):
     own_member, admin = _admin_with_member(
@@ -172,10 +189,13 @@ def test_member_detail_blocked_when_target_lists_actor_as_next_of_kin(
     _link_nok(db_session, target, own_member)
 
     res = client.get(f"/api/members/{target.id}", headers=auth_headers(admin))
-    _assert_member_conflict(res)
+    assert res.status_code == 200, res.text
+    assert res.json()["conflicted"] is True
 
 
-def test_member_detail_allows_own_and_unrelated_records(client, db_session, seed_permissions):
+def test_member_detail_is_unflagged_for_own_and_unrelated_records(
+    client, db_session, seed_permissions
+):
     own_member, admin = _admin_with_member(
         db_session, "nok_read_detail_ok", "NOK-READ-DE", "nokreadde@example.com", "member.view"
     )
@@ -183,12 +203,16 @@ def test_member_detail_allows_own_and_unrelated_records(client, db_session, seed
 
     own_res = client.get(f"/api/members/{own_member.id}", headers=auth_headers(admin))
     assert own_res.status_code == 200, own_res.text
+    assert own_res.json()["conflicted"] is False
 
     unrelated_res = client.get(f"/api/members/{unrelated.id}", headers=auth_headers(admin))
     assert unrelated_res.status_code == 200, unrelated_res.text
+    assert unrelated_res.json()["conflicted"] is False
 
 
-def test_member_detail_allows_after_relationship_is_removed(client, db_session, seed_permissions):
+def test_member_detail_is_unflagged_after_relationship_is_removed(
+    client, db_session, seed_permissions
+):
     from app import models
 
     own_member, admin = _admin_with_member(
@@ -201,9 +225,12 @@ def test_member_detail_allows_after_relationship_is_removed(client, db_session, 
 
     res = client.get(f"/api/members/{target.id}", headers=auth_headers(admin))
     assert res.status_code == 200, res.text
+    assert res.json()["conflicted"] is False
 
 
-def test_member_detail_allows_when_conflict_flag_is_false(client, db_session, seed_permissions):
+def test_member_detail_is_unflagged_when_conflict_flag_is_false(
+    client, db_session, seed_permissions
+):
     own_member, admin = _admin_with_member(
         db_session, "nok_read_detail_nf", "NOK-READ-DI", "nokreaddi@example.com", "member.view"
     )
@@ -212,13 +239,14 @@ def test_member_detail_allows_when_conflict_flag_is_false(client, db_session, se
 
     res = client.get(f"/api/members/{target.id}", headers=auth_headers(admin))
     assert res.status_code == 200, res.text
+    assert res.json()["conflicted"] is False
 
 
 # ---------------------------------------------------------------------------
-# Loans / applications / repayments
+# Loans / applications / repayments / deductions
 # ---------------------------------------------------------------------------
 
-def test_loan_reads_blocked_and_excluded(client, db_session, seed_permissions):
+def test_loan_reads_are_visible_and_flagged(client, db_session, seed_permissions):
     own_member, admin = _admin_with_member(
         db_session, "nok_read_loans", "NOK-READ-LO1", "nokreadlo1@example.com", "loan.view"
     )
@@ -227,27 +255,31 @@ def test_loan_reads_blocked_and_excluded(client, db_session, seed_permissions):
     target_loan = _make_active_loan(db_session, target, "target")
     own_loan = _make_active_loan(db_session, own_member, "own")
 
-    _assert_member_conflict(
-        client.get(f"/api/loans/{target_loan.id}", headers=auth_headers(admin))
-    )
-    _assert_member_conflict(
-        client.get(f"/api/loans/member/{target.id}/balance", headers=auth_headers(admin))
-    )
+    detail = client.get(f"/api/loans/{target_loan.id}", headers=auth_headers(admin))
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["conflicted"] is True
+
+    balance = client.get(f"/api/loans/member/{target.id}/balance", headers=auth_headers(admin))
+    assert balance.status_code == 200, balance.text
+    assert balance.json()["conflicted"] is True
+    assert balance.json()["total_outstanding_balance"] == "1100.00"
 
     res = client.get("/api/loans", headers=auth_headers(admin))
     assert res.status_code == 200, res.text
-    loan_ids = {loan["id"] for loan in res.json()}
-    assert str(own_loan.id) in loan_ids
-    assert str(target_loan.id) not in loan_ids
+    by_id = {loan["id"]: loan for loan in res.json()}
+    assert by_id[str(own_loan.id)]["conflicted"] is False
+    assert by_id[str(target_loan.id)]["conflicted"] is True
 
+    # Filtering straight to the conflicted member works -- the record is
+    # visible, only the actions are not.
     res = client.get(
         "/api/loans", params={"member_id": str(target.id)}, headers=auth_headers(admin)
     )
     assert res.status_code == 200
-    assert res.json() == []
+    assert [loan["conflicted"] for loan in res.json()] == [True]
 
 
-def test_loan_application_reads_blocked_and_excluded(client, db_session, seed_permissions):
+def test_loan_application_reads_are_visible_and_flagged(client, db_session, seed_permissions):
     own_member, admin = _admin_with_member(
         db_session, "nok_read_apps", "NOK-READ-AP1", "nokreadap1@example.com", "loan.view"
     )
@@ -257,18 +289,18 @@ def test_loan_application_reads_blocked_and_excluded(client, db_session, seed_pe
     target_app = _make_application(db_session, target, loan_type)
     own_app = _make_application(db_session, own_member, loan_type)
 
-    _assert_member_conflict(
-        client.get(f"/api/loan-applications/{target_app.id}", headers=auth_headers(admin))
-    )
+    detail = client.get(f"/api/loan-applications/{target_app.id}", headers=auth_headers(admin))
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["conflicted"] is True
 
     res = client.get("/api/loan-applications", headers=auth_headers(admin))
     assert res.status_code == 200, res.text
-    app_ids = {app["id"] for app in res.json()}
-    assert str(own_app.id) in app_ids
-    assert str(target_app.id) not in app_ids
+    by_id = {app["id"]: app for app in res.json()}
+    assert by_id[str(own_app.id)]["conflicted"] is False
+    assert by_id[str(target_app.id)]["conflicted"] is True
 
 
-def test_repayment_reads_blocked_and_excluded(client, db_session, seed_permissions):
+def test_repayment_reads_are_visible_and_flagged(client, db_session, seed_permissions):
     own_member, admin = _admin_with_member(
         db_session, "nok_read_reps", "NOK-READ-RP1", "nokreadrp1@example.com", "repayment.view"
     )
@@ -279,22 +311,89 @@ def test_repayment_reads_blocked_and_excluded(client, db_session, seed_permissio
     own_loan = _make_active_loan(db_session, own_member, "rep-own")
     own_repayment = _make_awaiting_repayment(db_session, own_loan, own_member)
 
-    _assert_member_conflict(
-        client.get(
-            f"/api/loans/{target_loan.id}/repayments", headers=auth_headers(admin)
-        )
-    )
-    _assert_member_conflict(
-        client.get(
-            f"/api/loan-repayments/{target_repayment.id}", headers=auth_headers(admin)
-        )
-    )
+    per_loan = client.get(f"/api/loans/{target_loan.id}/repayments", headers=auth_headers(admin))
+    assert per_loan.status_code == 200, per_loan.text
+    assert [repayment["conflicted"] for repayment in per_loan.json()] == [True]
+
+    detail = client.get(f"/api/loan-repayments/{target_repayment.id}", headers=auth_headers(admin))
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["conflicted"] is True
 
     res = client.get("/api/loan-repayments", headers=auth_headers(admin))
     assert res.status_code == 200, res.text
-    repayment_ids = {repayment["id"] for repayment in res.json()}
-    assert str(own_repayment.id) in repayment_ids
-    assert str(target_repayment.id) not in repayment_ids
+    by_id = {repayment["id"]: repayment for repayment in res.json()}
+    assert by_id[str(own_repayment.id)]["conflicted"] is False
+    assert by_id[str(target_repayment.id)]["conflicted"] is True
+
+
+def test_deduction_reads_are_visible_and_flagged(client, db_session, seed_permissions):
+    own_member, admin = _admin_with_member(
+        db_session, "nok_read_deductions", "NOK-READ-DD1", "nokreaddd1@example.com",
+        "deduction.view",
+    )
+    target = make_member(db_session, psn="NOK-READ-DD2", email="nokreaddd2@example.com")
+    _link_nok(db_session, own_member, target)
+
+    drafting_admin = make_admin_user(db_session, username="nok_read_deduction_writer")
+    grant_permission(db_session, drafting_admin, "deduction.create", "deduction.view")
+    for member in (own_member, target):
+        res = client.post(
+            "/api/payroll-deductions",
+            headers=auth_headers(drafting_admin),
+            json={
+                "member_id": str(member.id),
+                "deduction_month": "2026-11",
+                "lines": [{"category": "monthly_contribution", "amount": "2000.00"}],
+            },
+        )
+        assert res.status_code == 201, res.text
+
+    schedule = client.get(
+        "/api/payroll-deductions/schedule", params={"month": "2026-11"}, headers=auth_headers(admin)
+    )
+    assert schedule.status_code == 200, schedule.text
+    body = schedule.json()
+    assert {record["member_psn"]: record["conflicted"] for record in body["records"]} == {
+        own_member.psn: False,
+        target.psn: True,
+    }
+    # The month still totals every member, including the conflicted one --
+    # payroll reconciles against the whole schedule, not a censored copy.
+    assert body["totals"]["contribution_total"] == "4000.00"
+
+    ledger = client.get("/api/payroll-deductions", params={"month": "2026-11"}, headers=auth_headers(admin))
+    assert ledger.status_code == 200, ledger.text
+    assert sorted(record["conflicted"] for record in ledger.json()) == [False, True]
+
+    target_record = next(r for r in ledger.json() if r["member_psn"] == target.psn)
+    detail = client.get(f"/api/payroll-deductions/{target_record['id']}", headers=auth_headers(admin))
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["conflicted"] is True
+
+
+# ---------------------------------------------------------------------------
+# The action boundary is unchanged
+# ---------------------------------------------------------------------------
+
+def test_a_conflicted_officer_can_read_but_still_not_edit(client, db_session, seed_permissions):
+    own_member, admin = _admin_with_member(
+        db_session, "nok_read_boundary", "NOK-READ-BD1", "nokreadbd1@example.com",
+        "member.view", "member.update",
+    )
+    target = make_member(db_session, psn="NOK-READ-BD2", email="nokreadbd2@example.com")
+    _link_nok(db_session, own_member, target)
+
+    read = client.get(f"/api/members/{target.id}", headers=auth_headers(admin))
+    assert read.status_code == 200, read.text
+    assert read.json()["conflicted"] is True
+
+    write = client.put(
+        f"/api/members/{target.id}",
+        headers=auth_headers(admin),
+        json={"name": "Renamed By Conflicted Officer"},
+    )
+    assert write.status_code == 409, write.text
+    assert write.json()["detail"]["error"] == "member_conflict"
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +402,7 @@ def test_repayment_reads_blocked_and_excluded(client, db_session, seed_permissio
 
 def test_member_self_service_reads_are_unaffected(client, db_session, seed_permissions):
     """The conflicted admin's next of kin keeps full access to their own
-    record and financial data."""
+    record and financial data -- and their own rows are never flagged."""
     admin_member = make_member(db_session, psn="NOK-READ-SF1", email="nokreadsf1@example.com")
     make_admin_user(db_session, username="nok_read_sf_admin", member_id=admin_member.id)
     target = make_member(db_session, psn="NOK-READ-SF2", email="nokreadsf2@example.com")
@@ -316,16 +415,29 @@ def test_member_self_service_reads_are_unaffected(client, db_session, seed_permi
 
     headers = auth_headers(target_user)
     assert client.get("/api/members/me", headers=headers).status_code == 200
-    assert client.get(f"/api/members/{target.id}", headers=headers).status_code == 200
-    assert client.get("/api/loans", headers=headers).status_code == 200
+
+    own_record = client.get(f"/api/members/{target.id}", headers=headers)
+    assert own_record.status_code == 200
+    assert own_record.json()["conflicted"] is False
+
+    loans = client.get("/api/loans", headers=headers)
+    assert loans.status_code == 200
+    assert all(loan["conflicted"] is False for loan in loans.json())
+
     assert client.get(f"/api/loans/{loan.id}", headers=headers).status_code == 200
-    assert client.get(f"/api/loans/{loan.id}/repayments", headers=headers).status_code == 200
-    assert client.get("/api/loan-applications", headers=headers).status_code == 200
+    per_loan = client.get(f"/api/loans/{loan.id}/repayments", headers=headers)
+    assert per_loan.status_code == 200
+    assert all(repayment["conflicted"] is False for repayment in per_loan.json())
+    applications = client.get("/api/loan-applications", headers=headers)
+    assert applications.status_code == 200
+    assert all(app["conflicted"] is False for app in applications.json())
     assert client.get(f"/api/loan-applications/{application.id}", headers=headers).status_code == 200
-    assert client.get(f"/api/loan-repayments/{repayment.id}", headers=headers).status_code == 200
+    detail = client.get(f"/api/loan-repayments/{repayment.id}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["conflicted"] is False
 
 
-def test_read_denial_is_audit_logged(client, db_session, seed_permissions):
+def test_conflicted_view_is_audit_logged(client, db_session, seed_permissions):
     from app import models
 
     own_member, admin = _admin_with_member(
@@ -335,18 +447,42 @@ def test_read_denial_is_audit_logged(client, db_session, seed_permissions):
     _link_nok(db_session, own_member, target)
 
     res = client.get(f"/api/members/{target.id}", headers=auth_headers(admin))
-    _assert_member_conflict(res)
+    assert res.status_code == 200, res.text
 
     event = (
         db_session.query(models.AuditEvent)
         .filter(
-            models.AuditEvent.event_type == "conflict_of_interest.denied",
+            models.AuditEvent.event_type == "conflict_of_interest.viewed",
             models.AuditEvent.entity_type == "member",
             models.AuditEvent.entity_id == str(target.id),
         )
         .first()
     )
     assert event is not None
-    assert event.action == "deny"
+    assert event.action == "view"
     assert event.actor_user_id == admin.id
-    assert "Next of Kin" in (event.reason or "")
+    assert event.new_values == {"conflicted_records": 1}
+    assert "conflict-of-interest" in (event.reason or "")
+    assert "blocked" in (event.reason or "").lower()
+
+
+def test_an_unflagged_view_writes_no_conflict_audit_event(client, db_session, seed_permissions):
+    from app import models
+
+    own_member, admin = _admin_with_member(
+        db_session, "nok_read_audit_clean", "NOK-READ-AC1", "nokreadac1@example.com", "member.view"
+    )
+    unrelated = make_member(db_session, psn="NOK-READ-AC2", email="nokreadac2@example.com")
+
+    res = client.get(f"/api/members/{unrelated.id}", headers=auth_headers(admin))
+    assert res.status_code == 200, res.text
+
+    event = (
+        db_session.query(models.AuditEvent)
+        .filter(
+            models.AuditEvent.event_type == "conflict_of_interest.viewed",
+            models.AuditEvent.actor_user_id == admin.id,
+        )
+        .first()
+    )
+    assert event is None

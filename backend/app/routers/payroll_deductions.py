@@ -25,14 +25,15 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, contains_eager, joinedload
 
-from .. import audit_service, models, schemas, validation
+from .. import audit_service, deduction_expectations, models, schemas, validation
 from ..database import get_db
 from ..deps import require_module_enabled, require_permission
 from ..loan_rules import assert_no_other_active_loan_of_type
 from ..self_conflict import (
     get_conflicted_member_ids,
+    log_conflicted_view,
+    mark_conflicted_reads,
     require_no_member_conflict,
-    require_no_nok_read_conflict,
 )
 
 router = APIRouter(
@@ -54,7 +55,7 @@ _DETAIL_OPTIONS = (
 
 def _month_start(value: str) -> date:
     try:
-        return validation.deduction_month_start(value)
+        return validation.month_start_from_label(value)
     except ValueError:
         raise HTTPException(status_code=422, detail="month must be in YYYY-MM format")
 
@@ -81,11 +82,15 @@ def _fetch_locked(db: Session, deduction_id: uuid.UUID) -> Optional[models.Payro
     )
 
 
-def _base_query(db: Session, current_user: models.User, *, include_void: bool = False):
-    """Deductions for the month/schedule views, excluding members the actor
-    is conflicted with (read boundary, see self_conflict.py). Voided
-    records are hidden unless the caller explicitly asks for that status,
-    so the ledger view stays clean without losing the append-only history."""
+def _base_query(db: Session, *, include_void: bool = False):
+    """Deductions for the month/schedule views. Voided records are hidden
+    unless the caller explicitly asks for that status, so the ledger view
+    stays clean without losing the append-only history.
+
+    Every member's records are included, including those the caller is
+    conflicted against: a payroll month must reconcile against the full
+    schedule. Callers flag the conflicted rows instead (see
+    self_conflict.py's read policy)."""
     query = (
         db.query(models.PayrollDeduction)
         .join(models.PayrollDeduction.member)
@@ -93,9 +98,6 @@ def _base_query(db: Session, current_user: models.User, *, include_void: bool = 
     )
     if not include_void:
         query = query.filter(models.PayrollDeduction.status != models.PayrollDeductionStatus.VOID)
-    conflicted = get_conflicted_member_ids(db, current_user)
-    if conflicted:
-        query = query.filter(models.PayrollDeduction.member_id.notin_(conflicted))
     return query
 
 
@@ -154,8 +156,40 @@ def _load_loans_for_lines(
     return loans
 
 
+def _assert_contribution_line_matches_membership(
+    db: Session, member_id: uuid.UUID, lines: List[models.PayrollDeductionLine]
+) -> None:
+    """A contribution line IS a savings entry, and only financial members
+    owe one -- so it must never be raised for a member who has left or
+    lapsed, on pain of inventing savings they never paid in. Anything such
+    a member still owes goes through an 'other' line, which is reported
+    separately.
+
+    Checked again at submission, not only while drafting: the member's
+    status can change between those two moments (see withdraw_member)."""
+    if not any(
+        line.category == models.PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION for line in lines
+    ):
+        return
+
+    member_status = db.query(models.Member.status).filter(models.Member.id == member_id).scalar()
+    if member_status == models.MemberStatus.FINANCIAL:
+        return
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "The monthly contribution applies to financial members only. "
+            "Record an amount owed by a non-financial member as an 'other' deduction."
+        ),
+    )
+
+
 def _build_lines(
-    db: Session, member_id: uuid.UUID, inputs: List[schemas.PayrollDeductionLineInput]
+    db: Session,
+    member: models.Member,
+    expectation: deduction_expectations.MemberExpectation,
+    inputs: List[schemas.PayrollDeductionLineInput],
 ) -> List[models.PayrollDeductionLine]:
     lines = [
         models.PayrollDeductionLine(
@@ -166,7 +200,9 @@ def _build_lines(
         )
         for item in inputs
     ]
-    _load_loans_for_lines(db, member_id, lines, lock=False)
+    _assert_contribution_line_matches_membership(db, member.id, lines)
+    _load_loans_for_lines(db, member.id, lines, lock=False)
+    expectation.apply_to(lines)
     return lines
 
 
@@ -208,6 +244,66 @@ def _conflict_guard(
     )
 
 
+def _guard_overrides(
+    db: Session,
+    current_user: models.User,
+    member: models.Member,
+    expectation: deduction_expectations.MemberExpectation,
+    lines: List[models.PayrollDeductionLine],
+    *,
+    action_description: str,
+    permission_code: str,
+    request: Request,
+    entity_type: str = "member",
+    entity_id: Optional[str] = None,
+) -> None:
+    """A conflicted officer may record what the server already expects --
+    that is clerical work on an agreed figure, not a decision about a
+    relative's money. Typing a different amount is a decision, so it needs
+    an officer with no conflict (409 member_conflict otherwise).
+
+    Callers must run this BEFORE attaching anything to the session: the
+    denial is audited, and writing an audit event commits."""
+    if not any(expectation.is_override(line) for line in lines):
+        return
+    require_no_member_conflict(
+        db,
+        current_user,
+        member,
+        action_description=action_description,
+        permission_code=permission_code,
+        entity_type=entity_type,
+        entity_id=entity_id if entity_id is not None else str(member.id),
+        request=request,
+    )
+
+
+def _guard_transition(
+    db: Session,
+    current_user: models.User,
+    deduction: models.PayrollDeduction,
+    *,
+    action: str,
+    action_description: str,
+    permission_code: str,
+    request: Request,
+) -> None:
+    # Submitting a schedule of agreed figures is clerical, so a conflicted
+    # officer may do it. Every step that recognises money (confirm),
+    # excuses it (not_deducted) or reverses it (void) needs an unconflicted
+    # officer, as does submitting anything the officer overrode.
+    if action == "submit" and not deduction_expectations.has_override(deduction.lines):
+        return
+    _conflict_guard(
+        db,
+        current_user,
+        deduction,
+        action_description=action_description,
+        permission_code=permission_code,
+        request=request,
+    )
+
+
 def _audit(
     db: Session,
     actor: models.User,
@@ -238,11 +334,14 @@ def _audit(
     )
 
 
-def _transition_submit(deduction: models.PayrollDeduction, current_user: models.User) -> None:
+def _transition_submit(
+    db: Session, deduction: models.PayrollDeduction, current_user: models.User
+) -> None:
     if deduction.status != models.PayrollDeductionStatus.DRAFT:
         raise HTTPException(status_code=400, detail="Only draft deductions can be submitted")
     if not deduction.lines:
         raise HTTPException(status_code=400, detail="A deduction needs at least one line before submission")
+    _assert_contribution_line_matches_membership(db, deduction.member_id, deduction.lines)
     deduction.status = models.PayrollDeductionStatus.SUBMITTED
     deduction.submitted_by_user_id = current_user.id
     deduction.submitted_at = datetime.utcnow()
@@ -358,15 +457,14 @@ def _http_detail_text(exc: HTTPException) -> str:
 
 @router.get("/api/payroll-deductions", response_model=List[schemas.PayrollDeductionOut])
 def list_deductions(
+    request: Request,
     month: Optional[str] = Query(default=None),
     status: Optional[models.PayrollDeductionStatus] = Query(default=None),
     member_id: Optional[uuid.UUID] = Query(default=None),
     current_user: models.User = Depends(require_permission("deduction.view")),
     db: Session = Depends(get_db),
 ):
-    query = _base_query(
-        db, current_user, include_void=status == models.PayrollDeductionStatus.VOID
-    )
+    query = _base_query(db, include_void=status == models.PayrollDeductionStatus.VOID)
     if month is not None:
         query = query.filter(models.PayrollDeduction.deduction_month == _month_start(month))
     if status is not None:
@@ -374,9 +472,20 @@ def list_deductions(
     if member_id is not None:
         query = query.filter(models.PayrollDeduction.member_id == member_id)
 
-    return query.order_by(
+    records = query.order_by(
         models.PayrollDeduction.deduction_month.desc(), models.Member.name
     ).all()
+    items = [schemas.PayrollDeductionOut.model_validate(r) for r in records]
+    flagged = mark_conflicted_reads(items, get_conflicted_member_ids(db, current_user))
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=flagged,
+        action_description="browsed the deduction ledger",
+        entity_type="payroll_deduction",
+        request=request,
+    )
+    return items
 
 
 @router.get(
@@ -384,6 +493,7 @@ def list_deductions(
     response_model=schemas.PayrollDeductionScheduleOut,
 )
 def get_schedule(
+    request: Request,
     month: str = Query(..., description="Payroll month in YYYY-MM format"),
     current_user: models.User = Depends(require_permission("deduction.view")),
     db: Session = Depends(get_db),
@@ -394,7 +504,7 @@ def get_schedule(
     totals so payroll doesn't deduct them twice."""
     month_start = _month_start(month)
     records = (
-        _base_query(db, current_user)
+        _base_query(db)
         .filter(models.PayrollDeduction.deduction_month == month_start)
         .order_by(models.Member.name)
         .all()
@@ -413,9 +523,111 @@ def get_schedule(
         other_total=sum((r.other_total for r in records if r.status in countable), Decimal("0")),
         grand_total=sum((r.grand_total for r in records if r.status in countable), Decimal("0")),
     )
-    return schemas.PayrollDeductionScheduleOut(
+    response = schemas.PayrollDeductionScheduleOut(
         month=month_start, records=records, totals=totals
     )
+    flagged = mark_conflicted_reads(response.records, get_conflicted_member_ids(db, current_user))
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=flagged,
+        action_description="opened the payroll deduction schedule",
+        entity_type="payroll_deduction",
+        request=request,
+    )
+    return response
+
+
+@router.get(
+    "/api/payroll-deductions/worklist",
+    response_model=schemas.DeductionWorklistOut,
+)
+def get_worklist(
+    request: Request,
+    month: str = Query(..., description="Payroll month in YYYY-MM format"),
+    include_entered: bool = Query(
+        default=False,
+        description="Also list members whose month already has a live record",
+    ),
+    current_user: models.User = Depends(require_permission("deduction.view")),
+    db: Session = Depends(get_db),
+):
+    """Who still needs entering for a payroll month, with the amounts the
+    server expects. A member appears only when something is actually due
+    (a contribution, a missing contribution amount to resolve, or a loan
+    instalment), so the list shrinks as the officer works through it."""
+    month_start = _month_start(month)
+
+    entered = {
+        record.member_id: record
+        for record in db.query(models.PayrollDeduction)
+        .filter(
+            models.PayrollDeduction.deduction_month == month_start,
+            models.PayrollDeduction.status != models.PayrollDeductionStatus.VOID,
+        )
+        .all()
+    }
+
+    members = db.query(models.Member).order_by(models.Member.name).all()
+    items: List[schemas.DeductionWorklistItem] = []
+    due_count = 0
+    expected_total = Decimal("0")
+
+    for member in members:
+        expectation = deduction_expectations.for_member(db, member, month_start)
+        if not expectation.is_due:
+            continue
+        due_count += 1
+        record = entered.get(member.id)
+        if record is not None and not include_entered:
+            continue
+        if record is None:
+            expected_total += expectation.total
+        items.append(
+            schemas.DeductionWorklistItem(
+                member_id=member.id,
+                member_name=member.name,
+                member_psn=member.psn,
+                member_status=member.status,
+                membership_exit_date=member.membership_exit_date,
+                due_reasons=expectation.due_reasons,
+                lines=[
+                    schemas.DeductionWorklistLine(
+                        category=line.category,
+                        amount=line.amount,
+                        loan_id=line.loan_id,
+                        loan_type_name=line.loan_type_name,
+                        arrears=line.arrears,
+                        months_behind=line.months_behind,
+                    )
+                    for line in expectation.lines
+                ],
+                warnings=expectation.warnings,
+                expected_total=expectation.total,
+                deduction_id=record.id if record else None,
+                deduction_status=record.status if record else None,
+            )
+        )
+
+    response = schemas.DeductionWorklistOut(
+        month=month_start,
+        items=items,
+        due_count=due_count,
+        entered_count=len(entered),
+        expected_total=expected_total,
+    )
+    flagged = mark_conflicted_reads(
+        response.items, get_conflicted_member_ids(db, current_user)
+    )
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=flagged,
+        action_description="opened the payroll deduction worklist",
+        entity_type="payroll_deduction",
+        request=request,
+    )
+    return response
 
 
 @router.get(
@@ -432,16 +644,20 @@ def get_deduction(
     if deduction is None:
         raise HTTPException(status_code=404, detail="Deduction not found")
 
-    require_no_nok_read_conflict(
-        db,
-        current_user,
-        deduction.member_id,
-        action_description="view this payroll deduction",
-        entity_type="payroll_deduction",
-        entity_id=str(deduction.id),
-        request=request,
-    )
-    return deduction
+    conflicted = deduction.member_id in get_conflicted_member_ids(db, current_user)
+    if conflicted:
+        log_conflicted_view(
+            db,
+            current_user,
+            conflicted_count=1,
+            action_description="viewed a payroll deduction",
+            entity_type="payroll_deduction",
+            entity_id=str(deduction.id),
+            request=request,
+        )
+    item = schemas.PayrollDeductionOut.model_validate(deduction)
+    item.conflicted = conflicted
+    return item
 
 
 # ---------------------------------------------------------------------------
@@ -463,8 +679,21 @@ def create_deduction(
     if member is None:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    month_start = validation.deduction_month_start(payload.deduction_month)
+    month_start = validation.month_start_from_label(payload.deduction_month)
     _assert_no_live_record(db, member.id, month_start)
+
+    expectation = deduction_expectations.for_member(db, member, month_start)
+    lines = _build_lines(db, member, expectation, payload.lines)
+    _guard_overrides(
+        db,
+        current_user,
+        member,
+        expectation,
+        lines,
+        action_description="enter an amount other than the expected deduction",
+        permission_code="deduction.create",
+        request=request,
+    )
 
     deduction = models.PayrollDeduction(
         member_id=member.id,
@@ -474,7 +703,7 @@ def create_deduction(
         status=models.PayrollDeductionStatus.DRAFT,
         created_by_user_id=current_user.id,
     )
-    deduction.lines = _build_lines(db, member.id, payload.lines)
+    deduction.lines = lines
 
     db.add(deduction)
     db.commit()
@@ -511,20 +740,42 @@ def update_deduction(
 
     fields = payload.model_dump(exclude_unset=True)
 
+    new_month = deduction.deduction_month
     if "deduction_month" in fields:
-        month_start = validation.deduction_month_start(fields["deduction_month"])
-        _assert_no_live_record(
-            db, deduction.member_id, month_start, exclude_id=deduction.id
-        )
-        deduction.deduction_month = month_start
+        new_month = validation.month_start_from_label(fields["deduction_month"])
+        _assert_no_live_record(db, deduction.member_id, new_month, exclude_id=deduction.id)
 
+    expectation = deduction_expectations.for_member(db, deduction.member, new_month)
+    lines = (
+        _build_lines(db, deduction.member, expectation, payload.lines)
+        if "lines" in fields
+        else list(deduction.lines)
+    )
+    _guard_overrides(
+        db,
+        current_user,
+        deduction.member,
+        expectation,
+        lines,
+        action_description="enter an amount other than the expected deduction",
+        permission_code="deduction.create",
+        request=request,
+        entity_type="payroll_deduction",
+        entity_id=str(deduction.id),
+    )
+
+    deduction.deduction_month = new_month
     if "payroll_reference" in fields:
         deduction.payroll_reference = fields["payroll_reference"]
     if "note" in fields:
         deduction.note = fields["note"]
 
     if "lines" in fields:
-        deduction.lines = _build_lines(db, deduction.member_id, payload.lines)
+        deduction.lines = lines
+    else:
+        # Moving a draft to another month reprices its lines even when the
+        # amounts themselves were not edited.
+        expectation.apply_to(deduction.lines)
 
     db.commit()
 
@@ -568,10 +819,11 @@ def _run_bulk(
             if deduction is None:
                 raise HTTPException(status_code=404, detail="Deduction not found")
 
-            _conflict_guard(
+            _guard_transition(
                 db,
                 current_user,
                 deduction,
+                action=action,
                 action_description=action_description,
                 permission_code=permission_code,
                 request=request,
@@ -579,7 +831,7 @@ def _run_bulk(
             previous_status = deduction.status
 
             if action == "submit":
-                _transition_submit(deduction, current_user)
+                _transition_submit(db, deduction, current_user)
                 event_type, audit_action = "payroll_deduction.submitted", "submit"
             elif action == "confirm":
                 _transition_confirm(db, deduction, current_user)
@@ -602,7 +854,13 @@ def _run_bulk(
                 )
             )
         except HTTPException as exc:
-            savepoint.rollback()
+            # A conflict denial audits itself, and writing an audit event
+            # commits -- which closes this savepoint. Nothing of this
+            # record's was pending at that point (the guard runs before any
+            # mutation), so there is only something to roll back when the
+            # refusal came from a later check.
+            if savepoint.is_active:
+                savepoint.rollback()
             results.append(
                 schemas.PayrollDeductionBulkResult(
                     id=deduction_id, ok=False, detail=_http_detail_text(exc)
@@ -736,10 +994,11 @@ def _transition_response(
     if deduction is None:
         raise HTTPException(status_code=404, detail="Deduction not found")
 
-    _conflict_guard(
+    _guard_transition(
         db,
         current_user,
         deduction,
+        action=action,
         action_description=action_description,
         permission_code=permission_code,
         request=request,
@@ -747,7 +1006,7 @@ def _transition_response(
     previous_status = deduction.status
 
     if action == "submit":
-        _transition_submit(deduction, current_user)
+        _transition_submit(db, deduction, current_user)
         event_type, audit_action = "payroll_deduction.submitted", "submit"
     elif action == "return_to_draft":
         _transition_return_to_draft(deduction, reason)

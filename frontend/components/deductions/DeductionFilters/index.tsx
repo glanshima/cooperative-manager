@@ -1,4 +1,6 @@
-import { STATUS_LABELS, formatMoney, monthLabel } from "../labels";
+import { monthLabel } from "@/lib/month";
+
+import { STATUS_LABELS, formatMoney } from "../labels";
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
 
 const STATUS_OPTIONS = Object.entries(STATUS_LABELS) as [string, string][];

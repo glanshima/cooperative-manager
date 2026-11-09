@@ -1,4 +1,5 @@
 import Table from "@/components/ui/Table";
+import { ConflictMarker } from "@/components/ui/ConflictMarker";
 import type { PayrollDeduction } from "@/lib/api";
 
 import type { DeductionActionKind, DeductionsPageModel } from "../hooks/useDeductionsPage";
@@ -29,6 +30,10 @@ function RowActions({
   onAction: (action: DeductionActionKind, ids: string[]) => void;
   onEdit: (deduction: PayrollDeduction) => void;
 }) {
+  // The record is in the ledger and in the month's totals; this officer
+  // simply isn't the one who may move it along.
+  if (deduction.conflicted) return <ConflictMarker />;
+
   const id = [deduction.id];
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -78,7 +83,9 @@ export default function DeductionsTable({
   busy: boolean;
   onEdit: (deduction: PayrollDeduction) => void;
 }) {
-  const ids = table.items.map((deduction) => deduction.id);
+  // Bulk actions are writes, so conflicted rows aren't offered for
+  // selection at all -- they'd only come back as per-record 409s.
+  const ids = table.items.filter((deduction) => !deduction.conflicted).map((deduction) => deduction.id);
   const allSelected = ids.length > 0 && ids.every((id) => table.selected.includes(id));
 
   if (!table.items.length) {
@@ -114,6 +121,7 @@ export default function DeductionsTable({
                 type="checkbox"
                 aria-label={`Select ${deduction.member_psn ?? deduction.member_id}`}
                 checked={table.selected.includes(deduction.id)}
+                disabled={deduction.conflicted}
                 onChange={() => table.toggleSelected(deduction.id)}
               />
             </td>

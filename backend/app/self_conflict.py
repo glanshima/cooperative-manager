@@ -42,13 +42,18 @@ relationship. find_eligible_approvers() likewise excludes candidates
 who are themselves Next of Kin of the target, so the "who else can do
 this" hint never points at another conflicted officer.
 
-READ ACCESS (2026-11): the same boundary applies to administrative
-*reads*. require_no_nok_read_conflict() blocks direct reads of a
-conflicted member's records, and get_conflicted_member_ids() lets list
-endpoints exclude those members (and their loans/applications/
-repayments) from results and counts. Reading one's own record is not
-blocked -- there is no conflict in seeing one's own data.
+READ ACCESS (2026-11): reading is NOT restricted. Separation of duties is
+about who may CHANGE a record, not who may see it, so an officer with a
+conflict still gets the conflicted member's rows in every list, detail and
+total -- hiding them broke counts and pushed officers toward workarounds.
+Instead get_conflicted_member_ids() feeds mark_conflicted_reads(), which
+labels those rows `conflicted=True` so the frontend can present them
+read-only, and log_conflicted_view() records the view as an audit event.
+The hard boundary is unchanged: require_no_member_conflict() still returns
+409 on every write, so acting on such a record always needs another
+eligible officer.
 """
+import logging
 import uuid
 from typing import Iterable, Optional, Union
 
@@ -57,6 +62,8 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from . import audit_service, member_relationships, models
+
+logger = logging.getLogger("mact.self_conflict")
 
 MemberLike = Union[
     None,
@@ -150,14 +157,14 @@ def get_conflicted_member_ids(
     db: Session, current_user: models.User
 ) -> set[uuid.UUID]:
     """
-    Member ids the actor must not read administratively: the other side
-    of every active, conflict-flagged MemberRelationship involving the
-    actor's linked member, in EITHER direction. Empty for an unlinked
-    user.
+    Member ids the actor is conflicted against: the other side of every
+    active, conflict-flagged MemberRelationship involving the actor's
+    linked member, in EITHER direction. Empty for an unlinked user.
 
-    List endpoints use this to exclude conflicted members from their
-    results (and from `total`), so the read boundary can't be walked
-    around through pagination or search.
+    These ids are FLAGGED, never hidden -- list endpoints keep the rows
+    and their contribution to `total`, and mark each item the actor
+    cannot act on. The actor's own member id is never in this set: there
+    is no conflict in viewing one's own record.
     """
     if current_user.member_id is None:
         return set()
@@ -354,60 +361,73 @@ def require_no_member_conflict(
     )
 
 
-def require_no_nok_read_conflict(
+def mark_conflicted_reads(
+    items: list,
+    conflicted_member_ids: set,
+    *,
+    member_id_attr: str = "member_id",
+) -> int:
+    """
+    Set `.conflicted` on every response item that belongs to a member the
+    caller is conflicted against, and return how many were flagged.
+
+    Items are already-built Pydantic response models (they must be built
+    before the audit event is written, since logging commits the
+    transaction). Pass `member_id_attr="id"` for member rows, where the
+    item IS the member.
+    """
+    flagged = 0
+    for item in items:
+        member_id = getattr(item, member_id_attr)
+        item.conflicted = member_id in conflicted_member_ids
+        if item.conflicted:
+            flagged += 1
+    return flagged
+
+
+def log_conflicted_view(
     db: Session,
     current_user: models.User,
-    target_member_id: Optional[uuid.UUID],
     *,
+    conflicted_count: int,
     action_description: str,
-    entity_type: Optional[str] = None,
+    entity_type: str,
     entity_id: Optional[str] = None,
     request: Optional[Request] = None,
 ) -> None:
     """
-    Read-side counterpart to require_no_member_conflict(): raise HTTP 409
-    when the target member is linked to the actor's member by an active,
-    conflict-flagged MemberRelationship in either direction.
+    Record that an officer viewed records they cannot act on.
 
-    Deliberately narrower than the mutation guard: reading one's OWN
-    member record is not a conflict (there is nothing to conceal from
-    oneself), so identical member ids are allowed. No
-    `eligible_approvers` list is returned -- a read has no approval path;
-    another officer must review or serve the record.
+    The view itself is allowed -- that is the whole point of the read
+    policy -- but it leaves a trail showing the record was seen under a
+    conflict. No-ops when nothing conflicted was returned.
+
+    Unlike the mutation endpoints' audit writes, a failure here is
+    swallowed after being logged loudly: a read that succeeded must not
+    turn into a 500 because the audit table was unavailable.
     """
-    if current_user.member_id is None or target_member_id is None:
+    if conflicted_count <= 0 or current_user.member_id is None:
         return
-    if target_member_id == current_user.member_id:
-        return
-    if not member_relationships.has_member_conflict(
-        db, current_user.member_id, target_member_id
-    ):
-        return
-
-    if entity_type is not None:
+    try:
         audit_service.log_event(
             db,
             actor=current_user,
-            event_type="conflict_of_interest.denied",
-            action="deny",
+            event_type="conflict_of_interest.viewed",
+            action="view",
             entity_type=entity_type,
             entity_id=entity_id,
             reason=(
-                "Blocked: attempted to "
-                f"{action_description} on a member record linked to the actor's "
-                "member by an active conflict-of-interest relationship (Next of Kin)."
+                f"Viewed {conflicted_count} record(s) ({action_description}) belonging to a "
+                "member linked to the actor's member by an active conflict-of-interest "
+                "relationship. Read permitted; actions on these records remain blocked."
             ),
+            new_values={"conflicted_records": conflicted_count},
             request=request,
         )
-
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "error": "member_conflict",
-            "message": (
-                f"You cannot {action_description} because this record belongs to a "
-                "member linked to you by an active conflict-of-interest relationship "
-                "(Next of Kin). Another eligible officer must handle it."
-            ),
-        },
-    )
+    except audit_service.AuditWriteFailed:
+        logger.warning(
+            "conflicted-view audit event missing for user_id=%r entity_type=%r entity_id=%r",
+            current_user.id,
+            entity_type,
+            entity_id,
+        )

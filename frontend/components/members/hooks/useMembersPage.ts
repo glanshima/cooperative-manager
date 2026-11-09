@@ -13,7 +13,14 @@ import {
   deleteMember,
   createMemberLogin,
   updateMemberLoginStatus,
+  withdrawMember,
 } from "@/lib/api";
+import {
+  ContributionChangeRequest,
+  listContributionChangeRequests,
+  approveContributionChangeRequest,
+  rejectContributionChangeRequest,
+} from "@/lib/api/contributions";
 
 import type { NokMemberOption } from "../types";
 import { describeError } from "../utils";
@@ -60,6 +67,11 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
 
   const [form, setForm] = useState<MemberInput>(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // True while editing a member whose contribution is already on file: the
+  // form then omits monthly_contribution_amount, because the backend refuses
+  // a direct edit (409) or clear (422) -- later changes go through the
+  // contribution change request flow instead.
+  const [editingContributionLocked, setEditingContributionLocked] = useState(false);
 
   // `nokIsMember === null` is the "not yet answered" state -- used only
   // while adding a NEW member, so the required Yes/No question can't be
@@ -77,6 +89,12 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
   // already-loaded table render "Unable to load members."
   const [listError, setListError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const [contribRequestsLoading, setContribRequestsLoading] = useState(false);
+  const [contribRequests, setContribRequests] = useState<ContributionChangeRequest[]>([]);
+  // The review panel only renders once the officer queue loads successfully.
+  // An officer without savings.view gets a 403 and simply doesn't see it.
+  const [contribAvailable, setContribAvailable] = useState(false);
 
   // Request-race guard: if two requests are ever in flight, only the
   // response to the MOST RECENTLY issued request is applied to the UI.
@@ -131,6 +149,11 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     }
   }, [authLoading]);
 
+  useEffect(() => {
+    if (!authLoading) refreshContributionRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading]);
+
   function goToPage(newSkip: number) {
     if (newSkip < 0 || newSkip >= total) return;
     refresh({ skip: newSkip });
@@ -176,7 +199,11 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
       status: m.status,
       loan_restricted: m.loan_restricted,
       restriction_reason: m.restriction_reason || "",
+      monthly_contribution_amount: m.monthly_contribution_amount
+        ? parseFloat(m.monthly_contribution_amount)
+        : undefined,
     });
+    setEditingContributionLocked(m.monthly_contribution_amount != null);
     setNokIsMember(m.next_of_kin_is_member ?? null);
     setNokSelectedMember(m.next_of_kin_member ?? null);
     setNokQuery("");
@@ -185,6 +212,7 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
 
   function resetForm() {
     setEditingId(null);
+    setEditingContributionLocked(false);
     setForm(EMPTY_FORM);
     setNokIsMember(null);
     setNokSelectedMember(null);
@@ -255,6 +283,14 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
         : {}),
     };
 
+    // Contribution is bootstrap-only through this form. Once it is on file
+    // (editingContributionLocked) the backend refuses a direct edit (409),
+    // and a blank value must never go over the wire as null (422). Only send
+    // a real number being recorded for a member who has none yet.
+    if (editingContributionLocked || typeof payload.monthly_contribution_amount !== "number") {
+      delete payload.monthly_contribution_amount;
+    }
+
     try {
       if (editingId) {
         await updateMember(editingId, payload);
@@ -324,6 +360,35 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     }
   }
 
+  // Recording an exit is not the same as flipping status to
+  // non_financial in the edit form: only this endpoint sets the exit
+  // date, which is what tells a withdrawn member apart from one who
+  // simply fell behind. The backend stops short of moving money, so the
+  // savings offset still has to be posted on the repayment flow.
+  async function handleWithdraw(member: Member) {
+    const reason = prompt(
+      `Record that ${member.name} (PSN ${member.psn}) has left the cooperative.\n\n` +
+        "Why have they exited? This is kept on their record and in the audit trail."
+    );
+    if (!reason || !reason.trim()) return;
+    setError(null);
+    setSuccess(null);
+    try {
+      const result = await withdrawMember(member.id, reason.trim());
+      const outstanding = Number(result.active_loan_outstanding);
+      setSuccess(
+        outstanding > 0
+          ? `${member.name} exited. Savings ${result.savings_balance} against ${result.active_loan_count} ` +
+              `outstanding loan(s) totalling ${result.active_loan_outstanding} -- ` +
+              `${result.payroll_recovery_still_due} still to recover from payroll.`
+          : `${member.name} exited. Savings balance ${result.savings_balance}, no loans outstanding.`
+      );
+      await refresh();
+    } catch (e: any) {
+      setError(describeError(e));
+    }
+  }
+
   function changeSearch(value: string) {
     setSearch(value);
     if (value === "") {
@@ -337,6 +402,46 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
   function clearSearch() {
     setSearch("");
     refresh({ search: "", skip: 0 });
+  }
+
+  async function refreshContributionRequests() {
+    setContribRequestsLoading(true);
+    try {
+      const data = await listContributionChangeRequests();
+      setContribRequests(data);
+      setContribAvailable(true);
+    } catch {
+      // Non-fatal: an officer without savings.view (or a network blip) just
+      // doesn't get the review panel. Action errors below are still surfaced.
+      setContribAvailable(false);
+    } finally {
+      setContribRequestsLoading(false);
+    }
+  }
+
+  async function approveContribution(id: string, reason: string) {
+    setError(null);
+    setSuccess(null);
+    try {
+      await approveContributionChangeRequest(id, { reason: reason.trim() || undefined });
+      setSuccess("Contribution change approved. The new amount applies from next month.");
+      await refreshContributionRequests();
+      await refresh();
+    } catch (e: any) {
+      setError(describeError(e));
+    }
+  }
+
+  async function rejectContribution(id: string, reason: string) {
+    setError(null);
+    setSuccess(null);
+    try {
+      await rejectContributionChangeRequest(id, { reason: reason.trim() });
+      setSuccess("Contribution change rejected.");
+      await refreshContributionRequests();
+    } catch (e: any) {
+      setError(describeError(e));
+    }
   }
 
   return {
@@ -363,6 +468,7 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     form: {
       values: form,
       editingId,
+      contributionLocked: editingContributionLocked,
       setField,
       submit: handleSubmit,
       reset: resetForm,
@@ -392,6 +498,15 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
       onCreateLogin: handleCreateLogin,
       onDeactivateLogin: handleDeactivateLogin,
       onReactivateLogin: handleReactivateLogin,
+      onWithdraw: handleWithdraw,
+    },
+    contributions: {
+      requests: contribRequests,
+      loading: contribRequestsLoading,
+      available: contribAvailable,
+      refresh: refreshContributionRequests,
+      approve: approveContribution,
+      reject: rejectContribution,
     },
   };
 }

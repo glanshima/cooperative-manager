@@ -1,4 +1,6 @@
 import ReceiptPreview from "@/components/ui/ReceiptPreview";
+import { ConflictNotice } from "@/components/ui/ConflictMarker";
+import { monthLabel } from "@/lib/month";
 import type { LoanRepaymentsPageModel } from "../hooks/useLoanRepaymentsPage";
 
 export default function RepaymentReviewPanel({
@@ -8,6 +10,8 @@ export default function RepaymentReviewPanel({
 }) {
   const repayment = review.repayment;
   if (!repayment) return null;
+
+  const readOnly = Boolean(repayment.conflicted);
 
   return (
     <section
@@ -19,6 +23,16 @@ export default function RepaymentReviewPanel({
     >
       <h2>Reviewing repayment of {repayment.amount_claimed}</h2>
       <p>Payment reference: {repayment.payment_reference}</p>
+      <p>
+        Month paid:{" "}
+        {repayment.payment_month ? (
+          monthLabel(repayment.payment_month)
+        ) : (
+          <span style={{ color: "#b45309" }}>
+            not recorded — confirm with the member which payroll month this covers
+          </span>
+        )}
+      </p>
 
       <div style={{ margin: "12px 0" }}>
         <ReceiptPreview
@@ -27,7 +41,9 @@ export default function RepaymentReviewPanel({
         />
       </div>
 
-      {repayment.status === "awaiting_verification" && (
+      {readOnly && <ConflictNotice entity="repayment" />}
+
+      {!readOnly && repayment.status === "awaiting_verification" && (
         <div style={{ display: "grid", gap: 8 }}>
           <input
             placeholder="Rejection reason (if rejecting)"

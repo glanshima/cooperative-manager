@@ -5,5 +5,6 @@ export * from "./loans";
 export * from "./applications";
 export * from "./repayments";
 export * from "./deductions";
+export * from "./contributions";
 export * from "./settings";
 export * from "./admin";
