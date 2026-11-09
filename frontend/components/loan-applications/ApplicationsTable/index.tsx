@@ -1,4 +1,5 @@
 import Table from "@/components/ui/Table";
+import { ConflictMarker } from "@/components/ui/ConflictMarker";
 import type { LoanApplicationsPageModel } from "../hooks/useLoanApplicationsPage";
 
 export default function ApplicationsTable({
@@ -32,11 +33,15 @@ export default function ApplicationsTable({
             <td>
               {a.was_restricted_at_submission && (
                 <span style={{ color: "#b45309", fontWeight: 600 }}>⚠ restricted</span>
-              )}
+              )}{" "}
+              {a.conflicted && <ConflictMarker />}
             </td>
             <td>
+              {/* Review is a read, so a conflicted officer may still open it --
+                  the panel disables the actions. Disbursing is a write, so the
+                  button doesn't appear for them at all. */}
               <button onClick={() => table.onReview(a.id)}>Review</button>{" "}
-              {a.status === "approved" && !a.resulting_loan_id && (
+              {!a.conflicted && a.status === "approved" && !a.resulting_loan_id && (
                 <button onClick={() => table.onDisburse(a.id)}>Disburse</button>
               )}
             </td>

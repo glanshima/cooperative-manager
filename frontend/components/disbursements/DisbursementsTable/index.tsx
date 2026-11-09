@@ -1,4 +1,5 @@
 import Table from "@/components/ui/Table";
+import { ConflictMarker } from "@/components/ui/ConflictMarker";
 import type { DisbursementsPageModel } from "../hooks/useDisbursementsPage";
 
 export default function DisbursementsTable({
@@ -39,7 +40,7 @@ export default function DisbursementsTable({
                 : `${a.alternate_bank_name} / ${a.alternate_account_name}`}
             </td>
             <td>
-              <button onClick={() => table.onDisburse(a)}>Disburse</button>
+              {a.conflicted ? <ConflictMarker /> : <button onClick={() => table.onDisburse(a)}>Disburse</button>}
             </td>
           </tr>
         ))}

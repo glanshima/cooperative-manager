@@ -59,4 +59,24 @@ describe("ApplicationsTable", () => {
     await user.click(screen.getByRole("button", { name: "Disburse" }));
     expect(onDisburse).toHaveBeenCalledWith("app-3");
   });
+
+  it("keeps a conflicted application visible but takes away the write action", () => {
+    const onDisburse = vi.fn();
+    render(
+      <ApplicationsTable
+        table={{
+          items: [approved, { ...approved, id: "app-5", conflicted: true }],
+          onReview: vi.fn(),
+          onDisburse,
+        }}
+      />
+    );
+
+    expect(screen.getByText("⚠ conflict")).toBeInTheDocument();
+    // Review is a read, so this officer may still open it; disbursing is
+    // a write, so only the unconflicted row offers it.
+    expect(screen.getAllByRole("button", { name: "Review" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Disburse" })).toHaveLength(1);
+    expect(onDisburse).not.toHaveBeenCalled();
+  });
 });

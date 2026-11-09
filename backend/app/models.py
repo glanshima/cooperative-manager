@@ -74,6 +74,27 @@ class Member(Base):
     # STATUS in the spreadsheet: 1 = financial member, else non-financial
     status = Column(Enum(MemberStatus), nullable=False, default=MemberStatus.FINANCIAL)
 
+    # Membership exit (POST /api/members/{id}/withdraw). Non-null means the
+    # member formally left the cooperative on that date. This is what
+    # distinguishes a withdrawn member whose loan is still being recovered
+    # through payroll from one who merely fell behind on contributions
+    # (status flipped to non_financial, exit date still NULL) -- the
+    # deduction queue labels the two differently.
+    membership_exit_date = Column(Date, nullable=True)
+    membership_exit_reason = Column(String, nullable=True)
+
+    # The agreed monthly contribution payroll deducts (minimum 5000 --
+    # validation.MINIMUM_MONTHLY_CONTRIBUTION). NULL means "not on file
+    # yet", which is where every member imported from the spreadsheet
+    # starts: an officer bootstraps it once, and every later change goes
+    # through a ContributionChangeRequest so the deducted amount is never
+    # edited silently.
+    monthly_contribution_amount = Column(Numeric(14, 2), nullable=True)
+    # First payroll month the stored amount applies to. Approval is never
+    # retroactive -- confirmed deduction lines keep what was actually
+    # deducted, so a later change cannot rewrite savings history.
+    contribution_effective_from = Column(Date, nullable=True)
+
     # Admin-set manual flag (not a computed salary ratio -- see models.py
     # note near LoanApplication) marking a member as too loan-burdened to
     # take on further loans right now. restriction_reason is free text for
@@ -1114,6 +1135,14 @@ class LoanRepayment(Base):
     loan_id = Column(UUID(as_uuid=True), ForeignKey("loans.id", ondelete="CASCADE"), nullable=False)
     member_id = Column(UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
 
+    # The month the member actually paid, normalized to its first day.
+    # verified_at is when an officer checked the proof, which can be a
+    # different month entirely -- payroll prefill nets installments off
+    # against THIS column so a member who paid by bank isn't deducted the
+    # same installment again. Legacy rows are NULL (unknown month) and are
+    # surfaced as a warning rather than guessed at.
+    payment_month = Column(Date, nullable=True)
+
     amount_claimed = Column(Numeric(14, 2), nullable=False)
     payment_reference = Column(String, nullable=False)
     receipt_image_base64 = Column(Text, nullable=False)
@@ -1132,6 +1161,90 @@ class LoanRepayment(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     loan = relationship("Loan", back_populates="repayments")
+
+
+# ---------------------------------------------------------------------------
+# Monthly contribution amounts (the member's savings instalment)
+# ---------------------------------------------------------------------------
+
+class ContributionChangeRequestStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ContributionChangeRequest(Base):
+    """A member's application to increase or decrease their monthly
+    contribution.
+
+    Member.monthly_contribution_amount is what payroll actually deducts;
+    this table is how that number changes. current_amount is a snapshot
+    taken when the request was made, so the review screen and the audit
+    trail still show what the member was moving from after approval has
+    overwritten the member's stored value.
+
+    Approval is never retroactive: effective_from is the first day of a
+    future payroll month, and confirmed deduction lines keep the amount
+    actually deducted (savings.contributions_balance reads those lines,
+    not this column), so a change cannot rewrite savings history.
+
+    One pending request per member -- the partial unique index below --
+    because two competing amounts for the same payroll month cannot both
+    be right. Decided requests stay as history.
+    """
+
+    __tablename__ = "contribution_change_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "requested_amount > 0", name="ck_contribution_change_requests_amount_positive"
+        ),
+        Index(
+            "uq_contribution_change_requests_member_pending",
+            "member_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index("ix_contribution_change_requests_member_id", "member_id"),
+        Index("ix_contribution_change_requests_status", "status"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    member_id = Column(
+        UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False
+    )
+
+    current_amount = Column(Numeric(14, 2), nullable=True)
+    requested_amount = Column(Numeric(14, 2), nullable=False)
+    reason = Column(Text, nullable=True)
+
+    status = Column(
+        Enum(
+            ContributionChangeRequestStatus,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        default=ContributionChangeRequestStatus.PENDING,
+    )
+    effective_from = Column(Date, nullable=True)
+
+    requested_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reviewed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    review_reason = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    member = relationship("Member")
+
+    @property
+    def member_name(self):
+        return self.member.name if self.member else None
+
+    @property
+    def member_psn(self):
+        return self.member.psn if self.member else None
 
 
 # ---------------------------------------------------------------------------
@@ -1291,6 +1404,14 @@ class PayrollDeductionLine(Base):
     loan_id = Column(UUID(as_uuid=True), ForeignKey("loans.id"), nullable=True)
     label = Column(String, nullable=True)
     amount = Column(Numeric(14, 2), nullable=False)
+
+    # What the server computed this line should be, from the member's
+    # stored contribution or the loan's installment net of that month's
+    # verified repayments (see deduction_expectations.py). NULL means the
+    # officer typed the amount with no expectation behind it. Always
+    # derived server-side, never accepted from the client, so amount !=
+    # expected_amount is a trustworthy signal of a deliberate override.
+    expected_amount = Column(Numeric(14, 2), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

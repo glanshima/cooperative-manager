@@ -20,6 +20,7 @@ import {
   Settings,
   CurrentUser,
 } from "@/lib/api";
+import { currentMonth } from "@/lib/month";
 
 export type LoanApplicationFormValues = {
   loan_type_id: string;
@@ -61,6 +62,7 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
   const [servicingLoanId, setServicingLoanId] = useState<string | null>(null);
   const [reapplyFromId, setReapplyFromId] = useState<string | null>(null);
   const [repayAmount, setRepayAmount] = useState(0);
+  const [repayMonth, setRepayMonth] = useState(currentMonth());
   const [repayReference, setRepayReference] = useState("");
   const [repayReceiptFile, setRepayReceiptFile] = useState<File | null>(null);
 
@@ -207,6 +209,7 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
   function handleStartRepayment(loan: Loan) {
     setServicingLoanId(loan.id);
     setRepayAmount(parseFloat(loan.monthly_installment));
+    setRepayMonth(currentMonth());
   }
 
   async function handleSubmitRepayment(e: FormEvent) {
@@ -219,11 +222,16 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
       setError("Please attach your payment receipt.");
       return;
     }
+    if (!repayMonth) {
+      setError("Choose the month this payment covers.");
+      return;
+    }
 
     try {
       const base64 = await fileToBase64(repayReceiptFile);
       await submitRepayment(servicingLoanId, {
         amount_claimed: repayAmount,
+        payment_month: repayMonth,
         payment_reference: repayReference,
         receipt_image_base64: base64,
         receipt_content_type: repayReceiptFile.type,
@@ -231,6 +239,7 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
       setSuccess("Repayment submitted for verification.");
       setServicingLoanId(null);
       setRepayAmount(0);
+      setRepayMonth(currentMonth());
       setRepayReference("");
       setRepayReceiptFile(null);
       await refresh();
@@ -289,6 +298,8 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
       servicingLoanId,
       repayAmount,
       setRepayAmount,
+      repayMonth,
+      setRepayMonth,
       repayReference,
       setRepayReference,
       repayReceiptFile,

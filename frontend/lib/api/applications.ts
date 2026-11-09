@@ -38,6 +38,8 @@ export interface LoanApplication {
   loan_type_name: string;
   created_at: string;
   updated_at: string;
+  // See Member.conflicted -- visible to a conflicted officer, read-only.
+  conflicted?: boolean;
 }
 
 export interface LoanApplicationWithReceipt extends LoanApplication {

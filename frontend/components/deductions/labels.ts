@@ -24,17 +24,3 @@ export function formatMoney(value: string | number): string {
     maximumFractionDigits: 2,
   });
 }
-
-export function monthLabel(value: string): string {
-  const [year, month] = value.split("-").map(Number);
-  if (!year || !month) return value;
-  return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-export function currentMonth(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}

@@ -55,6 +55,29 @@ export default function MemberForm({ form }: { form: MembersPageModel["form"] })
           value={form.values.email}
           onChange={(e) => form.setField("email", e.target.value)}
         />
+        <div>
+          <input
+            type="number"
+            step="0.01"
+            min="5000"
+            disabled={form.contributionLocked}
+            placeholder="Monthly contribution amount (min ₦5,000)"
+            value={form.values.monthly_contribution_amount ?? ""}
+            onChange={(e) => form.setField("monthly_contribution_amount", e.target.value ? parseFloat(e.target.value) : null)}
+            style={{ width: "100%" }}
+            title={
+              form.contributionLocked
+                ? "Already on file — changes go through a contribution change request."
+                : undefined
+            }
+          />
+          {form.contributionLocked && (
+            <p style={{ fontSize: 11, color: "#666", margin: "4px 0 0 0" }}>
+              On file. Changes go through a contribution change request.
+            </p>
+          )}
+        </div>
+
         <select
           value={form.values.status}
           onChange={(e) => form.setField("status", e.target.value as MemberStatus)}

@@ -14,6 +14,7 @@ from .models import (
     PaymentVerificationStatus,
     LoanRestrictionBehavior,
     RepaymentVerificationStatus,
+    ContributionChangeRequestStatus,
     PayrollDeductionStatus,
     PayrollDeductionLineCategory,
     AccountStatus,
@@ -39,11 +40,20 @@ class MemberBase(BaseModel):
     loan_restricted: bool = False
     restriction_reason: Optional[str] = None
 
+    # The agreed monthly contribution payroll deducts (minimum 5000). An
+    # officer records it once, while it is still unset; every later change
+    # goes through a ContributionChangeRequest so the deducted figure is
+    # never edited silently -- see routers/members.py.
+    monthly_contribution_amount: Optional[Decimal] = None
+
     _validate_psn = field_validator("psn")(validation.validate_psn)
     _validate_email = field_validator("email")(validation.validate_email_format)
     _validate_noke = field_validator("next_of_kin_email")(validation.validate_email_format)
     _validate_phone = field_validator("phone")(validation.validate_phone_format)
     _validate_nokp = field_validator("next_of_kin_phone")(validation.validate_phone_format)
+    _validate_contribution = field_validator("monthly_contribution_amount")(
+        validation.validate_contribution_amount_optional
+    )
 
 
 class MemberCreate(MemberBase):
@@ -105,6 +115,15 @@ class MemberUpdate(BaseModel):
     loan_restricted: Optional[bool] = None
     restriction_reason: Optional[str] = None
 
+    # Bootstrap only: routers/members.py rejects this once the member has
+    # an amount on file, because a change to an agreed contribution needs
+    # a second officer's approval (ContributionChangeRequest).
+    monthly_contribution_amount: Optional[Decimal] = None
+
+    _validate_contribution = field_validator("monthly_contribution_amount")(
+        validation.validate_contribution_amount_optional
+    )
+
     # Member Relationship / Next-of-Kin Controlled Remediation, Section
     # 8 (changing an existing Next-of-Kin relationship): unlike
     # MemberCreate, both fields are OPTIONAL here -- omitting
@@ -148,6 +167,23 @@ class MemberLoginStatusUpdate(BaseModel):
     reason: Optional[str] = None
 
 
+class MemberWithdrawRequest(BaseModel):
+    """Record a membership exit. `reason` is mandatory because the exit
+    note is the only explanation a later auditor gets for why a member
+    stopped being deducted contributions."""
+
+    reason: str
+    exit_date: Optional[date] = None
+
+    @field_validator("reason")
+    @classmethod
+    def _require_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A reason is required")
+        return value
+
+
 class NextOfKinMemberSummary(BaseModel):
     """Minimal, display-only projection of a linked Next-of-Kin Member --
     deliberately NOT the full MemberOut (a member editing/viewing
@@ -172,6 +208,14 @@ class MemberOut(MemberBase):
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+
+    membership_exit_date: Optional[date] = None
+    membership_exit_reason: Optional[str] = None
+
+    # Server-set: the first payroll month monthly_contribution_amount
+    # applies to. Bootstrap records it from the current month; an approved
+    # change request moves it to a future month, never backwards.
+    contribution_effective_from: Optional[date] = None
 
     # Login State Reconciliation Addendum (2026-08-29): the Members table
     # needs to know whether a login already exists for this member and,
@@ -199,6 +243,12 @@ class MemberOut(MemberBase):
     next_of_kin_is_member: Optional[bool] = None
     next_of_kin_member: Optional[NextOfKinMemberSummary] = None
 
+    # Conflict-of-interest read policy: this row belongs to a member the
+    # caller is linked to by an active conflict-flagged relationship. The
+    # read is permitted; only ACTIONS are blocked -- see
+    # self_conflict.require_no_member_conflict and the write endpoints.
+    conflicted: bool = False
+
 
 class MemberListResponse(BaseModel):
     """Members Search & Filtering Remediation: GET /api/members returns
@@ -214,6 +264,22 @@ class MemberListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class MemberWithdrawalOut(BaseModel):
+    """What a membership exit means financially, in one response: the
+    savings the member takes with them, what they still owe, and how much
+    of that has to keep coming out of payroll after the savings offset.
+
+    It reports the offset rather than posting it -- there is no savings
+    ledger to move money from, and the repayment flow is the audited
+    place money changes hands."""
+
+    member: MemberOut
+    savings_balance: Decimal
+    active_loan_count: int
+    active_loan_outstanding: Decimal
+    payroll_recovery_still_due: Decimal
 
 
 class MemberFilterOptions(BaseModel):
@@ -329,6 +395,10 @@ class LoanOut(BaseModel):
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+    # True when the caller is conflicted against this loan's member --
+    # visible, but every action on it is refused. See MemberOut.conflicted.
+    conflicted: bool = False
 
 
 class LoanOutWithDetails(LoanOut):
@@ -628,6 +698,9 @@ class LoanApplicationOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # True when the caller is conflicted against this application's member.
+    conflicted: bool = False
+
 
 class LoanApplicationOutWithDetails(LoanApplicationOut):
     member_name: str
@@ -669,10 +742,15 @@ class ReapplyRequest(BaseModel):
 
 class LoanRepaymentCreate(BaseModel):
     amount_claimed: Decimal
+    # The payroll month this payment belongs to, not the submission date: a
+    # member paying by bank transfer must not also be charged that instalment
+    # through payroll for the same month.
+    payment_month: str
     payment_reference: str
     receipt_image_base64: str
     receipt_content_type: str
 
+    _validate_month = field_validator("payment_month")(validation.validate_month)
     _validate_amount = field_validator("amount_claimed")(validation.validate_positive_amount)
     _validate_receipt_type = field_validator("receipt_content_type")(validation.validate_receipt_content_type)
     _validate_receipt_b64 = field_validator("receipt_image_base64")(validation.validate_receipt_base64)
@@ -689,6 +767,9 @@ class LoanRepaymentOut(BaseModel):
     id: uuid.UUID
     loan_id: uuid.UUID
     member_id: uuid.UUID
+    # None on records created before the month was captured; the payroll
+    # prefill surfaces those instead of guessing a month.
+    payment_month: Optional[date] = None
     amount_claimed: Decimal
     payment_reference: str
     receipt_content_type: str
@@ -698,9 +779,77 @@ class LoanRepaymentOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # True when the caller is conflicted against this repayment's member.
+    conflicted: bool = False
+
 
 class LoanRepaymentOutWithReceipt(LoanRepaymentOut):
     receipt_image_base64: str
+
+
+# ---------------------------------------------------------------------------
+# Monthly contribution changes
+# ---------------------------------------------------------------------------
+
+def _required_reason(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("A reason is required")
+    return value
+
+
+class ContributionChangeRequestCreate(BaseModel):
+    """A member's own application to change their monthly contribution.
+    There is no member_id here: the self-service endpoint always applies to
+    the caller's own record."""
+
+    requested_amount: Decimal
+    reason: str
+
+    _validate_amount = field_validator("requested_amount")(validation.validate_contribution_amount)
+    _validate_reason = field_validator("reason")(_required_reason)
+
+
+class ContributionChangeRequestOnBehalf(ContributionChangeRequestCreate):
+    """The same application raised by an officer, for a member who has no
+    login of their own to apply with."""
+
+    member_id: uuid.UUID
+
+
+class ContributionChangeReviewRequest(BaseModel):
+    # Required when rejecting, optional when approving -- the router decides.
+    reason: Optional[str] = None
+
+
+class ContributionChangeRequestOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    member_id: uuid.UUID
+    member_name: Optional[str] = None
+    member_psn: Optional[str] = None
+
+    # Snapshot of what the member was paying when they applied, so the
+    # review screen still shows the move after approval overwrites it.
+    current_amount: Optional[Decimal] = None
+    requested_amount: Decimal
+    reason: Optional[str] = None
+
+    status: ContributionChangeRequestStatus
+    effective_from: Optional[date] = None
+
+    requested_by_user_id: Optional[uuid.UUID] = None
+    reviewed_by_user_id: Optional[uuid.UUID] = None
+    reviewed_at: Optional[datetime] = None
+    review_reason: Optional[str] = None
+
+    created_at: datetime
+    updated_at: datetime
+
+    # Conflict-of-interest read policy: the request stays visible and
+    # flagged; deciding it is what stays blocked.
+    conflicted: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -757,7 +906,7 @@ class PayrollDeductionCreate(BaseModel):
     note: Optional[str] = None
     lines: List[PayrollDeductionLineInput]
 
-    _validate_month = field_validator("deduction_month")(validation.validate_deduction_month)
+    _validate_month = field_validator("deduction_month")(validation.validate_month)
     _validate_lines = field_validator("lines")(_validate_line_set)
 
 
@@ -771,7 +920,7 @@ class PayrollDeductionUpdate(BaseModel):
     note: Optional[str] = None
     lines: Optional[List[PayrollDeductionLineInput]] = None
 
-    _validate_month = field_validator("deduction_month")(validation.validate_deduction_month)
+    _validate_month = field_validator("deduction_month")(validation.validate_month)
     _validate_line_set = field_validator("lines")(_validate_line_set)
 
 
@@ -807,6 +956,9 @@ class PayrollDeductionLineOut(BaseModel):
     loan_id: Optional[uuid.UUID] = None
     label: Optional[str] = None
     amount: Decimal
+    # Server-derived expectation for this line's month; None when nothing
+    # on file predicts it. amount != expected_amount is an override.
+    expected_amount: Optional[Decimal] = None
     loan_type_name: Optional[str] = None
 
 
@@ -839,6 +991,10 @@ class PayrollDeductionOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # True when the caller is conflicted against this record's member --
+    # the schedule and ledger stay complete, the buttons go quiet.
+    conflicted: bool = False
+
     lines: List[PayrollDeductionLineOut] = Field(default_factory=list)
 
 
@@ -853,6 +1009,43 @@ class PayrollDeductionScheduleOut(BaseModel):
     month: date
     records: List[PayrollDeductionOut]
     totals: PayrollDeductionTotals
+
+
+class DeductionWorklistLine(BaseModel):
+    category: PayrollDeductionLineCategory
+    amount: Decimal
+    loan_id: Optional[uuid.UUID] = None
+    loan_type_name: Optional[str] = None
+    # Reported, never added to `amount`: only the month being entered is
+    # pre-filled, so the officer decides what to do about earlier gaps.
+    arrears: Decimal
+    months_behind: int
+
+
+class DeductionWorklistItem(BaseModel):
+    member_id: uuid.UUID
+    member_name: str
+    member_psn: str
+    member_status: MemberStatus
+    membership_exit_date: Optional[date] = None
+    due_reasons: List[str]
+    lines: List[DeductionWorklistLine]
+    warnings: List[str]
+    expected_total: Decimal
+    # Set when the month already has a live record (include_entered=true).
+    deduction_id: Optional[uuid.UUID] = None
+    deduction_status: Optional[PayrollDeductionStatus] = None
+    conflicted: bool = False
+
+
+class DeductionWorklistOut(BaseModel):
+    month: date
+    items: List[DeductionWorklistItem]
+    due_count: int
+    entered_count: int
+    # What is still outstanding: members already entered for the month are
+    # counted in entered_count, not added here.
+    expected_total: Decimal
 
 
 class PayrollDeductionBulkResult(BaseModel):

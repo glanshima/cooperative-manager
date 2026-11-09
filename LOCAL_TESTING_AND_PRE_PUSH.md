@@ -18,7 +18,7 @@ never pushed, never seeded into Neon, never deployed. Only **code** and
 | `scripts/apply_manual_migrations.py` | Applies `scripts/manual_migration_*.sql` in a fixed dependency order, in one pass, idempotently (re-runs are safe). Sandbox by default (reads `backend/.env`); a Neon **branch** requires `--allow-remote`. Never writes sample data — schema only. | repo root |
 | `scripts/seed_local_sample_data.py` | Creates the sample admin/members/logins/loan types described below. **Refuses to run** unless `DATABASE_URL` points at `127.0.0.1:55432` — this guard is deliberate; do not bypass it. Idempotent (safe to re-run). | repo root |
 | `backend/tests/` | The pytest suite. Needs a real Postgres via `DATABASE_URL`; runs per-test rollback, but still truncates/creates freely — always point it at `mact_test`, never at real data. | `backend/` |
-| `scripts/smoke_test.py` | End-to-end check over real HTTP against a running backend (health → admin login → member lookup → loan types → member login → member self → submit application → read back). Passing `--conflict-admin-user`/`--conflict-admin-pass` adds the Next-of-Kin conflict check (login as a member-linked admin, member hidden from lists, direct read/update return `409 member_conflict`, unconflicted admin still reads) for 10 steps total. **Step 7 creates a real loan-application row** in the target database. | repo root |
+| `scripts/smoke_test.py` | End-to-end check over real HTTP against a running backend (health → admin login → member lookup → loan types → member login → member self → submit application → read back). Passing `--conflict-admin-user`/`--conflict-admin-pass` adds the Next-of-Kin conflict check (login as a member-linked admin; the conflicted member stays **visible** in search/detail reads but each row carries `conflicted=true`, writes return `409 member_conflict`, and an unconflicted admin reads unflagged) for 10 steps total. **Step 7 creates a real loan-application row**, and step 10 an inert draft deduction, in the target database. | repo root |
 
 ## 2. One-time setup
 
@@ -92,7 +92,9 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py --base-url http://127.0.0
 
 Defaults already match the seeded sandbox (`localadmin` / `MCT-0001`). It
 leaves behind one pending loan application (payment reference `SMOKE-...`)
-in `mact_local` — that is sample data and stays local.
+and, with the conflict flags, one inert draft deduction for `MCT-0001`
+(its confirm is blocked, so no money is recognised) — that is sample data
+and stays local.
 
 To include the Next-of-Kin conflict check (steps 9–10), pass the seeded
 fixture admin; the primary admin must not be that linked account:
@@ -104,6 +106,50 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py --base-url http://127.0.0
 
 Without the flags the script runs the 8 core steps and prints that it
 skipped the conflict check. With them it expects **10/10**.
+
+Steps 9–10 assert the conflict-of-interest **read** policy: the linked
+officer still gets every record back — searchable, listable, readable by
+id — each flagged `conflicted=true`, while every write against that member
+still returns `409 member_conflict` and an unlinked admin reads the same
+rows unflagged. For deductions, the policy is narrower: a conflicted officer
+may enter a draft at the expected amounts (the contribution on the member
+record, the instalment fixed at disbursement) — that's clerical work. What
+stays blocked is any discretionary amount (an 'other' line, or a line that
+differs from the expectation) and any money-recognition step (confirm,
+not_deducted, void).
+
+**Gate 3 — frontend tests, types, and production build:**
+
+```bash
+cd frontend
+npx vitest run --pool=forks    # the default thread pool can OOM on Windows
+npx tsc --noEmit
+npm run build
+```
+
+Use `--pool=forks` rather than plain `npm test`: the default worker-thread
+pool intermittently dies with `FATAL ERROR: Zone Allocation failed -
+process out of memory` on this machine. All three must exit clean — Vitest
+prints the suite total, `tsc` and `next build` print nothing but errors.
+
+**Gate 4 — eyeball the flows in the browser** (`http://localhost:3000`,
+not `127.0.0.1:3000` — the backend's `ALLOWED_ORIGINS` only whitelists the
+`localhost` origin, so requests from the IP origin fail CORS preflight with
+403 and the pages silently show nothing). Minimum sweep for this branch's
+work:
+
+- Admin `localadmin`: `/members` — contribution amount in Add/Edit
+  (Edit shows it locked with the change-request note), the "Contribution
+  change requests" panel, "Record exit" on member rows; `/admin/deductions`
+  — Enter tab worklist (due queue, expected totals, auto-filled form,
+  draft + Undo), Ledger tab (Edit/Submit/Confirm/Not deducted/Void, print
+  schedule); `/admin/settings` module toggles.
+- Member `MCT-0001`: `/dashboard` — Monthly contribution card and "Request
+  change" (button becomes "Request pending" after submitting).
+- Conflicted reads: log in as `smoke_nok_admin` — `MCT-0001` stays listed
+  with a "⚠ conflict" badge, no action buttons anywhere, and the pending
+  request from that member shows the conflict notice instead of
+  Approve/Reject.
 
 ## 5. Stage 2 — verify on a throwaway Neon branch
 
@@ -137,7 +183,8 @@ production.
 4. **Smoke test the branch target.** Use accounts that exist in the branch
    (a branch off production inherited your real staff/member accounts;
    sample-data accounts do NOT exist there). The smoke test creates a real
-   loan-application row, so remote targets require the explicit `--yes`
+   loan-application row (plus an inert draft deduction when the conflict
+   flags are passed), so remote targets require the explicit `--yes`
    acknowledgement — and must be throwaway environments only, **never
    production**:
 
@@ -186,6 +233,8 @@ backend/.venv/Scripts/python.exe scripts/local_db.py reset --yes   # wipe .local
 | Seed says entities already exist | It is idempotent | Nothing to do |
 | Backend takes ~10s on first request | Cold start on Windows | Wait for `/api/health` to respond |
 | `pgserver` missing | Dev requirements not installed | `backend/.venv/Scripts/pip install -r backend/requirements-dev.txt` |
+| `vitest` dies with `Zone Allocation failed - process out of memory` | Default worker-thread pool on Windows | Run Gate 3 with `npx vitest run --pool=forks` |
+| Browser pages load but every API call fails / nothing renders | Opened via `127.0.0.1:3000`, which `ALLOWED_ORIGINS` doesn't whitelist | Use `http://localhost:3000` |
 | Want a truly clean local slate | Sample data accumulated | `local_db.py reset --yes` then re-run Section 3 steps 1–3 |
 
 `.local/` is the only place sandbox state lives — deleting it (or

@@ -54,6 +54,24 @@ def assert_no_other_active_loan_of_type(
     )
 
 
+def assert_member_may_borrow(db: Session, member: models.Member) -> None:
+    """New credit is for financial members only.
+
+    Leaving the cooperative doesn't erase an existing loan -- recovery
+    keeps running through payroll deductions -- but it does close the door
+    on fresh borrowing, so the money can actually be paid back.
+    """
+    if member.status == models.MemberStatus.FINANCIAL:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Non-financial members cannot take out new loans. "
+            "Restore financial membership before borrowing again."
+        ),
+    )
+
+
 def is_active_loan_type_conflict(error: IntegrityError) -> bool:
     """True when an IntegrityError came from the one-active-loan-per-type index."""
     diag = getattr(getattr(error, "orig", None), "diag", None)

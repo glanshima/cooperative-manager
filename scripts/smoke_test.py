@@ -20,8 +20,10 @@ This is deliberately NOT a replacement for the pytest suite in tests/:
     pre-push procedure in LOCAL_TESTING_AND_PRE_PUSH.md).
 
 WARNING: step 7 CREATES a real row -- a pending loan application -- in
-whatever database the target server points at. Against a non-localhost
-host the script refuses to run unless you pass --yes, as an explicit
+whatever database the target server points at. When the conflict check is
+enabled, step 10 also leaves an inert DRAFT deduction (an 'other' line,
+never confirmed) for the same member. Against a non-localhost host the
+script refuses to run unless you pass --yes, as an explicit
 acknowledgement that the target is a throwaway environment. Never point
 this at production.
 
@@ -29,10 +31,13 @@ The conflict check (steps 9-10) is opt-in: pass --conflict-admin-user /
 --conflict-admin-pass for an ADMIN account that is linked to a Member
 whose Next of Kin is --member-user (the local seed creates
 smoke_nok_admin for exactly this; a Neon branch gate needs an equivalent
-temporary account seeded on the branch). The check itself only reads the
-conflicted member; the one update it attempts re-sends that member's
-existing name, so a regression cannot change data. The primary
---admin-user must NOT be that linked account.
+temporary account seeded on the branch). Under the conflict-of-interest
+READ policy the conflicted officer still gets every record back --
+searched, listed and read directly -- each flagged conflicted=true; what
+must fail is the WRITE. The member update the check attempts re-sends
+that member's existing name, and the deduction confirm it attempts is
+blocked before any money is recognised, so a regression cannot change
+data. The primary --admin-user must NOT be that linked account.
 
 Usage (local sandbox -- the defaults match seed_local_sample_data.py):
     backend/.venv/Scripts/python.exe scripts/smoke_test.py \
@@ -262,24 +267,33 @@ def main():
                 )
             print("      ok (role=admin)")
 
-            begin("NOK conflict enforced: member hidden from lists, direct read/update return 409")
-            hidden = api_call(
+            begin("NOK conflict: member stays visible but flagged; writes return 409")
+            visible = api_call(
                 client, "GET", f"/api/members?search={member['psn']}",
                 token=conflict_token,
                 label="conflicted search",
             )
-            if hidden["items"] or hidden["total"] != 0:
+            if visible["total"] != 1 or not visible["items"]:
                 raise SmokeFailure(
-                    "conflicted search: expected the NOK member to be hidden while the "
-                    f"conflict is active, got total={hidden['total']}. Is the fixture "
-                    f"admin actually linked to a Member whose NOK is {args.member_user!r}?"
+                    "conflicted search: the read policy says this member must still be "
+                    f"findable, got total={visible['total']}. Is the fixture admin "
+                    f"actually linked to a Member whose NOK is {args.member_user!r}?"
                 )
+            if not visible["items"][0].get("conflicted"):
+                raise SmokeFailure(
+                    "conflicted search: row came back without conflicted=true, so the "
+                    "frontend would offer write actions it can only fail at."
+                )
+
             read_detail = api_call(
                 client, "GET", f"/api/members/{member['id']}",
-                token=conflict_token, expect=409, label="conflicted read",
+                token=conflict_token, label="conflicted read",
             )
-            if read_detail.get("detail", {}).get("error") != "member_conflict":
-                raise SmokeFailure(f"conflicted read: unexpected 409 payload {read_detail}")
+            if not read_detail.get("conflicted"):
+                raise SmokeFailure(
+                    f"conflicted read: expected conflicted=true, got {read_detail.get('conflicted')!r}"
+                )
+
             # Same-value update: if the guard ever regressed, this writes the
             # member's existing name back -- no destructive change.
             update_detail = api_call(
@@ -290,7 +304,7 @@ def main():
             if update_detail.get("detail", {}).get("error") != "member_conflict":
                 raise SmokeFailure(f"conflicted update: unexpected 409 payload {update_detail}")
 
-            # The denial must be specific to the conflicted officer, not global.
+            # The flag must be specific to the conflicted officer, not global.
             still_visible = api_call(
                 client, "GET", f"/api/members/{member['id']}",
                 token=admin_token, label="unconflicted read",
@@ -300,7 +314,52 @@ def main():
                     f"unconflicted read: PSN mismatch {still_visible['psn']!r} "
                     f"!= {member['psn']!r}"
                 )
-            print("      ok (list hidden, read/update 409 member_conflict; unconflicted admin still reads)")
+            if still_visible.get("conflicted"):
+                raise SmokeFailure(
+                    "unconflicted read: an officer with no relationship to this member "
+                    "was told they were conflicted -- actions would be wrongly disabled."
+                )
+
+            # The COI policy now allows conflicted officers to enter drafts at the
+            # expected amounts (the contribution on the member record, the instalment
+            # fixed at disbursement) — that's clerical work. What stays blocked is any
+            # discretionary amount or any money-recognition step (confirm, not_deducted,
+            # void). Verify a money-recognition write still returns 409. The conflict
+            # guard runs before status validation, so an inert draft is enough.
+            deduction_month = f"{datetime.now(timezone.utc):%Y-%m}"
+            existing = api_call(
+                client, "GET",
+                f"/api/payroll-deductions?member_id={member['id']}&month={deduction_month}",
+                token=admin_token, label="deduction lookup",
+            )
+            if existing:
+                deduction_id = existing[0]["id"]
+            else:
+                # An 'other' line is valid for any member regardless of whether a
+                # contribution amount is on file. The unconflicted admin creates the
+                # draft; the conflicted admin must not be able to confirm it, so no
+                # money is ever recognised. Re-runs reuse the row found above.
+                created = api_call(
+                    client, "POST", "/api/payroll-deductions",
+                    token=admin_token,
+                    json_body={
+                        "member_id": member["id"],
+                        "deduction_month": deduction_month,
+                        "note": "smoke test -- safe to void",
+                        "lines": [{"category": "other", "label": "Smoke test", "amount": 100}],
+                    },
+                    expect=201, label="create smoke deduction",
+                )
+                deduction_id = created["id"]
+            deduction_detail = api_call(
+                client, "POST", f"/api/payroll-deductions/{deduction_id}/confirm",
+                token=conflict_token, expect=409, label="conflicted deduction confirm",
+            )
+            if deduction_detail.get("detail", {}).get("error") != "member_conflict":
+                raise SmokeFailure(
+                    f"conflicted deduction confirm: expected member_conflict, got {deduction_detail}"
+                )
+            print("      ok (list/read visible + flagged, update 409 member_conflict, deduction confirm 409 member_conflict; unconflicted admin unflagged)")
         else:
             print(
                 "\n(skipping the Next-of-Kin conflict check: pass --conflict-admin-user "
@@ -316,6 +375,10 @@ def main():
     print(f"NOTE: a pending loan application was created on {host} "
           f"(payment_reference {payment_reference}, id {application_id}). This is "
           "expected on sandbox/branch databases; it would be real data on production.")
+    if conflict_enabled:
+        print(f"NOTE: an inert draft deduction (id {deduction_id}) was left for "
+              f"{args.member_user} in {deduction_month}; its confirm was blocked, so "
+              "no money was recognised. Safe to void on sandbox/branch databases.")
     return 0
 
 

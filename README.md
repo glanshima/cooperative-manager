@@ -81,6 +81,12 @@ npm run dev
 
 Visit http://localhost:3000/members.
 
+Tests (Vitest + React Testing Library, colocated as
+`components/**/index.test.tsx`): `npx vitest run --pool=forks` — the
+forks pool avoids an intermittent worker-thread OOM on Windows. Type
+check with `npx tsc --noEmit`. See
+[LOCAL_TESTING_AND_PRE_PUSH.md](./LOCAL_TESTING_AND_PRE_PUSH.md) Gate 3.
+
 ## 5. Deploy (Vercel)
 
 See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for the full step-by-step guide
@@ -178,6 +184,21 @@ migration, and a troubleshooting table). Short version:
     **existing custom roles are not updated automatically** — grant the
     new permissions to any existing Treasurer/Loan Officer/Auditor roles
     you rely on.
+13. **Monthly contribution amounts + change requests** — a member's
+    agreed amount lives on the member record (`monthly_contribution_amount`,
+    `contribution_effective_from`, minimum ₦5,000) and is **never edited
+    directly** once on file: members request a change from their dashboard
+    and officers file one on behalf from the Members page; an admin
+    approves or rejects (rejection requires a reason). Approved amounts
+    apply from the 1st of the following month, never retroactively. At
+    most one *pending* request per member (unique index). The deduction
+    Enter tab (`/admin/deductions`) consumes this: `GET
+    /api/payroll-deductions/worklist` returns the month's queue — who is
+    due (contribution and/or instalments), each member's expected lines
+    and totals, warnings (e.g. no amount on file), and who is already
+    entered — so entry is one click per member with amounts pre-filled;
+    overriding an expectation is what the conflict-of-interest guard
+    treats as discretionary.
 
 ### IMPORTANT — before redeploying: run the manual DB migrations, in order
 
@@ -194,7 +215,18 @@ DATABASE_URL="postgresql://...branch..." \
 
 The runner calls `create_all()` first (so genuinely new tables appear)
 and then applies every file in `ORDERED_MIGRATIONS`, ending with
-`manual_migration_2026_11_unique_active_loan_type.sql`. That file
+`manual_migration_2026_11_contribution_amounts.sql` — the
+contribution-amount feature: nullable `members.monthly_contribution_amount`
+/`contribution_effective_from`, the `contribution_change_requests` table
+(+ its status enum and "one pending request per member" unique index),
+`payroll_deduction_lines.expected_amount`, and
+`loan_repayments.payment_month`. Before it runs
+`manual_migration_2026_11_membership_exit.sql` — two nullable columns,
+`members.membership_exit_date` and `membership_exit_reason`, which record
+that a member formally left the cooperative (see the withdrawal
+endpoint). Nullable means existing rows are untouched: they simply have
+no recorded exit. Before that runs
+`manual_migration_2026_11_unique_active_loan_type.sql`, which
 pre-checks for members who already hold more than one active loan of the
 same type and aborts with the offending member/loan IDs if any are
 found — close those loans first, then re-run. It then creates the

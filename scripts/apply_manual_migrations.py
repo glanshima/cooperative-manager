@@ -67,6 +67,8 @@ ORDERED_MIGRATIONS = [
     "manual_migration_2026_09_secure_password_recovery.sql",
     "manual_migration_2026_11_payroll_deductions.sql",
     "manual_migration_2026_11_unique_active_loan_type.sql",
+    "manual_migration_2026_11_membership_exit.sql",
+    "manual_migration_2026_11_contribution_amounts.sql",
 ]
 
 # Postgres SQLSTATEs meaning "this object already exists" -- treated as

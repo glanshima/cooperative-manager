@@ -1,0 +1,156 @@
+"use client";
+
+import type { DeductionWorklistItem } from "@/lib/api";
+import { monthLabel } from "@/lib/month";
+import { ConflictMarker } from "@/components/ui/ConflictMarker";
+
+import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
+import { STATUS_LABELS, formatMoney } from "../labels";
+
+function ExpectedLines({ item }: { item: DeductionWorklistItem }) {
+  return (
+    <ul style={{ margin: "8px 0 0 0", padding: 0, listStyle: "none", fontSize: 13 }}>
+      {item.lines.map((line, index) => {
+        const arrears = Number(line.arrears);
+        return (
+          <li key={index} style={{ padding: "2px 0" }}>
+            {line.category === "monthly_contribution" && (
+              <span>Contribution ₦{formatMoney(line.amount)}</span>
+            )}
+            {line.category === "loan_repayment" && (
+              <span>
+                {line.loan_type_name ?? "Loan"} ₦{formatMoney(line.amount)}
+                {arrears > 0 && (
+                  <span style={{ color: "#b45309" }}>
+                    {" "}
+                    · arrears ₦{formatMoney(line.arrears)} / {line.months_behind} month
+                    {line.months_behind === 1 ? "" : "s"}
+                  </span>
+                )}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+export default function DeductionWorklist({
+  worklist,
+  month,
+  setMonth,
+  onAddAny,
+  busy,
+}: {
+  worklist: DeductionsPageModel["worklist"];
+  month: string;
+  setMonth: (value: string) => void;
+  onAddAny: () => void;
+  busy: boolean;
+}) {
+  const data = worklist.data;
+
+  return (
+    <section style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 12 }}>
+        <label>
+          <span style={{ display: "block", fontSize: 12, color: "#555" }}>Payroll month</span>
+          <input
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            aria-label="Payroll month"
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
+          <input
+            type="checkbox"
+            checked={worklist.includeEntered}
+            onChange={(e) => worklist.setIncludeEntered(e.target.checked)}
+          />
+          Show already entered
+        </label>
+        <button onClick={onAddAny}>Add any member</button>
+        <button onClick={worklist.refresh} disabled={worklist.loading}>
+          {worklist.loading ? "Loading…" : "Refresh"}
+        </button>
+        {data && (
+          <span style={{ marginLeft: "auto", fontSize: 14, color: "#333" }}>
+            {monthLabel(month)} — <strong>{data.due_count}</strong> due ·{" "}
+            <strong>{data.entered_count}</strong> entered · ₦{formatMoney(data.expected_total)} still to
+            enter
+          </span>
+        )}
+      </div>
+
+      {worklist.lastEntered && (
+        <p
+          role="status"
+          style={{ background: "#d4edda", border: "1px solid #c3e6cb", borderRadius: 4, padding: "8px 12px" }}
+        >
+          Entered {worklist.lastEntered.memberName}.{" "}
+          <button onClick={worklist.undo} disabled={busy}>
+            Undo
+          </button>
+        </p>
+      )}
+
+      {worklist.error && <p style={{ color: "crimson" }}>Error loading queue: {worklist.error}</p>}
+      {worklist.loading && !data && <p>Loading queue…</p>}
+
+      {data && data.items.length === 0 && !worklist.loading && (
+        <p style={{ color: "#666" }}>
+          Nothing due for {monthLabel(month)}. Every member who owes a contribution or loan instalment
+          has been entered.
+        </p>
+      )}
+
+      {data?.items.map((item) => {
+        const entered = Boolean(item.deduction_id);
+        return (
+          <div
+            key={item.member_id}
+            style={{ border: "1px solid #eee", borderRadius: 4, padding: 12, marginBottom: 10 }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+              <strong>
+                {item.member_name} · PSN {item.member_psn}
+                {item.conflicted && <> <ConflictMarker /></>}
+              </strong>
+              <span style={{ fontSize: 13, color: "#555" }}>
+                {item.member_status === "financial" ? "Financial" : "Non-financial"}
+                {item.membership_exit_date && ` · exited ${item.membership_exit_date}`}
+              </span>
+            </div>
+
+            <ExpectedLines item={item} />
+
+            {item.warnings.length > 0 && (
+              <ul style={{ margin: "6px 0 0 0", padding: "0 0 0 18px", fontSize: 12, color: "#b45309" }}>
+                {item.warnings.map((warning, index) => (
+                  <li key={index}>{warning}</li>
+                ))}
+              </ul>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+              <span style={{ fontSize: 14 }}>
+                Expected <strong>₦{formatMoney(item.expected_total)}</strong>
+              </span>
+              {entered ? (
+                <span style={{ fontSize: 13, color: "#555" }}>
+                  Entered · {item.deduction_status ? STATUS_LABELS[item.deduction_status] : ""}
+                </span>
+              ) : (
+                <button disabled={busy} onClick={() => worklist.openItem(item)}>
+                  {item.conflicted ? "Enter expected amounts" : "Enter"}
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}

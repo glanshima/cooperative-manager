@@ -4,9 +4,10 @@ import MemberFilters from "../MemberFilters";
 import MemberForm from "../MemberForm";
 import MemberSearch from "../MemberSearch";
 import MemberTable from "../MemberTable";
+import ContributionReviewPanel from "../ContributionReviewPanel";
 
 export default function MembersView({ model }: { model: MembersPageModel }) {
-  const { table, filters } = model;
+  const { table, filters, contributions } = model;
 
   return (
     <main style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
@@ -45,6 +46,15 @@ export default function MembersView({ model }: { model: MembersPageModel }) {
       </section>
 
       <MemberForm form={model.form} />
+      {contributions.available && (
+        <ContributionReviewPanel
+          requests={contributions.requests}
+          loading={contributions.loading}
+          onRefresh={contributions.refresh}
+          onApprove={contributions.approve}
+          onReject={contributions.reject}
+        />
+      )}
       <MemberTable {...table} />
     </main>
   );

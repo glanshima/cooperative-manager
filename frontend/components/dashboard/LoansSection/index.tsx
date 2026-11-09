@@ -59,6 +59,20 @@ export default function LoansSection({ loans }: { loans: DashboardPageModel["loa
               value={loans.repayAmount || ""}
               onChange={(e) => loans.setRepayAmount(parseFloat(e.target.value) || 0)}
             />
+            <label>
+              Month this payment covers:
+              <input
+                required
+                type="month"
+                aria-label="Month paid"
+                value={loans.repayMonth}
+                onChange={(e) => loans.setRepayMonth(e.target.value)}
+              />
+            </label>
+            <span style={{ fontSize: 13, color: "#666" }}>
+              Payroll skips the instalment for a month you have already paid
+              directly, so pick the month the transfer was for.
+            </span>
             <input
               required
               placeholder="Bank transfer reference number"

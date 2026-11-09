@@ -3,7 +3,9 @@ import { useEffect } from "react";
 import Table from "@/components/ui/Table";
 import type { PayrollDeductionSchedule } from "@/lib/api";
 
-import { formatMoney, monthLabel } from "../labels";
+import { monthLabel } from "@/lib/month";
+
+import { formatMoney } from "../labels";
 
 const COOPERATIVE_NAME = "MACT Cooperative";
 const cellStyle = { padding: "6px 8px", borderBottom: "1px solid #ccc", verticalAlign: "top" };

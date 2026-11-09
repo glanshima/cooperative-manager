@@ -1,13 +1,20 @@
 import { useState } from "react";
 
 import type { PayrollDeductionLineInput } from "@/lib/api";
+import { currentMonth } from "@/lib/month";
 
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
-import { currentMonth, formatMoney } from "../labels";
+import { formatMoney } from "../labels";
 
 interface OtherLine {
   label: string;
   amount: string;
+}
+
+interface LoanRow {
+  key: string;
+  loanId: string;
+  label: string;
 }
 
 export default function DeductionForm({
@@ -18,10 +25,11 @@ export default function DeductionForm({
   busy: boolean;
 }) {
   const editing = form.editing;
+  const prefill = form.prefill;
 
-  const [memberId, setMemberId] = useState(editing?.member_id ?? "");
+  const [memberId, setMemberId] = useState(editing?.member_id ?? prefill?.memberId ?? "");
   const [month, setMonth] = useState(
-    editing ? editing.deduction_month.slice(0, 7) : currentMonth()
+    editing ? editing.deduction_month.slice(0, 7) : prefill?.month ?? currentMonth()
   );
   const [reference, setReference] = useState(editing?.payroll_reference ?? "");
   const [note, setNote] = useState(editing?.note ?? "");
@@ -29,7 +37,9 @@ export default function DeductionForm({
   const existingContribution = editing?.lines.find(
     (line) => line.category === "monthly_contribution"
   );
-  const [contribution, setContribution] = useState(existingContribution?.amount ?? "");
+  const [contribution, setContribution] = useState(
+    existingContribution?.amount ?? prefill?.contribution ?? ""
+  );
 
   const [otherLines, setOtherLines] = useState<OtherLine[]>(
     (editing?.lines ?? [])
@@ -38,13 +48,19 @@ export default function DeductionForm({
   );
 
   const [loanAmounts, setLoanAmounts] = useState<Record<string, string>>(() => {
-    const existing: Record<string, string> = {};
-    for (const line of editing?.lines ?? []) {
-      if (line.category === "loan_repayment" && line.loan_id) {
-        existing[line.loan_id] = line.amount;
+    if (editing) {
+      const existing: Record<string, string> = {};
+      for (const line of editing.lines) {
+        if (line.category === "loan_repayment" && line.loan_id) {
+          existing[line.loan_id] = line.amount;
+        }
       }
+      return existing;
     }
-    return existing;
+    if (prefill) {
+      return Object.fromEntries(prefill.loanLines.map((line) => [line.loanId, line.amount]));
+    }
+    return {};
   });
 
   const [localError, setLocalError] = useState<string | null>(null);
@@ -56,6 +72,38 @@ export default function DeductionForm({
   const staleLoanLines = (editing?.lines ?? []).filter(
     (line) => line.category === "loan_repayment" && line.loan_id && !activeLoanIds.has(line.loan_id)
   );
+
+  // Queue entry renders the server's expected loan lines directly, so the
+  // amounts are right even when the Loans module is disabled and the local
+  // loan lookup is empty. Blank/edit entry uses the member's active loans.
+  const loanRows: LoanRow[] =
+    prefill && !editing
+      ? prefill.loanLines.map((line) => ({ key: line.loanId, loanId: line.loanId, label: line.label }))
+      : [
+          ...activeLoans.map((loan) => ({
+            key: loan.id,
+            loanId: loan.id,
+            label: `${loan.loan_type_name} — balance ${formatMoney(loan.balance)}`,
+          })),
+          ...staleLoanLines.map((line) => ({
+            key: line.id,
+            loanId: line.loan_id!,
+            label: `${line.loan_type_name ?? "Loan"} — no longer active`,
+          })),
+        ];
+
+  // Only financial members owe the monthly contribution. The queue carries
+  // the authoritative status; blank entry falls back to the member lookup.
+  const selectedMember = form.members.find((member) => member.id === memberId);
+  const isFinancial = prefill
+    ? prefill.memberStatus === "financial"
+    : selectedMember
+      ? selectedMember.status === "financial"
+      : true;
+  // Narrowed conflict policy: a linked officer MAY record the expected
+  // amounts, but cannot type a different amount or add a discretionary
+  // 'other' line, and cannot confirm. Lock the inputs to the expectation.
+  const isConflicted = Boolean(prefill?.conflicted || selectedMember?.conflicted);
 
   function changeMember(value: string) {
     setMemberId(value);
@@ -71,20 +119,14 @@ export default function DeductionForm({
   function submit() {
     const lines: PayrollDeductionLineInput[] = [];
 
-    if (Number(contribution) > 0) {
+    if (isFinancial && Number(contribution) > 0) {
       lines.push({ category: "monthly_contribution", amount: Number(contribution) });
     }
 
-    for (const loan of activeLoans) {
-      const amount = Number(loanAmounts[loan.id] || 0);
+    for (const row of loanRows) {
+      const amount = Number(loanAmounts[row.loanId] || 0);
       if (amount > 0) {
-        lines.push({ category: "loan_repayment", loan_id: loan.id, amount });
-      }
-    }
-    for (const line of staleLoanLines) {
-      const amount = Number(loanAmounts[line.loan_id!] || 0);
-      if (amount > 0) {
-        lines.push({ category: "loan_repayment", loan_id: line.loan_id!, amount });
+        lines.push({ category: "loan_repayment", loan_id: row.loanId, amount });
       }
     }
 
@@ -104,7 +146,11 @@ export default function DeductionForm({
       return;
     }
     if (!lines.length) {
-      setLocalError("Add at least one deduction line.");
+      setLocalError(
+        isConflicted
+          ? "No expected amounts to record. Use the Enter queue, which fills in what this member owes."
+          : "Add at least one deduction line."
+      );
       return;
     }
 
@@ -130,6 +176,12 @@ export default function DeductionForm({
     }
   }
 
+  const heading = editing
+    ? "Edit draft deduction"
+    : prefill
+      ? `Enter deduction — ${prefill.memberName}`
+      : "New deduction";
+
   return (
     <section
       style={{
@@ -140,7 +192,7 @@ export default function DeductionForm({
         background: "#fafafa",
       }}
     >
-      <h2 style={{ marginTop: 0 }}>{editing ? "Edit draft deduction" : "New deduction"}</h2>
+      <h2 style={{ marginTop: 0 }}>{heading}</h2>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
         <label>
@@ -148,7 +200,7 @@ export default function DeductionForm({
           <select
             aria-label="Member"
             value={memberId}
-            disabled={Boolean(editing)}
+            disabled={Boolean(editing) || Boolean(prefill)}
             onChange={(e) => changeMember(e.target.value)}
           >
             <option value="">Select a member...</option>
@@ -157,10 +209,19 @@ export default function DeductionForm({
                 {member.psn} — {member.name}
               </option>
             ))}
+            {prefill && !form.members.some((member) => member.id === prefill.memberId) && (
+              <option value={prefill.memberId}>{prefill.memberName}</option>
+            )}
           </select>
-          {!form.members.length && (
+          {!form.members.length && !prefill && (
             <span style={{ display: "block", fontSize: 12, color: "#a33", marginTop: 4 }}>
               No members available — the Members module may be disabled.
+            </span>
+          )}
+          {isConflicted && (
+            <span style={{ display: "block", fontSize: 12, color: "#b45309", marginTop: 4 }}>
+              ⚠ Conflict of interest — you can record the expected amounts, but another officer must
+              approve any different amount and confirm the deduction.
             </span>
           )}
         </label>
@@ -170,6 +231,7 @@ export default function DeductionForm({
             type="month"
             aria-label="Deduction month"
             value={month}
+            disabled={Boolean(prefill) && !editing}
             onChange={(e) => setMonth(e.target.value)}
           />
         </label>
@@ -195,92 +257,95 @@ export default function DeductionForm({
         />
       </label>
 
-      <h3 style={{ marginBottom: 4 }}>Monthly contribution</h3>
-      <input
-        aria-label="Monthly contribution"
-        type="number"
-        min="0"
-        step="0.01"
-        value={contribution}
-        onChange={(e) => setContribution(e.target.value)}
-        placeholder="0.00"
-      />
+      {isFinancial ? (
+        <>
+          <h3 style={{ marginBottom: 4 }}>Monthly contribution</h3>
+          <input
+            aria-label="Monthly contribution"
+            type="number"
+            min="0"
+            step="0.01"
+            value={contribution}
+            disabled={isConflicted}
+            onChange={(e) => setContribution(e.target.value)}
+            placeholder="0.00"
+          />
+        </>
+      ) : (
+        <p style={{ color: "#666", fontSize: 14 }}>
+          Non-financial member — no monthly contribution. Anything they still
+          owes goes under other deductions below.
+        </p>
+      )}
 
       <h3 style={{ marginBottom: 4, marginTop: 16 }}>Loan repayments</h3>
       {!memberId && <p style={{ color: "#666" }}>Select a member to see their active loans.</p>}
-      {memberId && !activeLoans.length && !staleLoanLines.length && (
-        <p style={{ color: "#666" }}>This member has no active loans.</p>
+      {memberId && !loanRows.length && (
+        <p style={{ color: "#666" }}>This member has no loan instalment due.</p>
       )}
-      {activeLoans.map((loan) => (
-        <div key={loan.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-          <span style={{ minWidth: 260 }}>
-            {loan.loan_type_name} — balance {formatMoney(loan.balance)}
-          </span>
+      {loanRows.map((row) => (
+        <div key={row.key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+          <span style={{ minWidth: 260 }}>{row.label}</span>
           <input
-            aria-label={`Repayment for ${loan.loan_type_name}`}
+            aria-label={`Repayment for ${row.label}`}
             type="number"
             min="0"
             step="0.01"
-            value={loanAmounts[loan.id] ?? ""}
+            value={loanAmounts[row.loanId] ?? ""}
+            disabled={isConflicted}
             onChange={(e) =>
-              setLoanAmounts((current) => ({ ...current, [loan.id]: e.target.value }))
-            }
-            placeholder="0.00"
-          />
-        </div>
-      ))}
-      {staleLoanLines.map((line) => (
-        <div key={line.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-          <span style={{ minWidth: 260, color: "#a33" }}>
-            {line.loan_type_name ?? "Loan"} — no longer active
-          </span>
-          <input
-            aria-label={`Repayment for ${line.loan_type_name ?? "inactive loan"}`}
-            type="number"
-            min="0"
-            step="0.01"
-            value={loanAmounts[line.loan_id!] ?? ""}
-            onChange={(e) =>
-              setLoanAmounts((current) => ({ ...current, [line.loan_id!]: e.target.value }))
+              setLoanAmounts((current) => ({ ...current, [row.loanId]: e.target.value }))
             }
             placeholder="0.00"
           />
         </div>
       ))}
 
-      <h3 style={{ marginBottom: 4, marginTop: 16 }}>Other deductions</h3>
-      {otherLines.map((line, index) => (
-        <div key={index} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-          <input
-            aria-label={`Other deduction ${index + 1} label`}
-            value={line.label}
-            onChange={(e) => updateOtherLine(index, { label: e.target.value })}
-            placeholder="Label, e.g. Welfare"
-          />
-          <input
-            aria-label={`Other deduction ${index + 1} amount`}
-            type="number"
-            min="0"
-            step="0.01"
-            value={line.amount}
-            onChange={(e) => updateOtherLine(index, { amount: e.target.value })}
-            placeholder="0.00"
-          />
-          <button
-            onClick={() => setOtherLines((current) => current.filter((_, i) => i !== index))}
-          >
-            Remove
+      {!isConflicted && (
+        <>
+          <h3 style={{ marginBottom: 4, marginTop: 16 }}>Other deductions</h3>
+          {otherLines.map((line, index) => (
+            <div key={index} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+              <input
+                aria-label={`Other deduction ${index + 1} label`}
+                value={line.label}
+                onChange={(e) => updateOtherLine(index, { label: e.target.value })}
+                placeholder="Label, e.g. Welfare"
+              />
+              <input
+                aria-label={`Other deduction ${index + 1} amount`}
+                type="number"
+                min="0"
+                step="0.01"
+                value={line.amount}
+                onChange={(e) => updateOtherLine(index, { amount: e.target.value })}
+                placeholder="0.00"
+              />
+              <button
+                onClick={() => setOtherLines((current) => current.filter((_, i) => i !== index))}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button onClick={() => setOtherLines((current) => [...current, { label: "", amount: "" }])}>
+            Add other deduction
           </button>
-        </div>
-      ))}
-      <button onClick={() => setOtherLines((current) => [...current, { label: "", amount: "" }])}>
-        Add other deduction
-      </button>
+        </>
+      )}
 
       {localError && <p style={{ color: "crimson", fontWeight: 600 }}>{localError}</p>}
 
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button disabled={busy} onClick={submit}>
+        <button
+          disabled={busy}
+          onClick={submit}
+          title={
+            isConflicted
+              ? "You can record the expected amounts; another officer must approve any different amount and confirm the deduction"
+              : undefined
+          }
+        >
           {editing ? "Save draft" : "Create draft"}
         </button>
         <button disabled={busy} onClick={form.close}>

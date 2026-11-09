@@ -1,11 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas, audit_service
+from .. import models, schemas, audit_service, validation
 from ..database import get_db
 from ..deps import (
     get_current_user,
@@ -19,8 +19,9 @@ from ..email_utils import send_email, repayment_verified_email_html, repayment_r
 from ..idempotency import IdempotencyContext, idempotency_check
 from ..self_conflict import (
     get_conflicted_member_ids,
+    log_conflicted_view,
+    mark_conflicted_reads,
     require_no_member_conflict,
-    require_no_nok_read_conflict,
 )
 
 router = APIRouter(
@@ -63,9 +64,19 @@ def submit_repayment(
     if payload.amount_claimed <= 0:
         raise HTTPException(status_code=400, detail="amount_claimed must be greater than zero")
 
+    payment_month = validation.month_start_from_label(payload.payment_month)
+    if payment_month > date.today().replace(day=1):
+        raise HTTPException(status_code=400, detail="payment_month cannot be in the future")
+    if payment_month < loan.disbursement_date:
+        raise HTTPException(
+            status_code=400,
+            detail="payment_month cannot be before the loan was disbursed",
+        )
+
     repayment = models.LoanRepayment(
         loan_id=loan_id,
         member_id=current_user.member_id,
+        payment_month=payment_month,
         amount_claimed=payload.amount_claimed,
         payment_reference=payload.payment_reference,
         receipt_image_base64=payload.receipt_image_base64,
@@ -92,22 +103,24 @@ def list_repayments_for_loan(
         raise HTTPException(status_code=404, detail="Loan not found")
     _assert_can_view_loan(loan, current_user, db)
 
-    require_no_nok_read_conflict(
-        db,
-        current_user,
-        loan.member_id,
-        action_description="view this loan's repayments",
-        entity_type="loan",
-        entity_id=str(loan.id),
-        request=request,
-    )
-
-    return (
+    repayments = (
         db.query(models.LoanRepayment)
         .filter(models.LoanRepayment.loan_id == loan_id)
         .order_by(models.LoanRepayment.created_at.desc())
         .all()
     )
+    items = [schemas.LoanRepaymentOut.model_validate(r) for r in repayments]
+    flagged = mark_conflicted_reads(items, get_conflicted_member_ids(db, current_user))
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=flagged,
+        action_description="viewed a loan's repayments",
+        entity_type="loan_repayment",
+        entity_id=str(loan_id),
+        request=request,
+    )
+    return items
 
 
 @router.get(
@@ -115,18 +128,27 @@ def list_repayments_for_loan(
     response_model=List[schemas.LoanRepaymentOut],
 )
 def list_all_repayments(
+    request: Request,
     status: Optional[models.RepaymentVerificationStatus] = None,
     current_user: models.User = Depends(require_permission("repayment.view")),
     db: Session = Depends(get_db),
 ):
     """Admin-only: cross-loan queue of repayments awaiting verification."""
     query = db.query(models.LoanRepayment)
-    conflicted_member_ids = get_conflicted_member_ids(db, current_user)
-    if conflicted_member_ids:
-        query = query.filter(models.LoanRepayment.member_id.notin_(conflicted_member_ids))
     if status:
         query = query.filter(models.LoanRepayment.status == status)
-    return query.order_by(models.LoanRepayment.created_at.desc()).all()
+    repayments = query.order_by(models.LoanRepayment.created_at.desc()).all()
+    items = [schemas.LoanRepaymentOut.model_validate(r) for r in repayments]
+    flagged = mark_conflicted_reads(items, get_conflicted_member_ids(db, current_user))
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=flagged,
+        action_description="browsed the repayment queue",
+        entity_type="loan_repayment",
+        request=request,
+    )
+    return items
 
 
 @router.get(
@@ -148,16 +170,20 @@ def get_repayment(
     elif not user_has_permission(db, current_user, "repayment.view"):
         raise HTTPException(status_code=403, detail="You do not have the 'repayment.view' permission")
 
-    require_no_nok_read_conflict(
-        db,
-        current_user,
-        repayment.member_id,
-        action_description="view this loan repayment",
-        entity_type="loan_repayment",
-        entity_id=str(repayment.id),
-        request=request,
-    )
-    return repayment
+    conflicted = repayment.member_id in get_conflicted_member_ids(db, current_user)
+    if conflicted:
+        log_conflicted_view(
+            db,
+            current_user,
+            conflicted_count=1,
+            action_description="viewed a loan repayment",
+            entity_type="loan_repayment",
+            entity_id=str(repayment.id),
+            request=request,
+        )
+    item = schemas.LoanRepaymentOutWithReceipt.model_validate(repayment)
+    item.conflicted = conflicted
+    return item
 
 
 @router.post(

@@ -1,14 +1,16 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  fileToBase64,
   getMyMemberRecord,
   getSettings,
   listLoanApplications,
   listLoans,
   listLoanTypes,
+  submitRepayment,
 } from "@/lib/api";
-import type { CurrentUser, Settings } from "@/lib/api";
+import type { CurrentUser, Loan, Settings } from "@/lib/api";
 
 import { useDashboardPage } from "./useDashboardPage";
 
@@ -31,6 +33,8 @@ const getSettingsMock = vi.mocked(getSettings);
 const listLoanApplicationsMock = vi.mocked(listLoanApplications);
 const listLoansMock = vi.mocked(listLoans);
 const listLoanTypesMock = vi.mocked(listLoanTypes);
+const fileToBase64Mock = vi.mocked(fileToBase64);
+const submitRepaymentMock = vi.mocked(submitRepayment);
 
 const user: CurrentUser = {
   id: "user-1",
@@ -94,5 +98,72 @@ describe("useDashboardPage module gating", () => {
     expect(result.current.loans.items).toEqual([]);
     expect(result.current.apply.applyableTypes).toEqual([]);
     expect(result.current.feedback.error).toBeNull();
+  });
+});
+
+describe("useDashboardPage repayments", () => {
+  const loan = {
+    id: "loan-1",
+    monthly_installment: "12000.00",
+    status: "active",
+  } as Loan;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getMyMemberRecordMock.mockResolvedValue({ id: "member-1" } as any);
+    getSettingsMock.mockResolvedValue(settings);
+    listLoanApplicationsMock.mockResolvedValue([]);
+    listLoansMock.mockResolvedValue([loan]);
+    listLoanTypesMock.mockResolvedValue([]);
+    fileToBase64Mock.mockResolvedValue("cmVjZWlwdA==");
+    submitRepaymentMock.mockResolvedValue({} as any);
+  });
+
+  it("sends the month the member says they paid, not today's month", async () => {
+    const { result } = renderHook(() => useDashboardPage(false, user, logout));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.loans.startRepayment(loan));
+    expect(result.current.loans.repayAmount).toBe(12000);
+
+    act(() => {
+      result.current.loans.setRepayMonth("2026-09");
+      result.current.loans.setRepayReference("TRF-9");
+      result.current.loans.setRepayReceiptFile(
+        new File(["receipt"], "receipt.png", { type: "image/png" })
+      );
+    });
+
+    await act(async () => {
+      await result.current.loans.submitRepayment({ preventDefault: () => {} } as any);
+    });
+
+    expect(submitRepaymentMock).toHaveBeenCalledWith("loan-1", {
+      amount_claimed: 12000,
+      payment_month: "2026-09",
+      payment_reference: "TRF-9",
+      receipt_image_base64: "cmVjZWlwdA==",
+      receipt_content_type: "image/png",
+    });
+  });
+
+  it("refuses to submit without a payment month", async () => {
+    const { result } = renderHook(() => useDashboardPage(false, user, logout));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.loans.startRepayment(loan));
+    act(() => {
+      result.current.loans.setRepayMonth("");
+      result.current.loans.setRepayReceiptFile(
+        new File(["receipt"], "receipt.png", { type: "image/png" })
+      );
+    });
+
+    await act(async () => {
+      await result.current.loans.submitRepayment({ preventDefault: () => {} } as any);
+    });
+
+    expect(submitRepaymentMock).not.toHaveBeenCalled();
+    expect(result.current.feedback.error).toBe("Choose the month this payment covers.");
   });
 });

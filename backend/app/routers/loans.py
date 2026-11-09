@@ -15,11 +15,16 @@ from ..deps import (
     user_has_permission,
 )
 from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
-from ..loan_rules import assert_no_other_active_loan_of_type, commit_or_conflict
+from ..loan_rules import (
+    assert_member_may_borrow,
+    assert_no_other_active_loan_of_type,
+    commit_or_conflict,
+)
 from ..self_conflict import (
     get_conflicted_member_ids,
+    log_conflicted_view,
+    mark_conflicted_reads,
     require_no_member_conflict,
-    require_no_nok_read_conflict,
 )
 
 router = APIRouter(
@@ -59,6 +64,7 @@ def _to_detail_schema(loan: models.Loan) -> schemas.LoanOutWithDetails:
 
 @router.get("", response_model=List[schemas.LoanOutWithDetails])
 def list_loans(
+    request: Request,
     member_id: Optional[uuid.UUID] = None,
     status: Optional[models.LoanStatus] = None,
     skip: int = 0,
@@ -71,14 +77,15 @@ def list_loans(
     )
 
     # Members can only see their own loans; admins need loan.view.
+    conflicted_member_ids = set()
     if current_user.role == models.UserRole.MEMBER:
         query = query.filter(models.Loan.member_id == current_user.member_id)
     else:
         if not user_has_permission(db, current_user, "loan.view"):
             raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
+        # Conflicted loans are shown, not hidden -- flagged so the UI can
+        # present them read-only (see self_conflict.py's read policy).
         conflicted_member_ids = get_conflicted_member_ids(db, current_user)
-        if conflicted_member_ids:
-            query = query.filter(models.Loan.member_id.notin_(conflicted_member_ids))
         if member_id:
             query = query.filter(models.Loan.member_id == member_id)
 
@@ -88,7 +95,17 @@ def list_loans(
     loans = (
         query.order_by(models.Loan.disbursement_date.desc()).offset(skip).limit(limit).all()
     )
-    return [_to_detail_schema(loan) for loan in loans]
+    items = [_to_detail_schema(loan) for loan in loans]
+    flagged = mark_conflicted_reads(items, conflicted_member_ids)
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=flagged,
+        action_description="browsed the loan list",
+        entity_type="loan",
+        request=request,
+    )
+    return items
 
 
 @router.get("/{loan_id}", response_model=schemas.LoanOutWithDetails)
@@ -112,16 +129,20 @@ def get_loan(
     elif not user_has_permission(db, current_user, "loan.view"):
         raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
 
-    require_no_nok_read_conflict(
-        db,
-        current_user,
-        loan.member_id,
-        action_description="view this loan",
-        entity_type="loan",
-        entity_id=str(loan.id),
-        request=request,
-    )
-    return _to_detail_schema(loan)
+    conflicted = loan.member_id in get_conflicted_member_ids(db, current_user)
+    if conflicted:
+        log_conflicted_view(
+            db,
+            current_user,
+            conflicted_count=1,
+            action_description="viewed a loan",
+            entity_type="loan",
+            entity_id=str(loan.id),
+            request=request,
+        )
+    item = _to_detail_schema(loan)
+    item.conflicted = conflicted
+    return item
 
 
 @router.post("", response_model=schemas.LoanOutWithDetails, status_code=201)
@@ -154,6 +175,7 @@ def create_loan(
     if not loan_type.is_active:
         raise HTTPException(status_code=400, detail="This loan type is no longer active")
 
+    assert_member_may_borrow(db, member)
     assert_no_other_active_loan_of_type(db, payload.member_id, payload.loan_type_id)
 
     # --- Core disbursement calculation, mirrors the spreadsheet's IFS formulas ---
@@ -324,15 +346,17 @@ def get_member_loan_balance(
     elif not user_has_permission(db, current_user, "loan.view"):
         raise HTTPException(status_code=403, detail="You do not have the 'loan.view' permission")
 
-    require_no_nok_read_conflict(
-        db,
-        current_user,
-        member_id,
-        action_description="view this member's loan balance",
-        entity_type="member",
-        entity_id=str(member_id),
-        request=request,
-    )
+    conflicted = member_id in get_conflicted_member_ids(db, current_user)
+    if conflicted:
+        log_conflicted_view(
+            db,
+            current_user,
+            conflicted_count=1,
+            action_description="viewed a member's loan balance",
+            entity_type="member",
+            entity_id=str(member_id),
+            request=request,
+        )
 
     loans = (
         db.query(models.Loan)
@@ -344,4 +368,5 @@ def get_member_loan_balance(
         "member_id": str(member_id),
         "active_loan_count": len(loans),
         "total_outstanding_balance": total_outstanding,
+        "conflicted": conflicted,
     }

@@ -5,6 +5,7 @@ import {
   confirmDeduction,
   createDeduction,
   getDeductionSchedule,
+  getDeductionWorklist,
   listDeductions,
   listLoans,
   listMembers,
@@ -15,8 +16,11 @@ import {
   voidDeduction,
 } from "@/lib/api";
 import type {
+  DeductionWorklistItem,
+  DeductionWorklistOut,
   Loan,
   Member,
+  MemberStatus,
   PayrollDeduction,
   PayrollDeductionBulkAction,
   PayrollDeductionCreateInput,
@@ -25,9 +29,23 @@ import type {
   PayrollDeductionUpdateInput,
 } from "@/lib/api";
 
-import { currentMonth } from "../labels";
+import { currentMonth } from "@/lib/month";
 
 export type DeductionActionKind = "submit" | "return_to_draft" | "confirm" | "not_deducted" | "void";
+
+export type DeductionsTab = "enter" | "ledger";
+
+// What the Enter queue hands the form when an officer clicks a due member:
+// the server's expected amounts, so the form opens filled rather than blank.
+export interface DeductionPrefill {
+  memberId: string;
+  memberName: string;
+  memberStatus: MemberStatus;
+  month: string; // YYYY-MM
+  contribution: string;
+  loanLines: { loanId: string; label: string; amount: string }[];
+  conflicted: boolean;
+}
 
 const ACTION_LABELS: Record<DeductionActionKind, string> = {
   submit: "Submit",
@@ -69,6 +87,14 @@ export function useDeductionsPage(logout: () => void) {
 
   const [printMode, setPrintMode] = useState(false);
 
+  const [tab, setTab] = useState<DeductionsTab>("enter");
+  const [worklist, setWorklist] = useState<DeductionWorklistOut | null>(null);
+  const [worklistLoading, setWorklistLoading] = useState(true);
+  const [worklistError, setWorklistError] = useState<string | null>(null);
+  const [includeEntered, setIncludeEntered] = useState(false);
+  const [prefill, setPrefill] = useState<DeductionPrefill | null>(null);
+  const [lastEntered, setLastEntered] = useState<{ id: string; memberName: string } | null>(null);
+
   async function refresh() {
     setLoading(true);
     setError(null);
@@ -106,6 +132,23 @@ export function useDeductionsPage(logout: () => void) {
     };
   }, []);
 
+  async function refreshWorklist() {
+    setWorklistLoading(true);
+    setWorklistError(null);
+    try {
+      setWorklist(await getDeductionWorklist(month, includeEntered));
+    } catch (e: any) {
+      setWorklistError(e.message);
+    } finally {
+      setWorklistLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshWorklist();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, includeEntered]);
+
   async function runAction(action: DeductionActionKind, ids: string[], reasonText?: string) {
     if (!ids.length) return;
     setBusy(true);
@@ -142,6 +185,7 @@ export function useDeductionsPage(logout: () => void) {
       setPending(null);
       setSelected([]);
       await refresh();
+      await refreshWorklist();
       // Refresh clears the error banner, so surface partial failures only
       // after it has finished.
       setMessage(successText);
@@ -194,6 +238,7 @@ export function useDeductionsPage(logout: () => void) {
 
   function openCreate() {
     setEditing(null);
+    setPrefill(null);
     setFormOpen(true);
     setError(null);
     setMessage(null);
@@ -201,6 +246,33 @@ export function useDeductionsPage(logout: () => void) {
 
   function openEdit(deduction: PayrollDeduction) {
     setEditing(deduction);
+    setPrefill(null);
+    setFormOpen(true);
+    setError(null);
+    setMessage(null);
+  }
+
+  // Clicking a due member in the Enter queue opens the form filled with the
+  // server's expected amounts instead of a blank entry the officer has to
+  // compute by hand.
+  function openFromWorklist(item: DeductionWorklistItem) {
+    const contributionLine = item.lines.find((line) => line.category === "monthly_contribution");
+    setEditing(null);
+    setPrefill({
+      memberId: item.member_id,
+      memberName: item.member_name,
+      memberStatus: item.member_status,
+      month,
+      contribution: contributionLine?.amount ?? "",
+      loanLines: item.lines
+        .filter((line) => line.category === "loan_repayment" && line.loan_id)
+        .map((line) => ({
+          loanId: line.loan_id!,
+          label: line.loan_type_name ?? "Loan",
+          amount: line.amount,
+        })),
+      conflicted: item.conflicted,
+    });
     setFormOpen(true);
     setError(null);
     setMessage(null);
@@ -208,6 +280,7 @@ export function useDeductionsPage(logout: () => void) {
 
   function closeForm() {
     setEditing(null);
+    setPrefill(null);
     setFormOpen(false);
   }
 
@@ -218,12 +291,42 @@ export function useDeductionsPage(logout: () => void) {
     setBusy(true);
     setError(null);
     setMessage(null);
+    // Capture before closeForm clears it: a draft created from the queue
+    // offers a one-click undo (void) while it is still unconfirmed.
+    const enteredFromQueue = prefill;
     try {
-      if (id) await updateDeduction(id, input as PayrollDeductionUpdateInput);
-      else await createDeduction(input as PayrollDeductionCreateInput);
-      closeForm();
-      setMessage(id ? "Draft updated." : "Draft created.");
+      if (id) {
+        await updateDeduction(id, input as PayrollDeductionUpdateInput);
+        closeForm();
+        setMessage("Draft updated.");
+      } else {
+        const created = await createDeduction(input as PayrollDeductionCreateInput);
+        closeForm();
+        setMessage("Draft created.");
+        if (enteredFromQueue) {
+          setLastEntered({ id: created.id, memberName: enteredFromQueue.memberName });
+        }
+      }
       await refresh();
+      await refreshWorklist();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoLastEntered() {
+    if (!lastEntered) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await voidDeduction(lastEntered.id, "Entered in error");
+      setMessage(`Entry for ${lastEntered.memberName} undone.`);
+      setLastEntered(null);
+      await refresh();
+      await refreshWorklist();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -239,6 +342,19 @@ export function useDeductionsPage(logout: () => void) {
     auth: { logout },
     feedback: { error, message, busy },
     filters: { month, setMonth, status, setStatus },
+    tab,
+    setTab,
+    worklist: {
+      data: worklist,
+      loading: worklistLoading,
+      error: worklistError,
+      includeEntered,
+      setIncludeEntered,
+      refresh: refreshWorklist,
+      openItem: openFromWorklist,
+      lastEntered,
+      undo: undoLastEntered,
+    },
     table: {
       items,
       loading,
@@ -260,6 +376,7 @@ export function useDeductionsPage(logout: () => void) {
     form: {
       open: formOpen,
       editing,
+      prefill,
       members,
       loansForMember,
       openCreate,

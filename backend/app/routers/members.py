@@ -1,4 +1,6 @@
 import uuid
+from datetime import date
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -6,12 +8,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from .. import models, schemas, audit_service, member_relationships
+from .. import contributions as contribution_rules
+from .. import savings as savings_service
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission, require_module_enabled
 from ..self_conflict import (
     get_conflicted_member_ids,
+    log_conflicted_view,
+    mark_conflicted_reads,
     require_no_member_conflict,
-    require_no_nok_read_conflict,
 )
 
 router = APIRouter(prefix="/api/members", tags=["members"])
@@ -163,6 +168,7 @@ def get_member_filter_options(
 
 @router.get("", response_model=schemas.MemberListResponse, dependencies=_member_management_gate)
 def list_members(
+    request: Request,
     search: Optional[str] = Query(None, description="Matches member number/PSN, name, or phone"),
     bank_name: Optional[str] = Query(None, description="Exact match against Member.bank_name"),
     department: Optional[str] = Query(None, description="Exact match against Member.department"),
@@ -209,13 +215,11 @@ def list_members(
     """
     query = db.query(models.Member)
 
-    # Read-side conflict boundary: a member linked to the caller's linked
-    # member by an active conflict-of-interest relationship is excluded
-    # from both the page and `total`, so it can't be reached via search
-    # or pagination either.
+    # Read-side conflict policy: a member linked to the caller's linked
+    # member by an active conflict-of-interest relationship stays in every
+    # list and every total. The rows are flagged so the UI can show them
+    # read-only; the write endpoints are what refuse the action.
     conflicted_member_ids = get_conflicted_member_ids(db, current_user)
-    if conflicted_member_ids:
-        query = query.filter(models.Member.id.notin_(conflicted_member_ids))
 
     normalized_search = search.strip() if search else ""
     if normalized_search:
@@ -241,7 +245,17 @@ def list_members(
     members = query.order_by(models.Member.name).offset(skip).limit(limit).all()
     _attach_login_state(db, members)
     _attach_next_of_kin(db, members)
-    return schemas.MemberListResponse(items=members, total=total, skip=skip, limit=limit)
+    response = schemas.MemberListResponse(items=members, total=total, skip=skip, limit=limit)
+    flagged = mark_conflicted_reads(response.items, conflicted_member_ids, member_id_attr="id")
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=flagged,
+        action_description="browsed the member list",
+        entity_type="member",
+        request=request,
+    )
+    return response
 
 
 @router.get("/{member_id}", response_model=schemas.MemberOut, dependencies=_member_management_gate)
@@ -265,22 +279,25 @@ def get_member(
         if not user_has_permission(db, current_user, "member.view"):
             raise HTTPException(status_code=403, detail="You do not have the 'member.view' permission")
 
-    require_no_nok_read_conflict(
-        db,
-        current_user,
-        member_id,
-        action_description="view this member's record",
-        entity_type="member",
-        entity_id=str(member_id),
-        request=request,
-    )
+    conflicted = member_id in get_conflicted_member_ids(db, current_user)
 
     member = db.query(models.Member).filter(models.Member.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     _attach_login_state(db, [member])
     _attach_next_of_kin(db, [member])
-    return member
+    response = schemas.MemberOut.model_validate(member)
+    response.conflicted = conflicted
+    log_conflicted_view(
+        db,
+        current_user,
+        conflicted_count=1 if conflicted else 0,
+        action_description="viewed a member record",
+        entity_type="member",
+        entity_id=str(member_id),
+        request=request,
+    )
+    return response
 
 
 @router.post(
@@ -306,6 +323,11 @@ def create_member(
     next_of_kin_member_id = payload_data.pop("next_of_kin_member_id")
 
     member = models.Member(**payload_data)
+    if member.monthly_contribution_amount is not None:
+        contribution_rules.assert_may_have_contribution(member)
+        # Bootstrapping applies from the month being entered now; only an
+        # approved CHANGE is pushed to a future month.
+        member.contribution_effective_from = contribution_rules.month_start(date.today())
     db.add(member)
     db.commit()
     db.refresh(member)
@@ -371,6 +393,39 @@ def update_member(
     # one) completely alone.
     next_of_kin_is_member = changes.pop("next_of_kin_is_member", "unset")
     next_of_kin_member_id = changes.pop("next_of_kin_member_id", None)
+
+    if "monthly_contribution_amount" in changes:
+        if changes["monthly_contribution_amount"] is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The monthly contribution cannot be cleared. A non-financial member "
+                    "simply stops being deducted one; the stored figure stays as history."
+                ),
+            )
+        if member.monthly_contribution_amount is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This member's monthly contribution is already on file. A change to an "
+                    "agreed amount goes through a contribution change request, which another "
+                    "officer approves."
+                ),
+            )
+        # Judged against the status this edit is about to store, so
+        # reactivating a member and recording their contribution in one
+        # request is allowed.
+        contribution_rules.assert_status_may_have_contribution(
+            changes.get("status", member.status)
+        )
+        changes["contribution_effective_from"] = contribution_rules.month_start(date.today())
+
+        pending = contribution_rules.pending_request(db, member.id)
+        if pending is not None:
+            # current_amount means "what they pay now", and bootstrapping
+            # just changed that. contribution_rules.amount_for_month reads
+            # the snapshot to price months before an approved change.
+            pending.current_amount = changes["monthly_contribution_amount"]
 
     previous = {field: getattr(member, field) for field in changes}
     for field, value in changes.items():
@@ -490,6 +545,110 @@ def update_member_login_status(
 
     _attach_login_state(db, [member])
     return member
+
+
+@router.post(
+    "/{member_id}/withdraw",
+    response_model=schemas.MemberWithdrawalOut,
+    dependencies=_member_management_gate,
+)
+def withdraw_member(
+    member_id: uuid.UUID,
+    payload: schemas.MemberWithdrawRequest,
+    request: Request,
+    current_user: models.User = Depends(require_permission("member.deactivate")),
+    db: Session = Depends(get_db),
+):
+    """Record that a member has left the cooperative.
+
+    Leaving does not erase what they owe. Their status becomes
+    non_financial -- so contributions stop and no new loan can be taken
+    (see loan_rules.assert_member_may_borrow) -- while every active loan
+    stays open and keeps being recovered through payroll until it is
+    cleared.
+
+    The response reports the savings offset the office owes the member
+    (their accumulated contributions) against what they still owe the
+    cooperative. Posting that offset is a separate, deliberate step on
+    the repayment flow: this endpoint never moves money, because there is
+    no savings ledger to debit and an unposted offset must not silently
+    reduce a loan balance.
+    """
+    member = db.query(models.Member).filter(models.Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    require_no_member_conflict(
+        db,
+        current_user,
+        member,
+        action_description="record this member's exit from the cooperative",
+        permission_code="member.deactivate",
+        entity_type="member",
+        entity_id=str(member.id),
+        request=request,
+    )
+
+    if member.membership_exit_date is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A membership exit is already recorded for this member "
+                f"on {member.membership_exit_date.isoformat()}."
+            ),
+        )
+
+    exit_date = payload.exit_date or date.today()
+    if exit_date > date.today():
+        raise HTTPException(status_code=400, detail="The exit date can't be in the future")
+
+    previous_status = member.status.value
+    member.status = models.MemberStatus.NON_FINANCIAL
+    member.membership_exit_date = exit_date
+    member.membership_exit_reason = payload.reason
+    db.commit()
+    db.refresh(member)
+
+    active_loans = (
+        db.query(models.Loan)
+        .filter(
+            models.Loan.member_id == member.id,
+            models.Loan.status == models.LoanStatus.ACTIVE,
+        )
+        .all()
+    )
+    savings = savings_service.contributions_balance(db, member.id)
+    outstanding = sum(
+        (loan.total_repayable - loan.amount_repaid for loan in active_loans), Decimal("0")
+    )
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="member.withdrawn",
+        action="update",
+        entity_type="member",
+        entity_id=str(member.id),
+        previous_values={"status": previous_status, "membership_exit_date": None},
+        new_values={
+            "status": member.status.value,
+            "membership_exit_date": exit_date.isoformat(),
+            "reason": payload.reason,
+            "savings_balance": str(savings),
+            "active_loan_outstanding": str(outstanding),
+        },
+        request=request,
+    )
+
+    _attach_login_state(db, [member])
+    _attach_next_of_kin(db, [member])
+    return schemas.MemberWithdrawalOut(
+        member=member,
+        savings_balance=savings,
+        active_loan_count=len(active_loans),
+        active_loan_outstanding=outstanding,
+        payroll_recovery_still_due=max(outstanding - savings, Decimal("0")),
+    )
 
 
 @router.delete("/{member_id}", status_code=204, dependencies=_member_management_gate)
