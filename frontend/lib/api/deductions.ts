@@ -99,12 +99,48 @@ export interface PayrollDeductionBulkResponse {
 
 export type PayrollDeductionBulkAction = "submit" | "confirm" | "not-deducted" | "void";
 
-export async function listDeductions(params: {
-  month?: string;
-  status?: PayrollDeductionStatus;
-  member_id?: string;
-} = {}): Promise<PayrollDeduction[]> {
-  return apiFetch<PayrollDeduction[]>("/api/payroll-deductions", { searchParams: params });
+export interface PayrollDeductionListResult {
+  items: PayrollDeduction[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface DeductionSubmittableIds {
+  month: string;
+  ids: string[];
+  empty_draft_ids: string[];
+}
+
+// The ceiling the backend enforces on one bulk call, kept a little below
+// the server's max_length so an exact-boundary batch still passes.
+export const BULK_CHUNK_SIZE = 25;
+export const LEDGER_PAGE_SIZE = 50;
+
+export async function listDeductions(
+  params: {
+    month?: string;
+    status?: PayrollDeductionStatus;
+    member_id?: string;
+    skip?: number;
+    limit?: number;
+  } = {}
+): Promise<PayrollDeductionListResult> {
+  return apiFetch<PayrollDeductionListResult>("/api/payroll-deductions", {
+    searchParams: {
+      month: params.month,
+      status: params.status,
+      member_id: params.member_id,
+      skip: params.skip !== undefined ? String(params.skip) : undefined,
+      limit: params.limit !== undefined ? String(params.limit) : undefined,
+    },
+  });
+}
+
+export async function getSubmittableDeductionIds(month: string): Promise<DeductionSubmittableIds> {
+  return apiFetch<DeductionSubmittableIds>("/api/payroll-deductions/submittable-ids", {
+    searchParams: { month },
+  });
 }
 
 export async function getDeductionSchedule(month: string): Promise<PayrollDeductionSchedule> {

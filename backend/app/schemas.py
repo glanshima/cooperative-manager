@@ -266,6 +266,19 @@ class MemberListResponse(BaseModel):
     limit: int
 
 
+class MemberSavingsOut(BaseModel):
+    """A member's own accumulated contributions, for their dashboard.
+
+    Kept out of MemberOut deliberately: savings_balance is a SUM over
+    confirmed deduction lines, and MemberOut is serialized for every row of
+    the members list, where that aggregate would be paid 100 times per page
+    to serve nobody who reads it."""
+
+    member_id: uuid.UUID
+    savings_balance: Decimal
+    months_contributed: int
+
+
 class MemberWithdrawalOut(BaseModel):
     """What a membership exit means financially, in one response: the
     savings the member takes with them, what they still owe, and how much
@@ -937,7 +950,11 @@ class PayrollDeductionReasonRequest(BaseModel):
 
 
 class PayrollDeductionBulkRequest(BaseModel):
-    ids: List[uuid.UUID]
+    # Bounded on purpose: every record in a batch commits on its own (the
+    # audit write inside the bulk loop commits), so a request that outlives
+    # the deployment's function timeout would leave a half-applied batch and
+    # no per-item report. Callers chunk larger selections instead.
+    ids: List[uuid.UUID] = Field(max_length=100)
     reason: Optional[str] = None
 
     @field_validator("ids")
@@ -996,6 +1013,27 @@ class PayrollDeductionOut(BaseModel):
     conflicted: bool = False
 
     lines: List[PayrollDeductionLineOut] = Field(default_factory=list)
+
+
+class PayrollDeductionListResponse(BaseModel):
+    """The ledger is paginated so a month's worth of records doesn't render
+    as one endless scroll. Mirrors MemberListResponse: the wrapper exists so
+    `total` counts the FULL filtered dataset, not the current page."""
+
+    items: List[PayrollDeductionOut]
+    total: int
+    skip: int
+    limit: int
+
+
+class PayrollDeductionSubmittableIds(BaseModel):
+    """Scope for "submit all drafts". Drafts with no lines are reported
+    separately instead of arriving as bulk failures -- an officer should see
+    "left as drafts" rather than an error for expected incompleteness."""
+
+    month: date
+    ids: List[uuid.UUID]
+    empty_draft_ids: List[uuid.UUID]
 
 
 class PayrollDeductionTotals(BaseModel):

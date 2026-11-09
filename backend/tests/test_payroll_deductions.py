@@ -278,7 +278,7 @@ def test_not_deducted_leaves_balance_alone_and_blocks_duplicate(client, db_sessi
         headers=auth_headers(admin),
     )
     assert res.status_code == 200, res.text
-    voided = [record for record in res.json() if record["id"] == deduction["id"]]
+    voided = [record for record in res.json()["items"] if record["id"] == deduction["id"]]
     assert voided and voided[0]["void_reason"] == "re-enter"
 
 

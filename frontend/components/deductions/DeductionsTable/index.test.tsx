@@ -28,9 +28,16 @@ function renderTable(items: PayrollDeduction[], selected: string[] = []) {
     toggleAll: vi.fn(),
     toggleSelected: vi.fn(),
     clearSelection: vi.fn(),
+    pagination: { skip: 0, limit: 50, total: items.length, goToPage: vi.fn() },
   };
   const actions = {
     request: vi.fn(),
+    submitAll: {
+      preview: null,
+      request: vi.fn(),
+      confirm: vi.fn(),
+      cancel: vi.fn(),
+    },
     pending: null,
     reason: "",
     setReason: vi.fn(),

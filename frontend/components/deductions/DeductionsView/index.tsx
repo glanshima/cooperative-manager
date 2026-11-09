@@ -1,4 +1,5 @@
 import StatusMessage from "@/components/ui/StatusMessage";
+import Pagination from "@/components/ui/Pagination";
 
 import BulkActionsBar from "../BulkActionsBar";
 import DeductionFilters from "../DeductionFilters";
@@ -7,6 +8,7 @@ import DeductionWorklist from "../DeductionWorklist";
 import DeductionsTable from "../DeductionsTable";
 import PrintableSchedule from "../PrintableSchedule";
 import ReasonDialog from "../ReasonDialog";
+import SubmitAllDrafts from "../SubmitAllDrafts";
 import type { DeductionActionKind, DeductionsPageModel } from "../hooks/useDeductionsPage";
 
 const PENDING_COPY: Record<DeductionActionKind, { title: string; description: string }> = {
@@ -101,6 +103,16 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
             onPrint={model.print.open}
           />
 
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <SubmitAllDrafts
+              preview={model.actions.submitAll.preview}
+              busy={busy}
+              onRequest={model.actions.submitAll.request}
+              onConfirm={model.actions.submitAll.confirm}
+              onCancel={model.actions.submitAll.cancel}
+            />
+          </div>
+
           <BulkActionsBar
             count={model.table.selected.length}
             busy={busy}
@@ -115,6 +127,14 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
               actions={model.actions}
               busy={busy}
               onEdit={model.form.openEdit}
+            />
+          )}
+          {!model.table.loading && model.table.pagination.total > model.table.pagination.limit && (
+            <Pagination
+              skip={model.table.pagination.skip}
+              limit={model.table.pagination.limit}
+              total={model.table.pagination.total}
+              onChange={model.table.pagination.goToPage}
             />
           )}
         </>

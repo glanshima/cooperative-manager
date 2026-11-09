@@ -179,7 +179,18 @@ migration, and a troubleshooting table). Short version:
     submission. Duplicate active records per member/month are blocked by
     a partial unique index. Admins can act per record or in bulk, and
     print a monthly schedule with contribution/loan/other/total columns
-    (`/admin/deductions`). Permissions: `deduction.view/create/submit/
+    (`/admin/deductions`). The ledger is paginated: `GET
+    /api/payroll-deductions` returns `{items, total, skip, limit}` — 50 per
+    page, with `total` counting the whole filtered set rather than the page
+    (same envelope shape as `GET /api/members`). A month's drafts go out
+    with **Submit all drafts**: `GET
+    /api/payroll-deductions/submittable-ids?month=YYYY-MM` decides the
+    batch in the database (drafts with at least one line; line-less drafts
+    come back separately and are reported as "left as drafts"), and the
+    client sends that batch in chunks of 25 — every record in a bulk call
+    commits on its own, and bulk requests are capped at 100 ids, so an
+    unbounded batch could outlive the serverless function timeout and leave
+    a half-applied month. Permissions: `deduction.view/create/submit/
     confirm/void`; seeded roles get them via `seed_permissions.py`, but
     **existing custom roles are not updated automatically** — grant the
     new permissions to any existing Treasurer/Loan Officer/Auditor roles
@@ -199,6 +210,13 @@ migration, and a troubleshooting table). Short version:
     entered — so entry is one click per member with amounts pre-filled;
     overriding an expectation is what the conflict-of-interest guard
     treats as discretionary.
+    The same amounts surface on the member's own dashboard: `GET
+    /api/members/me/savings` sums the monthly-contribution lines of that
+    member's **confirmed** deductions (savings has no separate ledger —
+    what payroll deducted IS the balance) and counts the distinct months,
+    so the card reads "₦25,000.00 contributed so far · across 5 months".
+    Drafts, submissions, `not deducted` and `void` records add nothing, and
+    loan/other lines are excluded because they are money taken, not saved.
 
 ### IMPORTANT — before redeploying: run the manual DB migrations, in order
 

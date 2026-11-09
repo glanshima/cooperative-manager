@@ -143,9 +143,21 @@ work:
   change requests" panel, "Record exit" on member rows; `/admin/deductions`
   — Enter tab worklist (due queue, expected totals, auto-filled form,
   draft + Undo), Ledger tab (Edit/Submit/Confirm/Not deducted/Void, print
-  schedule); `/admin/settings` module toggles.
-- Member `MCT-0001`: `/dashboard` — Monthly contribution card and "Request
-  change" (button becomes "Request pending" after submitting).
+  schedule, and **Submit all drafts**: it previews the count from
+  `submittable-ids`, then sends the batch in chunks of 25 and reports
+  "N of M drafts submitted", listing drafts left behind because they have
+  no lines). The ledger paginates at 50 rows per month, and the page
+  controls only appear once a month exceeds that — the 7-member sandbox
+  cannot reach it, so with sample data you are checking that everything
+  still fits on one page and `Previous` is absent; the multi-page behavior
+  (page 2 loads, selection is dropped when the page changes) is covered by
+  `components/deductions/hooks/useDeductionsPage.test.ts`. To see it live,
+  insert >50 draft deductions for one month in `mact_local` only.
+- Member `MCT-0001`: `/dashboard` — Monthly contribution card, its
+  "₦… contributed so far · across N months" line (₦0.00 until an officer
+  confirms a month for that member), and "Request change" (button becomes
+  "Request pending" after submitting).
+- Admin `localadmin`: `/admin/settings` module toggles.
 - Conflicted reads: log in as `smoke_nok_admin` — `MCT-0001` stays listed
   with a "⚠ conflict" badge, no action buttons anywhere, and the pending
   request from that member shows the conflict notice instead of

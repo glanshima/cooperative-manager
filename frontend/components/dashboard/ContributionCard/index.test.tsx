@@ -5,6 +5,7 @@ import type { Member } from "@/lib/api";
 import {
   createContributionChangeRequest,
   getMyContributionChangeRequests,
+  getMySavings,
 } from "@/lib/api/contributions";
 
 import ContributionCard from "./index";
@@ -12,10 +13,12 @@ import ContributionCard from "./index";
 vi.mock("@/lib/api/contributions", () => ({
   getMyContributionChangeRequests: vi.fn(),
   createContributionChangeRequest: vi.fn(),
+  getMySavings: vi.fn(),
 }));
 
 const getRequestsMock = vi.mocked(getMyContributionChangeRequests);
 const createMock = vi.mocked(createContributionChangeRequest);
+const getSavingsMock = vi.mocked(getMySavings);
 
 const financialMember = {
   id: "member-1",
@@ -29,6 +32,38 @@ describe("ContributionCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getRequestsMock.mockResolvedValue([]);
+    getSavingsMock.mockResolvedValue({
+      member_id: "member-1",
+      savings_balance: "65000.00",
+      months_contributed: 13,
+    });
+  });
+
+  it("shows how much the member has contributed in total", async () => {
+    render(<ContributionCard member={financialMember} />);
+
+    const line = await screen.findByText(/contributed so far/i);
+    expect(line).toHaveTextContent("₦65,000.00");
+    expect(line).toHaveTextContent("across 13 months");
+  });
+
+  it("keeps the request history working when the savings lookup fails", async () => {
+    getSavingsMock.mockRejectedValue(new Error("savings unavailable"));
+    getRequestsMock.mockResolvedValue([
+      {
+        id: "req-1",
+        status: "pending",
+        requested_amount: "8000.00",
+        current_amount: "5000.00",
+        effective_from: null,
+        review_reason: null,
+      } as never,
+    ]);
+
+    render(<ContributionCard member={financialMember} />);
+
+    expect(await screen.findByText(/is pending review/i)).toBeInTheDocument();
+    expect(screen.queryByText(/contributed so far/i)).not.toBeInTheDocument();
   });
 
   it("shows a financial member's amount and loads their requests on mount", async () => {

@@ -363,9 +363,9 @@ def test_deduction_reads_are_visible_and_flagged(client, db_session, seed_permis
 
     ledger = client.get("/api/payroll-deductions", params={"month": "2026-11"}, headers=auth_headers(admin))
     assert ledger.status_code == 200, ledger.text
-    assert sorted(record["conflicted"] for record in ledger.json()) == [False, True]
+    assert sorted(record["conflicted"] for record in ledger.json()["items"]) == [False, True]
 
-    target_record = next(r for r in ledger.json() if r["member_psn"] == target.psn)
+    target_record = next(r for r in ledger.json()["items"] if r["member_psn"] == target.psn)
     detail = client.get(f"/api/payroll-deductions/{target_record['id']}", headers=auth_headers(admin))
     assert detail.status_code == 200, detail.text
     assert detail.json()["conflicted"] is True

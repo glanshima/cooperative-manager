@@ -34,7 +34,17 @@ export interface ContributionChangeReviewInput {
   reason?: string;
 }
 
+export interface MemberSavings {
+  member_id: string;
+  savings_balance: string;
+  months_contributed: number;
+}
+
 // --- Member self-service (powers the member dashboard) ---
+
+export async function getMySavings(): Promise<MemberSavings> {
+  return apiFetch<MemberSavings>("/api/members/me/savings");
+}
 
 export async function createContributionChangeRequest(
   input: ContributionChangeRequestCreateInput

@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from .. import models, schemas, audit_service, member_relationships
 from .. import contributions as contribution_rules
@@ -126,6 +126,41 @@ def get_my_member_record(
         raise HTTPException(status_code=404, detail="Member record not found")
     _attach_next_of_kin(db, [member])
     return member
+
+
+@router.get("/me/savings", response_model=schemas.MemberSavingsOut)
+def get_my_savings(
+    current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """What the member has actually saved with the cooperative so far.
+
+    Their own record, so no permission code applies -- but it stops at the
+    caller's member_id, and it is not on /me because MemberOut is serialized
+    for every row of the members list.
+    """
+    if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
+        raise HTTPException(status_code=403, detail="Only members have a member record")
+    member = db.query(models.Member).filter(models.Member.id == current_user.member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member record not found")
+
+    months = (
+        db.query(func.count(func.distinct(models.PayrollDeduction.deduction_month)))
+        .join(models.PayrollDeductionLine)
+        .filter(
+            models.PayrollDeduction.member_id == member.id,
+            models.PayrollDeduction.status == models.PayrollDeductionStatus.CONFIRMED,
+            models.PayrollDeductionLine.category
+            == models.PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION,
+        )
+        .scalar()
+    )
+
+    return schemas.MemberSavingsOut(
+        member_id=member.id,
+        savings_balance=savings_service.contributions_balance(db, member.id),
+        months_contributed=int(months or 0),
+    )
 
 
 @router.get(

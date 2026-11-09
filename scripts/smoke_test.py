@@ -331,7 +331,7 @@ def main():
                 client, "GET",
                 f"/api/payroll-deductions?member_id={member['id']}&month={deduction_month}",
                 token=admin_token, label="deduction lookup",
-            )
+            )["items"]
             if existing:
                 deduction_id = existing[0]["id"]
             else:

@@ -7,6 +7,7 @@ import {
   createDeduction,
   getDeductionSchedule,
   getDeductionWorklist,
+  getSubmittableDeductionIds,
   listDeductions,
   listLoans,
   listMembers,
@@ -17,11 +18,14 @@ import type { DeductionWorklistItem, PayrollDeduction, PayrollDeductionSchedule 
 import { useDeductionsPage } from "./useDeductionsPage";
 
 vi.mock("@/lib/api", () => ({
+  BULK_CHUNK_SIZE: 25,
+  LEDGER_PAGE_SIZE: 50,
   bulkDeductions: vi.fn(),
   confirmDeduction: vi.fn(),
   createDeduction: vi.fn(),
   getDeductionSchedule: vi.fn(),
   getDeductionWorklist: vi.fn(),
+  getSubmittableDeductionIds: vi.fn(),
   listDeductions: vi.fn(),
   listLoans: vi.fn(),
   listMembers: vi.fn(),
@@ -33,6 +37,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 const listDeductionsMock = vi.mocked(listDeductions);
+const getSubmittableMock = vi.mocked(getSubmittableDeductionIds);
 const getScheduleMock = vi.mocked(getDeductionSchedule);
 const getWorklistMock = vi.mocked(getDeductionWorklist);
 const listMembersMock = vi.mocked(listMembers);
@@ -69,6 +74,10 @@ function makeDeduction(overrides: Partial<PayrollDeduction> = {}): PayrollDeduct
     lines: [],
     ...overrides,
   };
+}
+
+function makePage(records: PayrollDeduction[]) {
+  return { items: records, total: records.length, skip: 0, limit: 50 };
 }
 
 function makeSchedule(records: PayrollDeduction[]): PayrollDeductionSchedule {
@@ -118,7 +127,7 @@ describe("useDeductionsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const records = [makeDeduction()];
-    listDeductionsMock.mockResolvedValue(records);
+    listDeductionsMock.mockResolvedValue(makePage(records));
     getScheduleMock.mockResolvedValue(makeSchedule(records));
     listMembersMock.mockResolvedValue({ items: [], total: 0, skip: 0, limit: 1000 });
     listLoansMock.mockResolvedValue([]);
@@ -136,7 +145,12 @@ describe("useDeductionsPage", () => {
 
     await waitFor(() => expect(result.current.table.loading).toBe(false));
 
-    expect(listDeductionsMock).toHaveBeenCalledWith({ month: expect.any(String), status: undefined });
+    expect(listDeductionsMock).toHaveBeenCalledWith({
+      month: expect.any(String),
+      status: undefined,
+      skip: 0,
+      limit: 50,
+    });
     expect(getScheduleMock).toHaveBeenCalledWith(expect.any(String));
     expect(result.current.table.items).toHaveLength(1);
     expect(result.current.totals?.grand_total).toBe("2600.00");
@@ -232,13 +246,148 @@ describe("useDeductionsPage", () => {
     });
     expect(result.current.feedback.message).toBe("Draft created.");
   });
+
+  it("pages the ledger and drops the stale selection", async () => {
+    const page1 = [makeDeduction({ id: "page1-1" })];
+    listDeductionsMock.mockResolvedValue({ items: page1, total: 120, skip: 0, limit: 50 });
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    act(() => result.current.table.toggleSelected("page1-1"));
+    expect(result.current.table.selected).toEqual(["page1-1"]);
+
+    listDeductionsMock.mockResolvedValue({
+      items: [makeDeduction({ id: "page2-1" })],
+      total: 120,
+      skip: 50,
+      limit: 50,
+    });
+    await act(async () => {
+      result.current.table.pagination.goToPage(50);
+    });
+
+    await waitFor(() =>
+      expect(listDeductionsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ skip: 50, limit: 50 })
+      )
+    );
+    expect(result.current.table.pagination.total).toBe(120);
+    expect(result.current.table.selected).toEqual([]);
+  });
+
+  it("sends bulk actions in chunks of 25", async () => {
+    const ids = Array.from({ length: 30 }, (_, index) => `deduction-${index}`);
+    bulkDeductionsMock.mockImplementation(async (_action, chunk) => ({
+      results: chunk.map((id) => ({ id, ok: true, status: "submitted" })),
+    }));
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    await act(async () => {
+      result.current.actions.request("submit", ids);
+    });
+
+    await waitFor(() => expect(bulkDeductionsMock).toHaveBeenCalledTimes(2));
+    expect(bulkDeductionsMock.mock.calls[0][1]).toHaveLength(25);
+    expect(bulkDeductionsMock.mock.calls[1][1]).toHaveLength(5);
+    expect(result.current.feedback.message).toBe("30 of 30 deductions updated.");
+  });
+
+  it("collapses repeated bulk failures instead of listing each one", async () => {
+    bulkDeductionsMock.mockResolvedValue({
+      results: [
+        { id: "deduction-1", ok: false, detail: "Only draft deductions can be submitted" },
+        { id: "deduction-2", ok: false, detail: "Only draft deductions can be submitted" },
+      ],
+    });
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    await act(async () => {
+      result.current.actions.request("submit", ["deduction-1", "deduction-2"]);
+    });
+
+    expect(result.current.feedback.error).toBe(
+      "Only draft deductions can be submitted (×2)"
+    );
+  });
+
+  it("previews the submit-all scope before sending anything", async () => {
+    getSubmittableMock.mockResolvedValue({
+      month: "2026-11-01",
+      ids: ["deduction-1", "deduction-2"],
+      empty_draft_ids: ["deduction-3"],
+    });
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.actions.submitAll.request();
+    });
+
+    expect(bulkDeductionsMock).not.toHaveBeenCalled();
+    expect(result.current.actions.submitAll.preview).toMatchObject({
+      ids: ["deduction-1", "deduction-2"],
+      emptyCount: 1,
+    });
+  });
+
+  it("submits the previewed scope and reports what stayed back", async () => {
+    getSubmittableMock.mockResolvedValue({
+      month: "2026-11-01",
+      ids: ["deduction-1", "deduction-2"],
+      empty_draft_ids: ["deduction-3"],
+    });
+    bulkDeductionsMock.mockResolvedValue({
+      results: [
+        { id: "deduction-1", ok: true, status: "submitted" },
+        {
+          id: "deduction-2",
+          ok: false,
+          detail: "Conflicted officer may not submit an overridden deduction",
+        },
+      ],
+    });
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.actions.submitAll.request();
+    });
+    await act(async () => {
+      await result.current.actions.submitAll.confirm();
+    });
+
+    expect(result.current.feedback.message).toBe(
+      "1 of 2 drafts submitted · 1 left as drafts (no lines) · 1 refused"
+    );
+    expect(result.current.feedback.error).toContain("Conflicted officer");
+    expect(result.current.actions.submitAll.preview).toBeNull();
+  });
+
+  it("says so when no draft in the month can be submitted", async () => {
+    getSubmittableMock.mockResolvedValue({
+      month: "2026-11-01",
+      ids: [],
+      empty_draft_ids: ["deduction-3"],
+    });
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.actions.submitAll.request();
+    });
+
+    expect(bulkDeductionsMock).not.toHaveBeenCalled();
+    expect(result.current.feedback.message).toContain("have no lines yet");
+  });
 });
 
 describe("useDeductionsPage enter queue", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const records = [makeDeduction()];
-    listDeductionsMock.mockResolvedValue(records);
+    listDeductionsMock.mockResolvedValue(makePage(records));
     getScheduleMock.mockResolvedValue(makeSchedule(records));
     listMembersMock.mockResolvedValue({ items: [], total: 0, skip: 0, limit: 1000 });
     listLoansMock.mockResolvedValue([]);

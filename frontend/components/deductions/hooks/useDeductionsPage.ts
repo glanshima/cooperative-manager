@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 
 import {
+  BULK_CHUNK_SIZE,
+  LEDGER_PAGE_SIZE,
   bulkDeductions,
   confirmDeduction,
   createDeduction,
   getDeductionSchedule,
   getDeductionWorklist,
+  getSubmittableDeductionIds,
   listDeductions,
   listLoans,
   listMembers,
@@ -69,6 +72,8 @@ export function useDeductionsPage(logout: () => void) {
   const [status, setStatus] = useState<PayrollDeductionStatus | "all">("all");
 
   const [items, setItems] = useState<PayrollDeduction[]>([]);
+  const [total, setTotal] = useState(0);
+  const [skip, setSkip] = useState(0);
   const [schedule, setSchedule] = useState<PayrollDeductionSchedule | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -84,6 +89,11 @@ export function useDeductionsPage(logout: () => void) {
 
   const [pending, setPending] = useState<{ action: DeductionActionKind; ids: string[] } | null>(null);
   const [reason, setReason] = useState("");
+  const [submitAll, setSubmitAll] = useState<{
+    month: string;
+    ids: string[];
+    emptyCount: number;
+  } | null>(null);
 
   const [printMode, setPrintMode] = useState(false);
 
@@ -95,15 +105,23 @@ export function useDeductionsPage(logout: () => void) {
   const [prefill, setPrefill] = useState<DeductionPrefill | null>(null);
   const [lastEntered, setLastEntered] = useState<{ id: string; memberName: string } | null>(null);
 
-  async function refresh() {
+  async function refresh(overrides: { skip?: number } = {}) {
+    const effectiveSkip = overrides.skip !== undefined ? overrides.skip : skip;
     setLoading(true);
     setError(null);
     try {
-      const [records, monthSchedule] = await Promise.all([
-        listDeductions({ month, status: status === "all" ? undefined : status }),
+      const [page, monthSchedule] = await Promise.all([
+        listDeductions({
+          month,
+          status: status === "all" ? undefined : status,
+          skip: effectiveSkip,
+          limit: LEDGER_PAGE_SIZE,
+        }),
         getDeductionSchedule(month),
       ]);
-      setItems(records);
+      setItems(page.items);
+      setTotal(page.total);
+      setSkip(page.skip);
       setSchedule(monthSchedule);
     } catch (e: any) {
       setError(e.message);
@@ -112,8 +130,17 @@ export function useDeductionsPage(logout: () => void) {
     }
   }
 
+  function goToPage(newSkip: number) {
+    if (newSkip < 0 || newSkip >= total) return;
+    // Selection is page-scoped: carrying ids from a page that is no longer
+    // on screen would invite acting on records the officer cannot see.
+    setSelected([]);
+    refresh({ skip: newSkip });
+  }
+
   useEffect(() => {
-    refresh();
+    // Every filter change starts back at page 1.
+    refresh({ skip: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month, status]);
 
@@ -149,6 +176,92 @@ export function useDeductionsPage(logout: () => void) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month, includeEntered]);
 
+  // Each bulk call commits every record it accepts as it goes, so a call
+  // that outlives the server's function timeout would leave a batch half
+  // applied with no report at all. Chunks keep each request short and make
+  // sure every id comes back with a verdict.
+  async function runBulkChunked(
+    actionName: PayrollDeductionBulkAction,
+    ids: string[],
+    reasonText?: string
+  ): Promise<{ succeeded: number; failures: string[] }> {
+    const reasons = new Map<string, number>();
+    let succeeded = 0;
+
+    for (let index = 0; index < ids.length; index += BULK_CHUNK_SIZE) {
+      const chunk = ids.slice(index, index + BULK_CHUNK_SIZE);
+      const response = await bulkDeductions(actionName, chunk, reasonText);
+      const failed = response.results.filter((result) => !result.ok);
+      succeeded += response.results.length - failed.length;
+      for (const result of failed) {
+        const detail = result.detail || "No reason given";
+        reasons.set(detail, (reasons.get(detail) ?? 0) + 1);
+      }
+    }
+
+    const failures = [...reasons.entries()].map(
+      ([detail, count]) => (count > 1 ? `${detail} (×${count})` : detail)
+    );
+    return { succeeded, failures };
+  }
+
+  async function requestSubmitAll() {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      // Scope comes from the server: the ledger only holds one page, so the
+      // rows on screen cannot answer "which drafts exist this month".
+      const scope = await getSubmittableDeductionIds(month);
+
+      if (!scope.ids.length) {
+        setMessage(
+          scope.empty_draft_ids.length
+            ? `Nothing to submit for ${month}: ${scope.empty_draft_ids.length} draft(s) have no lines yet.`
+            : `No draft deductions to submit for ${month}.`
+        );
+        return;
+      }
+      // Held back for confirmation so the officer sees the real count and
+      // the exclusions before anything moves.
+      setSubmitAll({ month, ids: scope.ids, emptyCount: scope.empty_draft_ids.length });
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmSubmitAll() {
+    if (!submitAll) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const { succeeded, failures } = await runBulkChunked("submit", submitAll.ids);
+      const parts = [`${succeeded} of ${submitAll.ids.length} drafts submitted`];
+      if (submitAll.emptyCount) {
+        parts.push(`${submitAll.emptyCount} left as drafts (no lines)`);
+      }
+      if (failures.length) parts.push(`${submitAll.ids.length - succeeded} refused`);
+      setMessage(parts.join(" · "));
+
+      setSubmitAll(null);
+      setSelected([]);
+      await refresh();
+      await refreshWorklist();
+      if (failures.length) setError(failures.join("; "));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelSubmitAll() {
+    setSubmitAll(null);
+  }
+
   async function runAction(action: DeductionActionKind, ids: string[], reasonText?: string) {
     if (!ids.length) return;
     setBusy(true);
@@ -170,16 +283,13 @@ export function useDeductionsPage(logout: () => void) {
         for (const id of ids) await returnDeductionToDraft(id, reasonText || "");
         successText = `Returned ${ids.length} deductions to draft.`;
       } else {
-        const response = await bulkDeductions(BULK_ACTION_NAMES[action]!, ids, reasonText);
-        const failed = response.results.filter((result) => !result.ok);
-        successText = `${ids.length - failed.length} of ${ids.length} deductions updated.`;
-        if (failed.length) {
-          failureText =
-            failed
-              .map((result) => result.detail)
-              .filter(Boolean)
-              .join("; ") || "Some deductions could not be updated.";
-        }
+        const { succeeded, failures } = await runBulkChunked(
+          BULK_ACTION_NAMES[action]!,
+          ids,
+          reasonText
+        );
+        successText = `${succeeded} of ${ids.length} deductions updated.`;
+        if (failures.length) failureText = failures.join("; ");
       }
 
       setPending(null);
@@ -362,11 +472,18 @@ export function useDeductionsPage(logout: () => void) {
       toggleSelected,
       toggleAll,
       clearSelection,
+      pagination: { skip, limit: LEDGER_PAGE_SIZE, total, goToPage },
     },
     totals: schedule?.totals ?? null,
     schedule,
     actions: {
       request: requestAction,
+      submitAll: {
+        preview: submitAll,
+        request: requestSubmitAll,
+        confirm: confirmSubmitAll,
+        cancel: cancelSubmitAll,
+      },
       pending,
       reason,
       setReason,

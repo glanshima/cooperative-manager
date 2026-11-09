@@ -23,6 +23,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from .. import audit_service, deduction_expectations, models, schemas, validation
@@ -455,12 +456,17 @@ def _http_detail_text(exc: HTTPException) -> str:
 # Read endpoints
 # ---------------------------------------------------------------------------
 
-@router.get("/api/payroll-deductions", response_model=List[schemas.PayrollDeductionOut])
+@router.get(
+    "/api/payroll-deductions",
+    response_model=schemas.PayrollDeductionListResponse,
+)
 def list_deductions(
     request: Request,
     month: Optional[str] = Query(default=None),
     status: Optional[models.PayrollDeductionStatus] = Query(default=None),
     member_id: Optional[uuid.UUID] = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
     current_user: models.User = Depends(require_permission("deduction.view")),
     db: Session = Depends(get_db),
 ):
@@ -472,9 +478,17 @@ def list_deductions(
     if member_id is not None:
         query = query.filter(models.PayrollDeduction.member_id == member_id)
 
-    records = query.order_by(
-        models.PayrollDeduction.deduction_month.desc(), models.Member.name
-    ).all()
+    # Count before slicing so `total` describes the whole filtered set,
+    # which is what the page controls and "submit all drafts" both need.
+    total = query.count()
+    records = (
+        query.order_by(
+            models.PayrollDeduction.deduction_month.desc(), models.Member.name
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     items = [schemas.PayrollDeductionOut.model_validate(r) for r in records]
     flagged = mark_conflicted_reads(items, get_conflicted_member_ids(db, current_user))
     log_conflicted_view(
@@ -485,7 +499,9 @@ def list_deductions(
         entity_type="payroll_deduction",
         request=request,
     )
-    return items
+    return schemas.PayrollDeductionListResponse(
+        items=items, total=total, skip=skip, limit=limit
+    )
 
 
 @router.get(
@@ -628,6 +644,52 @@ def get_worklist(
         request=request,
     )
     return response
+
+
+@router.get(
+    "/api/payroll-deductions/submittable-ids",
+    response_model=schemas.PayrollDeductionSubmittableIds,
+)
+def get_submittable_ids(
+    month: str = Query(..., description="YYYY-MM"),
+    current_user: models.User = Depends(require_permission("deduction.submit")),
+    db: Session = Depends(get_db),
+):
+    """Which drafts "submit all" would cover, decided where the data is.
+
+    The ledger is paginated, so the browser can no longer enumerate a whole
+    month from the rows it has loaded. Drafts with no lines are separated
+    out here because _transition_submit rejects them: reporting them as
+    "left as drafts" is honest, letting them fail in the batch would look
+    like something broke.
+    """
+    month_start = _month_start(month)
+    rows = (
+        db.query(
+            models.PayrollDeduction.id,
+            func.count(models.PayrollDeductionLine.id),
+        )
+        .outerjoin(
+            models.PayrollDeductionLine,
+            models.PayrollDeductionLine.deduction_id == models.PayrollDeduction.id,
+        )
+        .filter(
+            models.PayrollDeduction.deduction_month == month_start,
+            models.PayrollDeduction.status == models.PayrollDeductionStatus.DRAFT,
+        )
+        .group_by(models.PayrollDeduction.id)
+        .all()
+    )
+
+    submittable, empty = [], []
+    for deduction_id, line_count in rows:
+        (submittable if line_count else empty).append(deduction_id)
+
+    return schemas.PayrollDeductionSubmittableIds(
+        month=month_start,
+        ids=sorted(submittable, key=str),
+        empty_draft_ids=sorted(empty, key=str),
+    )
 
 
 @router.get(

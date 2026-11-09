@@ -8,6 +8,8 @@ import {
   ContributionChangeRequest,
   createContributionChangeRequest,
   getMyContributionChangeRequests,
+  getMySavings,
+  MemberSavings,
 } from "@/lib/api/contributions";
 
 const MINIMUM = 5000;
@@ -21,6 +23,7 @@ const cardStyle = {
 
 export default function ContributionCard({ member }: { member: Member }) {
   const [requests, setRequests] = useState<ContributionChangeRequest[]>([]);
+  const [savings, setSavings] = useState<MemberSavings | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -31,7 +34,14 @@ export default function ContributionCard({ member }: { member: Member }) {
   async function loadRequests() {
     setLoading(true);
     try {
-      setRequests(await getMyContributionChangeRequests());
+      // Settled, not all: a savings lookup failing must not hide the
+      // member's own change-request history.
+      const [requestResult, savingsResult] = await Promise.allSettled([
+        getMyContributionChangeRequests(),
+        getMySavings(),
+      ]);
+      if (requestResult.status === "fulfilled") setRequests(requestResult.value);
+      if (savingsResult.status === "fulfilled") setSavings(savingsResult.value);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -47,6 +57,21 @@ export default function ContributionCard({ member }: { member: Member }) {
   const isFinancial = member.status === "financial";
   const amount = member.monthly_contribution_amount;
   const pending = requests.find((r) => r.status === "pending");
+
+  // What payroll has actually remitted for this member, confirmed records
+  // only -- the figure they can reconcile against their own payslips.
+  const savingsSummary = savings ? (
+    <p style={{ margin: "0 0 12px", fontSize: 14 }}>
+      <strong style={{ fontSize: 20 }}>₦{formatMoney(savings.savings_balance)}</strong> contributed
+      so far
+      {savings.months_contributed > 0 && (
+        <span style={{ color: "#666" }}>
+          {" "}
+          · across {savings.months_contributed} month{savings.months_contributed === 1 ? "" : "s"}
+        </span>
+      )}
+    </p>
+  ) : null;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -80,6 +105,7 @@ export default function ContributionCard({ member }: { member: Member }) {
     return (
       <section style={cardStyle}>
         <h2 style={{ marginTop: 0 }}>Monthly contribution</h2>
+        {savingsSummary}
         <p style={{ color: "#666", marginBottom: 0 }}>
           Non-financial members don&apos;t have a monthly contribution. Anything you owe is
           recorded by an officer as a separate deduction.
@@ -92,6 +118,7 @@ export default function ContributionCard({ member }: { member: Member }) {
     return (
       <section style={cardStyle}>
         <h2 style={{ marginTop: 0 }}>Monthly contribution</h2>
+        {savingsSummary}
         <p style={{ color: "#666", marginBottom: 0 }}>
           Your contribution amount is not yet set. Contact an officer to record it.
         </p>
@@ -102,6 +129,7 @@ export default function ContributionCard({ member }: { member: Member }) {
   return (
     <section style={cardStyle}>
       <h2 style={{ marginTop: 0 }}>Monthly contribution</h2>
+      {savingsSummary}
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
         <span style={{ fontSize: 24, fontWeight: 600 }}>₦{formatMoney(amount)}</span>
         <span style={{ fontSize: 12, color: "#666" }}>per month</span>
