@@ -92,6 +92,7 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
           month={model.filters.month}
           setMonth={model.filters.setMonth}
           onAddAny={model.form.openCreate}
+          onPageSizeChange={model.pageSize.change}
           busy={busy}
         />
       ) : (
@@ -129,12 +130,13 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
               onEdit={model.form.openEdit}
             />
           )}
-          {!model.table.loading && model.table.pagination.total > model.table.pagination.limit && (
+          {!model.table.loading && model.table.pagination.total > 0 && (
             <Pagination
               skip={model.table.pagination.skip}
               limit={model.table.pagination.limit}
               total={model.table.pagination.total}
               onChange={model.table.pagination.goToPage}
+              onPageSizeChange={model.pageSize.change}
             />
           )}
         </>

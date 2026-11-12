@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   BULK_CHUNK_SIZE,
   LEDGER_PAGE_SIZE,
+  QUEUE_PAGE_SIZE,
   bulkDeductions,
   confirmDeduction,
   createDeduction,
@@ -19,6 +20,7 @@ import {
   voidDeduction,
 } from "@/lib/api";
 import type {
+  DeductionWorklistEntryState,
   DeductionWorklistItem,
   DeductionWorklistOut,
   Loan,
@@ -33,6 +35,7 @@ import type {
 } from "@/lib/api";
 
 import { currentMonth } from "@/lib/month";
+import { readStoredPageSize, storePageSize } from "@/lib/pageSize";
 
 export type DeductionActionKind = "submit" | "return_to_draft" | "confirm" | "not_deducted" | "void";
 
@@ -71,6 +74,15 @@ export function useDeductionsPage(logout: () => void) {
   const [month, setMonth] = useState(currentMonth());
   const [status, setStatus] = useState<PayrollDeductionStatus | "all">("all");
 
+  // How many rows a page holds. One choice serves both tabs, because the same
+  // officer works the queue and reads the ledger and does not want to fit each
+  // one separately. Until they choose, each tab starts at the size that suits
+  // it: a ledger row is a table line, a queue entry is a card with its
+  // expected amounts underneath.
+  const [chosenPageSize, setChosenPageSize] = useState<number | null>(null);
+  const ledgerLimit = chosenPageSize ?? LEDGER_PAGE_SIZE;
+  const queueLimit = chosenPageSize ?? QUEUE_PAGE_SIZE;
+
   const [items, setItems] = useState<PayrollDeduction[]>([]);
   const [total, setTotal] = useState(0);
   const [skip, setSkip] = useState(0);
@@ -101,7 +113,8 @@ export function useDeductionsPage(logout: () => void) {
   const [worklist, setWorklist] = useState<DeductionWorklistOut | null>(null);
   const [worklistLoading, setWorklistLoading] = useState(true);
   const [worklistError, setWorklistError] = useState<string | null>(null);
-  const [includeEntered, setIncludeEntered] = useState(false);
+  const [entryState, setEntryState] = useState<DeductionWorklistEntryState>("pending");
+  const [queueSkip, setQueueSkip] = useState(0);
   const [prefill, setPrefill] = useState<DeductionPrefill | null>(null);
   const [lastEntered, setLastEntered] = useState<{ id: string; memberName: string } | null>(null);
 
@@ -115,7 +128,7 @@ export function useDeductionsPage(logout: () => void) {
           month,
           status: status === "all" ? undefined : status,
           skip: effectiveSkip,
-          limit: LEDGER_PAGE_SIZE,
+          limit: ledgerLimit,
         }),
         getDeductionSchedule(month),
       ]);
@@ -138,11 +151,27 @@ export function useDeductionsPage(logout: () => void) {
     refresh({ skip: newSkip });
   }
 
+  function changePageSize(newLimit: number) {
+    setChosenPageSize(newLimit);
+    storePageSize(newLimit);
+    // Both lists reload through the size dependency below, but clear the page
+    // state now so the control never shows the old page under the new size.
+    setSkip(0);
+    setQueueSkip(0);
+  }
+
+  useEffect(() => {
+    // The stored preference is read after mount, not during the first render:
+    // this page is server-rendered too, and a render that only the browser
+    // can answer would disagree with the HTML it replaces.
+    setChosenPageSize(readStoredPageSize());
+  }, []);
+
   useEffect(() => {
     // Every filter change starts back at page 1.
     refresh({ skip: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, status]);
+  }, [month, status, ledgerLimit]);
 
   // Member and active-loan lookups make the entry form usable, but the
   // deductions list itself must still work when the Members or Loans
@@ -159,11 +188,25 @@ export function useDeductionsPage(logout: () => void) {
     };
   }, []);
 
-  async function refreshWorklist() {
+  async function refreshWorklist(overrides: { skip?: number } = {}) {
+    const effectiveSkip = overrides.skip !== undefined ? overrides.skip : queueSkip;
     setWorklistLoading(true);
     setWorklistError(null);
     try {
-      setWorklist(await getDeductionWorklist(month, includeEntered));
+      const page = await getDeductionWorklist(month, {
+        entry_state: entryState,
+        skip: effectiveSkip,
+        limit: queueLimit,
+      });
+      setWorklist(page);
+      setQueueSkip(page.skip);
+      // Entering a member shrinks the queue behind the officer, so the page
+      // they were reading can stop existing mid-work. Land them on the last
+      // page that has rows rather than an empty one with a dead heading.
+      if (page.items.length === 0 && page.total > 0 && page.skip > 0) {
+        const lastPage = Math.floor((page.total - 1) / page.limit) * page.limit;
+        if (lastPage !== page.skip) await refreshWorklist({ skip: lastPage });
+      }
     } catch (e: any) {
       setWorklistError(e.message);
     } finally {
@@ -171,10 +214,21 @@ export function useDeductionsPage(logout: () => void) {
     }
   }
 
+  function goToQueuePage(newSkip: number) {
+    if (newSkip < 0 || newSkip >= (worklist?.total ?? 0)) return;
+    refreshWorklist({ skip: newSkip });
+  }
+
+  function changeEntryState(next: DeductionWorklistEntryState) {
+    setEntryState(next);
+    // A different segment is a different list, not a different page of it.
+    setQueueSkip(0);
+  }
+
   useEffect(() => {
-    refreshWorklist();
+    refreshWorklist({ skip: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, includeEntered]);
+  }, [month, entryState, queueLimit]);
 
   // Each bulk call commits every record it accepts as it goes, so a call
   // that outlives the server's function timeout would leave a batch half
@@ -452,18 +506,25 @@ export function useDeductionsPage(logout: () => void) {
     auth: { logout },
     feedback: { error, message, busy },
     filters: { month, setMonth, status, setStatus },
+    pageSize: { chosen: chosenPageSize, change: changePageSize },
     tab,
     setTab,
     worklist: {
       data: worklist,
       loading: worklistLoading,
       error: worklistError,
-      includeEntered,
-      setIncludeEntered,
+      entryState,
+      setEntryState: changeEntryState,
       refresh: refreshWorklist,
       openItem: openFromWorklist,
       lastEntered,
       undo: undoLastEntered,
+      pagination: {
+        skip: queueSkip,
+        limit: queueLimit,
+        total: worklist?.total ?? 0,
+        goToPage: goToQueuePage,
+      },
     },
     table: {
       items,
@@ -472,7 +533,7 @@ export function useDeductionsPage(logout: () => void) {
       toggleSelected,
       toggleAll,
       clearSelection,
-      pagination: { skip, limit: LEDGER_PAGE_SIZE, total, goToPage },
+      pagination: { skip, limit: ledgerLimit, total, goToPage },
     },
     totals: schedule?.totals ?? null,
     schedule,

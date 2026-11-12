@@ -17,6 +17,7 @@ from .models import (
     ContributionChangeRequestStatus,
     PayrollDeductionStatus,
     PayrollDeductionLineCategory,
+    DeductionWorklistEntryState,
     AccountStatus,
 )
 from . import validation
@@ -1070,16 +1071,33 @@ class DeductionWorklistItem(BaseModel):
     lines: List[DeductionWorklistLine]
     warnings: List[str]
     expected_total: Decimal
-    # Set when the month already has a live record (include_entered=true).
+    # Set when the month already has a live record for this member
+    # (entry_state=entered or all).
     deduction_id: Optional[uuid.UUID] = None
     deduction_status: Optional[PayrollDeductionStatus] = None
     conflicted: bool = False
 
 
 class DeductionWorklistOut(BaseModel):
+    """The queue is paginated like the ledger (see
+    PayrollDeductionListResponse), but the three month-wide counts and
+    `expected_total` deliberately are NOT page-scoped: an officer deciding
+    how much of the month is left needs the whole month's picture while
+    looking at one page of it.
+
+    `pending_count` + `entered_count` == `due_count`, so the segment tabs can
+    show their true sizes whatever page is open. A live record for a member
+    nothing currently expects (a loan repaid since, a member who exited) is
+    not in `entered_count` -- the ledger is the complete record list."""
+
     month: date
     items: List[DeductionWorklistItem]
+    total: int
+    skip: int
+    limit: int
+    entry_state: DeductionWorklistEntryState
     due_count: int
+    pending_count: int
     entered_count: int
     # What is still outstanding: members already entered for the month are
     # counted in entered_count, not added here.

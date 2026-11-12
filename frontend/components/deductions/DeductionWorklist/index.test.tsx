@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { DeductionWorklistItem, DeductionWorklistOut } from "@/lib/api";
+import type {
+  DeductionWorklistEntryState,
+  DeductionWorklistItem,
+  DeductionWorklistOut,
+} from "@/lib/api";
 
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
 import DeductionWorklist from "./index";
@@ -35,38 +39,61 @@ function makeItem(overrides: Partial<DeductionWorklistItem> = {}): DeductionWork
   };
 }
 
-function renderWorklist({
-  items = [makeItem()],
-  includeEntered = false,
-  lastEntered = null,
-  error = null,
-}: {
-  items?: DeductionWorklistItem[];
-  includeEntered?: boolean;
-  lastEntered?: { id: string; memberName: string } | null;
-  error?: string | null;
-} = {}) {
-  const data: DeductionWorklistOut = {
+function makeWorklistOut(
+  items: DeductionWorklistItem[],
+  entryState: DeductionWorklistEntryState,
+  overrides: Partial<DeductionWorklistOut> = {}
+): DeductionWorklistOut {
+  // The month-wide counts come from the server; a page of items only tells
+  // the test how many of THIS page are entered.
+  const entered = items.filter((item) => item.deduction_id).length;
+  const pending = items.length - entered;
+  return {
     month: "2026-11-01",
     items,
-    due_count: items.filter((item) => !item.deduction_id).length,
-    entered_count: items.filter((item) => item.deduction_id).length,
+    total: items.length,
+    skip: 0,
+    limit: 20,
+    entry_state: entryState,
+    due_count: pending + entered,
+    pending_count: pending,
+    entered_count: entered,
     expected_total: "6000.00",
+    ...overrides,
   };
+}
+
+function renderWorklist({
+  items = [makeItem()],
+  entryState = "pending" as DeductionWorklistEntryState,
+  lastEntered = null,
+  error = null,
+  dataOverrides = {},
+}: {
+  items?: DeductionWorklistItem[];
+  entryState?: DeductionWorklistEntryState;
+  lastEntered?: { id: string; memberName: string } | null;
+  error?: string | null;
+  dataOverrides?: Partial<DeductionWorklistOut>;
+} = {}) {
+  const data = makeWorklistOut(items, entryState, dataOverrides);
   const openItem = vi.fn();
   const undo = vi.fn();
-  const setIncludeEntered = vi.fn();
+  const setEntryState = vi.fn();
+  const goToPage = vi.fn();
+  const onPageSizeChange = vi.fn();
   const onAddAny = vi.fn();
   const worklist = {
     data,
     loading: false,
     error,
-    includeEntered,
-    setIncludeEntered,
+    entryState,
+    setEntryState,
     refresh: vi.fn(),
     openItem,
     lastEntered,
     undo,
+    pagination: { skip: data.skip, limit: data.limit, total: data.total, goToPage },
   } as unknown as DeductionsPageModel["worklist"];
   render(
     <DeductionWorklist
@@ -74,10 +101,11 @@ function renderWorklist({
       month="2026-11"
       setMonth={vi.fn()}
       onAddAny={onAddAny}
+      onPageSizeChange={onPageSizeChange}
       busy={false}
     />
   );
-  return { openItem, undo, setIncludeEntered, onAddAny };
+  return { openItem, undo, setEntryState, goToPage, onPageSizeChange, onAddAny };
 }
 
 describe("DeductionWorklist", () => {
@@ -103,6 +131,7 @@ describe("DeductionWorklist", () => {
 
   it("shows an entered member as a badge with no Enter button", () => {
     renderWorklist({
+      entryState: "entered",
       items: [makeItem({ deduction_id: "ded-1", deduction_status: "draft" })],
     });
 
@@ -145,16 +174,67 @@ describe("DeductionWorklist", () => {
     expect(undo).toHaveBeenCalled();
   });
 
-  it("toggles showing already-entered members", async () => {
+  it("switches segments from the control and marks the open one pressed", async () => {
     const user = userEvent.setup();
-    const { setIncludeEntered } = renderWorklist();
+    const { setEntryState } = renderWorklist();
 
-    await user.click(screen.getByLabelText("Show already entered"));
-    expect(setIncludeEntered).toHaveBeenCalledWith(true);
+    expect(screen.getByRole("button", { name: "Pending (1)" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByRole("button", { name: "Entered (0)" })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Entered (0)" }));
+    expect(setEntryState).toHaveBeenCalledWith("entered");
   });
 
-  it("shows an empty state when nothing is due", () => {
-    renderWorklist({ items: [] });
-    expect(screen.getByText(/Nothing due/)).toBeInTheDocument();
+  it("shows the month-wide counts beside the page it is holding", () => {
+    renderWorklist({
+      items: [makeItem({ deduction_id: "ded-1", deduction_status: "draft" })],
+      entryState: "entered",
+      dataOverrides: { total: 41, skip: 20, due_count: 42, pending_count: 1, entered_count: 41 },
+    });
+
+    // 42 due this month, 41 of them entered -- and the page shows one row.
+    expect(screen.getByRole("button", { name: "Pending (1)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Entered (41)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All (42)" })).toBeInTheDocument();
+    expect(screen.getByText("Page 2 of 3")).toBeInTheDocument();
+  });
+
+  it("turns the page without leaving the segment", async () => {
+    const user = userEvent.setup();
+    const { goToPage } = renderWorklist({
+      items: [makeItem()],
+      dataOverrides: { total: 25, limit: 20 },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(goToPage).toHaveBeenCalledWith(20);
+  });
+
+  it("lets the officer choose the page size", async () => {
+    const user = userEvent.setup();
+    const { onPageSizeChange } = renderWorklist();
+
+    await user.selectOptions(screen.getByLabelText("Rows per page"), "100");
+    expect(onPageSizeChange).toHaveBeenCalledWith(100);
+  });
+
+  it("describes the empty page in the segment the officer is looking at", () => {
+    renderWorklist({ items: [], entryState: "entered" });
+    expect(screen.getByText(/Nothing has been entered for/)).toBeInTheDocument();
+  });
+
+  it("says the pending queue is finished rather than that nothing is due", () => {
+    renderWorklist({
+      items: [],
+      dataOverrides: { due_count: 12, pending_count: 0, entered_count: 12, expected_total: "0.00" },
+    });
+
+    expect(screen.getByText(/Nothing left to enter for/)).toBeInTheDocument();
   });
 });

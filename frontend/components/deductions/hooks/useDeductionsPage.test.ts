@@ -13,13 +13,21 @@ import {
   listMembers,
   voidDeduction,
 } from "@/lib/api";
-import type { DeductionWorklistItem, PayrollDeduction, PayrollDeductionSchedule } from "@/lib/api";
+import type {
+  DeductionWorklistEntryState,
+  DeductionWorklistItem,
+  DeductionWorklistOut,
+  PayrollDeduction,
+  PayrollDeductionSchedule,
+} from "@/lib/api";
+import { readStoredPageSize, storePageSize } from "@/lib/pageSize";
 
 import { useDeductionsPage } from "./useDeductionsPage";
 
 vi.mock("@/lib/api", () => ({
   BULK_CHUNK_SIZE: 25,
   LEDGER_PAGE_SIZE: 50,
+  QUEUE_PAGE_SIZE: 20,
   bulkDeductions: vi.fn(),
   confirmDeduction: vi.fn(),
   createDeduction: vi.fn(),
@@ -123,21 +131,36 @@ function makeWorklistItem(overrides: Partial<DeductionWorklistItem> = {}): Deduc
 
 const logout = vi.fn();
 
+function makeWorklistOut(
+  items: DeductionWorklistItem[],
+  overrides: Partial<DeductionWorklistOut> = {}
+): DeductionWorklistOut {
+  return {
+    month: "2026-11-01",
+    items,
+    total: items.length,
+    skip: 0,
+    limit: 20,
+    entry_state: "pending",
+    due_count: items.length,
+    pending_count: items.length,
+    entered_count: 0,
+    expected_total: "0.00",
+    ...overrides,
+  };
+}
+
 describe("useDeductionsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // A page size chosen in one test must not follow the next one around.
+    window.localStorage.clear();
     const records = [makeDeduction()];
     listDeductionsMock.mockResolvedValue(makePage(records));
     getScheduleMock.mockResolvedValue(makeSchedule(records));
     listMembersMock.mockResolvedValue({ items: [], total: 0, skip: 0, limit: 1000 });
     listLoansMock.mockResolvedValue([]);
-    getWorklistMock.mockResolvedValue({
-      month: "2026-11-01",
-      items: [],
-      due_count: 0,
-      entered_count: 0,
-      expected_total: "0.00",
-    });
+    getWorklistMock.mockResolvedValue(makeWorklistOut([]));
   });
 
   it("loads the month's deductions and schedule totals", async () => {
@@ -275,6 +298,47 @@ describe("useDeductionsPage", () => {
     expect(result.current.table.selected).toEqual([]);
   });
 
+  it("sizes both lists from one choice once the officer makes it", async () => {
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    // Until then each list keeps the size that suits it: a ledger row is a
+    // table line, a queue entry is a card with its expected amounts.
+    expect(result.current.table.pagination.limit).toBe(50);
+    expect(result.current.worklist.pagination.limit).toBe(20);
+
+    await act(async () => {
+      result.current.pageSize.change(100);
+    });
+
+    expect(result.current.pageSize.chosen).toBe(100);
+    await waitFor(() =>
+      expect(listDeductionsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ limit: 100, skip: 0 })
+      )
+    );
+    await waitFor(() =>
+      expect(getWorklistMock).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.objectContaining({ limit: 100, skip: 0 })
+      )
+    );
+    expect(readStoredPageSize()).toBe(100);
+  });
+
+  it("applies the size this officer chose last time before they ask again", async () => {
+    storePageSize(20);
+    listDeductionsMock.mockResolvedValue({ items: [], total: 0, skip: 0, limit: 20 });
+
+    const { result } = renderHook(() => useDeductionsPage(logout));
+
+    await waitFor(() =>
+      expect(listDeductionsMock).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 20 }))
+    );
+    expect(result.current.pageSize.chosen).toBe(20);
+    expect(result.current.worklist.pagination.limit).toBe(20);
+  });
+
   it("sends bulk actions in chunks of 25", async () => {
     const ids = Array.from({ length: 30 }, (_, index) => `deduction-${index}`);
     bulkDeductionsMock.mockImplementation(async (_action, chunk) => ({
@@ -386,26 +450,31 @@ describe("useDeductionsPage", () => {
 describe("useDeductionsPage enter queue", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     const records = [makeDeduction()];
     listDeductionsMock.mockResolvedValue(makePage(records));
     getScheduleMock.mockResolvedValue(makeSchedule(records));
     listMembersMock.mockResolvedValue({ items: [], total: 0, skip: 0, limit: 1000 });
     listLoansMock.mockResolvedValue([]);
-    getWorklistMock.mockResolvedValue({
-      month: "2026-11-01",
-      items: [makeWorklistItem()],
-      due_count: 1,
-      entered_count: 0,
-      expected_total: "6000.00",
-    });
+    getWorklistMock.mockResolvedValue(
+      makeWorklistOut([makeWorklistItem()], {
+        due_count: 1,
+        pending_count: 1,
+        expected_total: "6000.00",
+      })
+    );
   });
 
-  it("loads the worklist on mount without entered members", async () => {
+  it("loads the pending queue on mount, one page at a time", async () => {
     const { result } = renderHook(() => useDeductionsPage(logout));
 
     await waitFor(() => expect(result.current.worklist.loading).toBe(false));
 
-    expect(getWorklistMock).toHaveBeenCalledWith(expect.any(String), false);
+    expect(getWorklistMock).toHaveBeenCalledWith(expect.any(String), {
+      entry_state: "pending",
+      skip: 0,
+      limit: 20,
+    });
     expect(result.current.tab).toBe("enter");
     expect(result.current.worklist.data?.items).toHaveLength(1);
     expect(result.current.worklist.data?.due_count).toBe(1);
@@ -499,18 +568,90 @@ describe("useDeductionsPage enter queue", () => {
     expect(result.current.worklist.lastEntered).toBeNull();
   });
 
-  it("reloads the worklist with entered members when toggled on", async () => {
+  it("switches to the entered segment and starts it at page one", async () => {
+    getWorklistMock.mockResolvedValue(
+      makeWorklistOut([makeWorklistItem({ deduction_id: "deduction-1", deduction_status: "draft" })], {
+        entry_state: "entered",
+        total: 1,
+        due_count: 42,
+        pending_count: 41,
+        entered_count: 1,
+      })
+    );
     const { result } = renderHook(() => useDeductionsPage(logout));
     await waitFor(() => expect(result.current.worklist.loading).toBe(false));
 
     await act(async () => {
-      result.current.worklist.setIncludeEntered(true);
+      result.current.worklist.setEntryState("entered");
     });
 
     await waitFor(() =>
-      expect(getWorklistMock).toHaveBeenCalledWith(result.current.filters.month, true)
+      expect(getWorklistMock).toHaveBeenLastCalledWith(result.current.filters.month, {
+        entry_state: "entered",
+        skip: 0,
+        limit: 20,
+      })
     );
-    expect(result.current.worklist.includeEntered).toBe(true);
+    expect(result.current.worklist.entryState).toBe("entered");
+    // The segment lists one member; the month still has 42 waiting.
+    expect(result.current.worklist.data?.items).toHaveLength(1);
+    expect(result.current.worklist.data?.pending_count).toBe(41);
+  });
+
+  it("pages the queue without dropping the officer out of the segment", async () => {
+    getWorklistMock.mockResolvedValue(
+      makeWorklistOut([makeWorklistItem()], { total: 25, skip: 20 })
+    );
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    await act(async () => {
+      result.current.worklist.pagination.goToPage(20);
+    });
+
+    await waitFor(() =>
+      expect(getWorklistMock).toHaveBeenLastCalledWith(expect.any(String), {
+        entry_state: "pending",
+        skip: 20,
+        limit: 20,
+      })
+    );
+    expect(result.current.worklist.pagination.total).toBe(25);
+    expect(result.current.worklist.pagination.skip).toBe(20);
+  });
+
+  it("moves the officer to a page that still has rows after the queue shrinks", async () => {
+    getWorklistMock
+      .mockResolvedValueOnce(makeWorklistOut([makeWorklistItem()], { total: 61 }))
+      .mockResolvedValueOnce(
+        makeWorklistOut([], { total: 40, skip: 40, due_count: 40, pending_count: 40 })
+      )
+      .mockResolvedValue(
+        makeWorklistOut([makeWorklistItem({ member_id: "member-2" })], {
+          total: 40,
+          skip: 20,
+          due_count: 40,
+          pending_count: 40,
+        })
+      );
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    await act(async () => {
+      result.current.worklist.pagination.goToPage(40);
+    });
+
+    // The officer was on page 3 of 4; entering members cut the month to two
+    // pages, so the queue asks for the last page that still has rows.
+    await waitFor(() =>
+      expect(getWorklistMock).toHaveBeenLastCalledWith(expect.any(String), {
+        entry_state: "pending",
+        skip: 20,
+        limit: 20,
+      })
+    );
+    expect(result.current.worklist.pagination.skip).toBe(20);
+    expect(result.current.worklist.data?.items[0].member_id).toBe("member-2");
   });
 
   it("surfaces a worklist load failure without breaking the ledger", async () => {

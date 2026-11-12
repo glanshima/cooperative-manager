@@ -1,11 +1,33 @@
 "use client";
 
-import type { DeductionWorklistItem } from "@/lib/api";
+import type {
+  DeductionWorklistEntryState,
+  DeductionWorklistItem,
+  DeductionWorklistOut,
+} from "@/lib/api";
 import { monthLabel } from "@/lib/month";
 import { ConflictMarker } from "@/components/ui/ConflictMarker";
+import Pagination from "@/components/ui/Pagination";
 
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
 import { STATUS_LABELS, formatMoney } from "../labels";
+
+const SEGMENTS: {
+  value: DeductionWorklistEntryState;
+  label: string;
+  count: (data: DeductionWorklistOut) => number;
+}[] = [
+  { value: "pending", label: "Pending", count: (data) => data.pending_count },
+  { value: "entered", label: "Entered", count: (data) => data.entered_count },
+  { value: "all", label: "All", count: (data) => data.due_count },
+];
+
+const EMPTY_COPY: Record<DeductionWorklistEntryState, (month: string) => string> = {
+  pending: (label) =>
+    `Nothing left to enter for ${label}. Every member who owes a contribution or loan instalment has been entered.`,
+  entered: (label) => `Nothing has been entered for ${label} yet.`,
+  all: (label) => `Nothing is due for ${label}.`,
+};
 
 function ExpectedLines({ item }: { item: DeductionWorklistItem }) {
   return (
@@ -41,12 +63,14 @@ export default function DeductionWorklist({
   month,
   setMonth,
   onAddAny,
+  onPageSizeChange,
   busy,
 }: {
   worklist: DeductionsPageModel["worklist"];
   month: string;
   setMonth: (value: string) => void;
   onAddAny: () => void;
+  onPageSizeChange: (value: number) => void;
   busy: boolean;
 }) {
   const data = worklist.data;
@@ -63,16 +87,21 @@ export default function DeductionWorklist({
             aria-label="Payroll month"
           />
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
-          <input
-            type="checkbox"
-            checked={worklist.includeEntered}
-            onChange={(e) => worklist.setIncludeEntered(e.target.checked)}
-          />
-          Show already entered
-        </label>
+        <div role="group" aria-label="Queue" style={{ display: "flex", gap: 4 }}>
+          {SEGMENTS.map((segment) => (
+            <button
+              key={segment.value}
+              onClick={() => worklist.setEntryState(segment.value)}
+              aria-pressed={worklist.entryState === segment.value}
+              style={{ fontWeight: worklist.entryState === segment.value ? 700 : 400 }}
+            >
+              {segment.label}
+              {data ? ` (${segment.count(data)})` : ""}
+            </button>
+          ))}
+        </div>
         <button onClick={onAddAny}>Add any member</button>
-        <button onClick={worklist.refresh} disabled={worklist.loading}>
+        <button onClick={() => worklist.refresh()} disabled={worklist.loading}>
           {worklist.loading ? "Loading…" : "Refresh"}
         </button>
         {data && (
@@ -100,10 +129,7 @@ export default function DeductionWorklist({
       {worklist.loading && !data && <p>Loading queue…</p>}
 
       {data && data.items.length === 0 && !worklist.loading && (
-        <p style={{ color: "#666" }}>
-          Nothing due for {monthLabel(month)}. Every member who owes a contribution or loan instalment
-          has been entered.
-        </p>
+        <p style={{ color: "#666" }}>{EMPTY_COPY[worklist.entryState](monthLabel(month))}</p>
       )}
 
       {data?.items.map((item) => {
@@ -151,6 +177,16 @@ export default function DeductionWorklist({
           </div>
         );
       })}
+
+      {data && data.total > 0 && (
+        <Pagination
+          skip={worklist.pagination.skip}
+          limit={worklist.pagination.limit}
+          total={data.total}
+          onChange={worklist.pagination.goToPage}
+          onPageSizeChange={onPageSizeChange}
+        />
+      )}
     </section>
   );
 }

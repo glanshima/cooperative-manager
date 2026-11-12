@@ -1265,6 +1265,16 @@ class PayrollDeductionLineCategory(str, enum.Enum):
     OTHER = "other"
 
 
+class DeductionWorklistEntryState(str, enum.Enum):
+    """Which half of the queue the officer is looking at. Nothing is stored
+    under this value -- it filters the worklist by whether the member
+    already has a live record for the month."""
+
+    PENDING = "pending"
+    ENTERED = "entered"
+    ALL = "all"
+
+
 class PayrollDeduction(Base):
     """
     One member's month-end payroll deduction for one month: monthly

@@ -116,6 +116,7 @@ export interface DeductionSubmittableIds {
 // the server's max_length so an exact-boundary batch still passes.
 export const BULK_CHUNK_SIZE = 25;
 export const LEDGER_PAGE_SIZE = 50;
+export const QUEUE_PAGE_SIZE = 20;
 
 export async function listDeductions(
   params: {
@@ -206,8 +207,11 @@ export async function bulkDeductions(
 
 // --- Enter queue (worklist) ---
 // Who still needs entering for a month, with the amounts the server expects.
-// The queue shrinks as drafts are created; expected amounts come from the
-// backend so the officer never has to compute an instalment by hand.
+// The pending segment shrinks as drafts are created; expected amounts come
+// from the backend so the officer never has to compute an instalment by
+// hand. The queue is paginated, so nothing on a page claims to be the month.
+
+export type DeductionWorklistEntryState = "pending" | "entered" | "all";
 
 export interface DeductionWorklistLine {
   category: PayrollDeductionLineCategory;
@@ -236,16 +240,32 @@ export interface DeductionWorklistItem {
 export interface DeductionWorklistOut {
   month: string;
   items: DeductionWorklistItem[];
+  total: number;
+  skip: number;
+  limit: number;
+  entry_state: DeductionWorklistEntryState;
+  // Month-wide, not page-scoped: the counts and the money describe the whole
+  // payroll month however many pages it takes to enter.
   due_count: number;
+  pending_count: number;
   entered_count: number;
   expected_total: string;
 }
 
 export async function getDeductionWorklist(
   month: string,
-  includeEntered = false
+  params: {
+    entry_state?: DeductionWorklistEntryState;
+    skip?: number;
+    limit?: number;
+  } = {}
 ): Promise<DeductionWorklistOut> {
   return apiFetch<DeductionWorklistOut>("/api/payroll-deductions/worklist", {
-    searchParams: { month, include_entered: includeEntered ? "true" : undefined },
+    searchParams: {
+      month,
+      entry_state: params.entry_state,
+      skip: params.skip !== undefined ? String(params.skip) : undefined,
+      limit: params.limit !== undefined ? String(params.limit) : undefined,
+    },
   });
 }

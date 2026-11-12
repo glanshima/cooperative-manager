@@ -452,6 +452,35 @@ def _http_detail_text(exc: HTTPException) -> str:
     return str(exc.detail)
 
 
+def _worklist_item(
+    expectation: deduction_expectations.MemberExpectation,
+    record: Optional[models.PayrollDeduction],
+) -> schemas.DeductionWorklistItem:
+    return schemas.DeductionWorklistItem(
+        member_id=expectation.member_id,
+        member_name=expectation.member_name,
+        member_psn=expectation.member_psn,
+        member_status=expectation.member_status,
+        membership_exit_date=expectation.membership_exit_date,
+        due_reasons=expectation.due_reasons,
+        lines=[
+            schemas.DeductionWorklistLine(
+                category=line.category,
+                amount=line.amount,
+                loan_id=line.loan_id,
+                loan_type_name=line.loan_type_name,
+                arrears=line.arrears,
+                months_behind=line.months_behind,
+            )
+            for line in expectation.lines
+        ],
+        warnings=expectation.warnings,
+        expected_total=expectation.total,
+        deduction_id=record.id if record else None,
+        deduction_status=record.status if record else None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Read endpoints
 # ---------------------------------------------------------------------------
@@ -561,17 +590,27 @@ def get_schedule(
 def get_worklist(
     request: Request,
     month: str = Query(..., description="Payroll month in YYYY-MM format"),
-    include_entered: bool = Query(
-        default=False,
-        description="Also list members whose month already has a live record",
+    entry_state: schemas.DeductionWorklistEntryState = Query(
+        default=schemas.DeductionWorklistEntryState.PENDING,
+        description="pending = still to enter, entered = already entered, all = both",
     ),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
     current_user: models.User = Depends(require_permission("deduction.view")),
     db: Session = Depends(get_db),
 ):
     """Who still needs entering for a payroll month, with the amounts the
     server expects. A member appears only when something is actually due
     (a contribution, a missing contribution amount to resolve, or a loan
-    instalment), so the list shrinks as the officer works through it."""
+    instalment), so the pending queue shrinks as the officer works through
+    it.
+
+    The whole month is priced on every call, because the counts and
+    `expected_total` beside the queue have to describe the month rather than
+    the page -- an officer three pages in still needs to know how much of it
+    is left. Paging pays for itself in the response size, and for_month
+    batches the pricing lookups so the work stays a fixed handful of queries
+    instead of one per member."""
     month_start = _month_start(month)
 
     entered = {
@@ -584,52 +623,38 @@ def get_worklist(
         .all()
     }
 
-    members = db.query(models.Member).order_by(models.Member.name).all()
-    items: List[schemas.DeductionWorklistItem] = []
+    rows: List[schemas.DeductionWorklistItem] = []
     due_count = 0
+    pending_count = 0
+    entered_count = 0
     expected_total = Decimal("0")
 
-    for member in members:
-        expectation = deduction_expectations.for_member(db, member, month_start)
+    for expectation in deduction_expectations.for_month(db, month_start):
         if not expectation.is_due:
             continue
         due_count += 1
-        record = entered.get(member.id)
-        if record is not None and not include_entered:
-            continue
+        record = entered.get(expectation.member_id)
         if record is None:
+            pending_count += 1
             expected_total += expectation.total
-        items.append(
-            schemas.DeductionWorklistItem(
-                member_id=member.id,
-                member_name=member.name,
-                member_psn=member.psn,
-                member_status=member.status,
-                membership_exit_date=member.membership_exit_date,
-                due_reasons=expectation.due_reasons,
-                lines=[
-                    schemas.DeductionWorklistLine(
-                        category=line.category,
-                        amount=line.amount,
-                        loan_id=line.loan_id,
-                        loan_type_name=line.loan_type_name,
-                        arrears=line.arrears,
-                        months_behind=line.months_behind,
-                    )
-                    for line in expectation.lines
-                ],
-                warnings=expectation.warnings,
-                expected_total=expectation.total,
-                deduction_id=record.id if record else None,
-                deduction_status=record.status if record else None,
-            )
-        )
+        else:
+            entered_count += 1
+        if entry_state == schemas.DeductionWorklistEntryState.PENDING and record is not None:
+            continue
+        if entry_state == schemas.DeductionWorklistEntryState.ENTERED and record is None:
+            continue
+        rows.append(_worklist_item(expectation, record))
 
     response = schemas.DeductionWorklistOut(
         month=month_start,
-        items=items,
+        items=rows[skip : skip + limit],
+        total=len(rows),
+        skip=skip,
+        limit=limit,
+        entry_state=entry_state,
         due_count=due_count,
-        entered_count=len(entered),
+        pending_count=pending_count,
+        entered_count=entered_count,
         expected_total=expected_total,
     )
     flagged = mark_conflicted_reads(

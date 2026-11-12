@@ -7,14 +7,19 @@ does the server expect?" so the queue shrinks as it is worked through.
   - a member appears only when something is due: a contribution, a loan
     instalment, or a financial member with no amount on file (which the
     officer must resolve rather than skip silently);
-  - entering a member removes them from the queue; include_entered keeps
-    them visible with their record's status;
+  - entering a member moves them out of the pending queue, and entry_state
+    chooses which queue the response lists;
+  - the queue is paginated like the ledger, but due_count, pending_count,
+    entered_count and expected_total always describe the whole month -- a
+    page of the queue cannot add up to the month;
   - amounts, arrears and warnings come from the expectation engine;
   - conflicted members stay visible and flagged (the read policy);
   - the endpoint needs deduction.view and the Deductions module.
 """
 from datetime import date
 from decimal import Decimal
+
+from sqlalchemy import event
 
 from app import models
 from tests.conftest import (
@@ -58,12 +63,39 @@ def _loan(db_session, member, loan_type, *, repaid="0.00"):
     return loan
 
 
-def _worklist(client, user, *, month=MONTH, include_entered=False):
+def _worklist(client, user, *, month=MONTH, entry_state=None, skip=None, limit=None):
+    params = {"month": month}
+    if entry_state is not None:
+        params["entry_state"] = entry_state
+    if skip is not None:
+        params["skip"] = skip
+    if limit is not None:
+        params["limit"] = limit
     return client.get(
         "/api/payroll-deductions/worklist",
         headers=auth_headers(user),
-        params={"month": month, "include_entered": str(include_entered).lower()},
+        params=params,
     )
+
+
+def _selects_during(db_session, call):
+    """The SELECT statements issued while `call` runs. Statements rather
+    than timing, because the worklist's cost is the point: pricing every
+    member separately is invisible on a five-member month and ruinous on a
+    190-member one."""
+    statements = []
+    engine = db_session.get_bind()
+
+    def collect(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", collect)
+    try:
+        call()
+    finally:
+        event.remove(engine, "before_cursor_execute", collect)
+    return statements
 
 
 def _enter(client, admin, member, loan=None):
@@ -116,13 +148,23 @@ def test_entering_a_member_removes_them_from_the_queue(client, db_session):
     after = _worklist(client, admin).json()
     assert [item["member_id"] for item in after["items"]] == [str(other.id)]
     assert after["due_count"] == 2
+    assert after["pending_count"] == 1
     assert after["entered_count"] == 1
     assert after["expected_total"] == "5000.00"
 
-    included = _worklist(client, admin, include_entered=True).json()
-    entered = next(item for item in included["items"] if item["member_id"] == str(member.id))
-    assert entered["deduction_id"] == record["id"]
-    assert entered["deduction_status"] == "draft"
+    entered_segment = _worklist(client, admin, entry_state="entered").json()
+    assert entered_segment["total"] == 1
+    item = entered_segment["items"][0]
+    assert item["member_id"] == str(member.id)
+    assert item["deduction_id"] == record["id"]
+    assert item["deduction_status"] == "draft"
+
+    both = _worklist(client, admin, entry_state="all").json()
+    assert {item["member_id"] for item in both["items"]} == {str(member.id), str(other.id)}
+    assert both["total"] == 2
+    # The month's money is the pending half, whichever segment is open.
+    assert both["expected_total"] == "5000.00"
+    assert after["pending_count"] + after["entered_count"] == after["due_count"]
 
 
 def test_voiding_a_record_returns_the_member_to_the_queue(client, db_session):
@@ -258,3 +300,124 @@ def test_the_deductions_toggle_gates_the_worklist(client, db_session):
 
     assert response.status_code == 403
     assert "disabled" in response.json()["detail"]
+
+
+def test_the_queue_pages_but_its_totals_stay_month_wide(client, db_session):
+    admin = make_admin_user(db_session, username="worklist_admin", super_admin=True)
+    members = [_financial(db_session, f"PSN-WL-P{i:02d}") for i in range(25)]
+    assert len({member.name for member in members}) == 25
+
+    first = _worklist(client, admin).json()
+
+    assert first["skip"] == 0
+    assert first["limit"] == 20
+    assert first["total"] == 25 == len(first["items"]) + 5
+    assert len(first["items"]) == 20
+    # Month-wide, not page-scoped: 25 members at 5,000 each.
+    assert first["due_count"] == 25
+    assert first["pending_count"] == 25
+    assert first["expected_total"] == "125000.00"
+
+    second = _worklist(client, admin, skip=20).json()
+
+    assert len(second["items"]) == 5
+    assert second["total"] == 25
+    assert second["due_count"] == 25
+    assert second["expected_total"] == "125000.00"
+    # Page 2 continues where page 1 stopped instead of repeating it, and the
+    # whole month walks in name order.
+    names = [item["member_name"] for item in first["items"] + second["items"]]
+    assert len({name for name in names}) == 25
+    assert names == sorted(names)
+    page_one = {item["member_id"] for item in first["items"]}
+    assert {item["member_id"] for item in second["items"]}.isdisjoint(page_one)
+    assert page_one | {item["member_id"] for item in second["items"]} == {
+        str(member.id) for member in members
+    }
+
+
+def test_the_officer_chooses_how_many_rows_a_page_holds(client, db_session):
+    admin = make_admin_user(db_session, username="worklist_admin", super_admin=True)
+    _financial(db_session, "PSN-WL-S1")
+    _financial(db_session, "PSN-WL-S2")
+    _financial(db_session, "PSN-WL-S3")
+
+    body = _worklist(client, admin, limit=2).json()
+
+    assert body["limit"] == 2
+    assert len(body["items"]) == 2
+    assert body["total"] == 3
+    assert body["pending_count"] == 3
+    assert body["expected_total"] == "15000.00"
+
+
+def test_the_queue_rejects_a_page_that_cannot_be_served(client, db_session):
+    admin = make_admin_user(db_session, username="worklist_admin", super_admin=True)
+    _financial(db_session, "PSN-WL-B1")
+
+    assert _worklist(client, admin, limit=0).status_code == 422
+    assert _worklist(client, admin, limit=101).status_code == 422
+    assert _worklist(client, admin, skip=-1).status_code == 422
+    assert _worklist(client, admin, entry_state="unfinished").status_code == 422
+    # A skip past the last page is empty, not an error: the officer can be
+    # paging while the queue shrinks under them.
+    assert _worklist(client, admin, skip=50).json()["items"] == []
+
+
+def test_a_record_for_a_member_nothing_now_expects_is_not_counted_as_entered(
+    client, db_session
+):
+    """`entered_count` answers 'how much of this month's queue is done', so
+    it counts entered members who are still due. A record whose expectation
+    has since disappeared (a loan repaid by bank in the meantime) stays in
+    the ledger, which is the complete record list, rather than inflating the
+    queue's progress."""
+    admin = make_admin_user(db_session, username="worklist_admin", super_admin=True)
+    due = _financial(db_session, "PSN-WL-E1")
+    settled = make_member(
+        db_session, psn="PSN-WL-E2", status=models.MemberStatus.NON_FINANCIAL
+    )
+    loan_type = make_loan_type(db_session, "Worklist Loan")
+    loan = _loan(db_session, settled, loan_type)
+    response = client.post(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        json={
+            "member_id": str(settled.id),
+            "deduction_month": MONTH,
+            "lines": [{"category": "loan_repayment", "loan_id": str(loan.id), "amount": "100.00"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    db_session.get(models.Loan, loan.id).amount_repaid = Decimal("1200.00")
+    db_session.commit()
+
+    body = _worklist(client, admin, entry_state="all").json()
+
+    assert body["due_count"] == 1
+    assert body["pending_count"] == 1
+    assert body["entered_count"] == 0
+    assert [item["member_id"] for item in body["items"]] == [str(due.id)]
+
+
+def test_pricing_a_bigger_month_does_not_cost_more_queries(client, db_session):
+    """The queue prices the whole month on every call because its counts are
+    month-wide, so pricing has to run in batches: one loan query and two
+    repayment queries per month, not per member."""
+    admin = make_admin_user(db_session, username="worklist_admin", super_admin=True)
+    for index in range(5):
+        member = _financial(db_session, f"PSN-WL-N{index}")
+        _loan(db_session, member, make_loan_type(db_session, f"Worklist Loan {index}"))
+
+    small = _selects_during(db_session, lambda: _worklist(client, admin).json())
+    for index in range(5, 15):
+        member = _financial(db_session, f"PSN-WL-N{index}")
+        _loan(db_session, member, make_loan_type(db_session, f"Worklist Loan {index}"))
+    large = _selects_during(db_session, lambda: _worklist(client, admin).json())
+
+    assert _worklist(client, admin).json()["due_count"] == 15
+    # Three times the members and loans, the same number of queries.
+    assert len(large) == len(small)
+    # ...and well clear of a query per member, which would be 45+ here.
+    assert len(small) < 20

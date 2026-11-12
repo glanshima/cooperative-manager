@@ -25,9 +25,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 
 from . import contributions, models
 
@@ -107,37 +108,65 @@ class MemberExpectation:
             line.expected_amount = self.amount_for(line)
 
 
-def _verified_paid_for_month(db: Session, loan_id: uuid.UUID, month: date) -> Decimal:
-    total = (
-        db.query(models.LoanRepayment.amount_claimed)
+def _loans_owing(db: Session, member_ids: List[uuid.UUID]) -> List[models.Loan]:
+    """Every loan that could still expect an instalment, oldest first. A
+    settled or closed loan can never produce a line, so SQL drops it here
+    rather than letting each one be priced and discarded."""
+    if not member_ids:
+        return []
+    return (
+        db.query(models.Loan)
+        .options(joinedload(models.Loan.loan_type))
         .filter(
-            models.LoanRepayment.loan_id == loan_id,
+            models.Loan.member_id.in_(member_ids),
+            models.Loan.status == models.LoanStatus.ACTIVE,
+            models.Loan.total_repayable > models.Loan.amount_repaid,
+        )
+        .order_by(models.Loan.member_id, models.Loan.disbursement_date.asc())
+        .all()
+    )
+
+
+def _verified_paid_by_loan(
+    db: Session, loan_ids: List[uuid.UUID], month: date
+) -> Dict[uuid.UUID, Decimal]:
+    if not loan_ids:
+        return {}
+    rows = (
+        db.query(models.LoanRepayment.loan_id, models.LoanRepayment.amount_claimed)
+        .filter(
+            models.LoanRepayment.loan_id.in_(loan_ids),
             models.LoanRepayment.payment_month == month,
             models.LoanRepayment.status == models.RepaymentVerificationStatus.VERIFIED,
         )
         .all()
     )
-    return sum((row[0] for row in total), ZERO)
+    totals: Dict[uuid.UUID, Decimal] = {}
+    for loan_id, amount in rows:
+        totals[loan_id] = totals.get(loan_id, ZERO) + amount
+    return totals
 
 
-def _unattributed_payments(db: Session, loan_id: uuid.UUID) -> int:
-    return (
-        db.query(models.LoanRepayment)
+def _unattributed_by_loan(db: Session, loan_ids: List[uuid.UUID]) -> Dict[uuid.UUID, int]:
+    if not loan_ids:
+        return {}
+    rows = (
+        db.query(models.LoanRepayment.loan_id, func.count(models.LoanRepayment.id))
         .filter(
-            models.LoanRepayment.loan_id == loan_id,
+            models.LoanRepayment.loan_id.in_(loan_ids),
             models.LoanRepayment.payment_month.is_(None),
             models.LoanRepayment.status == models.RepaymentVerificationStatus.VERIFIED,
         )
-        .count()
+        .group_by(models.LoanRepayment.loan_id)
+        .all()
     )
+    return {loan_id: count for loan_id, count in rows}
 
 
 def _loan_expectation(
-    db: Session, loan: models.Loan, month: date
+    loan: models.Loan, month: date, paid_this_month: Decimal
 ) -> Optional[ExpectedLine]:
     remaining = loan.total_repayable - loan.amount_repaid
-    if loan.status != models.LoanStatus.ACTIVE or remaining <= ZERO:
-        return None
 
     first_due = contributions.next_month_start(loan.disbursement_date)
     due_months = months_between(first_due, month)
@@ -145,7 +174,6 @@ def _loan_expectation(
         return None
 
     instalment = min(loan.monthly_installment, remaining)
-    paid_this_month = _verified_paid_for_month(db, loan.id, month)
     amount = max(instalment - paid_this_month, ZERO)
 
     # Arrears are measured against what the schedule should have collected
@@ -169,8 +197,16 @@ def _loan_expectation(
     )
 
 
-def for_member(db: Session, member: models.Member, month: date) -> MemberExpectation:
-    month = contributions.month_start(month)
+def _price_member(
+    db: Session,
+    member: models.Member,
+    month: date,
+    loans: List[models.Loan],
+    paid_by_loan: Dict[uuid.UUID, Decimal],
+    unattributed_by_loan: Dict[uuid.UUID, int],
+) -> MemberExpectation:
+    """The pricing itself, with every lookup the member's loans need already
+    in hand. `month` must already be normalized to the first of the month."""
     expectation = MemberExpectation(
         member_id=member.id,
         member_name=member.name,
@@ -195,17 +231,11 @@ def for_member(db: Session, member: models.Member, month: date) -> MemberExpecta
                 )
             )
 
-    loans = (
-        db.query(models.Loan)
-        .filter(models.Loan.member_id == member.id)
-        .order_by(models.Loan.disbursement_date.asc())
-        .all()
-    )
     for loan in loans:
-        line = _loan_expectation(db, loan, month)
+        line = _loan_expectation(loan, month, paid_by_loan.get(loan.id, ZERO))
         if line is None:
             continue
-        unattributed = _unattributed_payments(db, loan.id)
+        unattributed = unattributed_by_loan.get(loan.id, 0)
         if unattributed:
             expectation.warnings.append(
                 f"{line.loan_type_name or 'Loan'}: {unattributed} verified repayment(s) have no "
@@ -220,6 +250,53 @@ def for_member(db: Session, member: models.Member, month: date) -> MemberExpecta
         expectation.lines.append(line)
 
     return expectation
+
+
+def for_member(db: Session, member: models.Member, month: date) -> MemberExpectation:
+    month = contributions.month_start(month)
+    loans = _loans_owing(db, [member.id])
+    loan_ids = [loan.id for loan in loans]
+    return _price_member(
+        db,
+        member,
+        month,
+        loans,
+        _verified_paid_by_loan(db, loan_ids, month),
+        _unattributed_by_loan(db, loan_ids),
+    )
+
+
+def for_month(db: Session, month: date) -> List[MemberExpectation]:
+    """Every member's expectation for a payroll month, ordered by name.
+
+    The whole month is priced at once because the queue's totals are
+    month-wide: which members are due, and how much is still outstanding,
+    cannot come from a page. Batching is what makes that affordable -- the
+    loan and repayment lookups run once across every member instead of once
+    per member, so pricing 190 members costs a handful of queries rather
+    than a thousand."""
+    month = contributions.month_start(month)
+    members = db.query(models.Member).order_by(models.Member.name).all()
+    loans = _loans_owing(db, [member.id for member in members])
+    loan_ids = [loan.id for loan in loans]
+    paid_by_loan = _verified_paid_by_loan(db, loan_ids, month)
+    unattributed_by_loan = _unattributed_by_loan(db, loan_ids)
+
+    by_member: Dict[uuid.UUID, List[models.Loan]] = {}
+    for loan in loans:
+        by_member.setdefault(loan.member_id, []).append(loan)
+
+    return [
+        _price_member(
+            db,
+            member,
+            month,
+            by_member.get(member.id, []),
+            paid_by_loan,
+            unattributed_by_loan,
+        )
+        for member in members
+    ]
 
 
 def has_override(lines: List[models.PayrollDeductionLine]) -> bool:
