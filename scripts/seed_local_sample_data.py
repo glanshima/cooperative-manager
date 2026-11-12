@@ -3,8 +3,9 @@ Seeds the LOCAL OFFLINE SANDBOX with sample data: permissions/roles
 authoritative catalogue, a super-admin login, sample members (+ a
 member-to-member next-of-kin link), sample loan types with rate
 versions, two member logins (one normal, one forcing the first-login
-password reset flow), and a member-linked admin fixture for the smoke
-test's Next-of-Kin conflict check.
+password reset flow), a member-linked admin fixture for the smoke test's
+Next-of-Kin conflict check, and 26 login-less members owing a
+contribution so the payroll deduction Enter queue runs past one page.
 
 THIS SCRIPT IS LOCAL-ONLY. It refuses to run unless DATABASE_URL points
 at the sandbox Postgres (127.0.0.1:55432, see scripts/local_db.py).
@@ -23,6 +24,7 @@ The same command works after starting the sandbox with:
 import os
 import sys
 from datetime import date
+from decimal import Decimal
 from urllib.parse import urlparse
 
 import dotenv
@@ -94,6 +96,17 @@ MEMBER_PASSWORD = "MemberTest#2026"
 SMOKE_NOK_ADMIN_USERNAME = "smoke_nok_admin"
 SMOKE_NOK_ADMIN_PASSWORD = "SmokeNok#2026"
 SMOKE_NOK_FIXTURE_PSN = "MCT-9001"
+
+# Fixture for the deductions Enter queue. The queue pages at 20, so 26
+# financial members each owing a contribution make two pages with a short
+# second one -- the only way paging, the Pending/Entered/All segment counts
+# and the rows-per-page choice show any behaviour worth checking by hand.
+# With 20 or fewer due members the whole queue is one page and every control
+# looks correct while doing nothing.
+QUEUE_FIXTURE_COUNT = 26
+QUEUE_FIXTURE_PSN_PREFIX = "QLPAGE"
+QUEUE_FIXTURE_CONTRIBUTION = Decimal("5000.00")
+QUEUE_FIXTURE_EFFECTIVE_FROM = date(2026, 1, 1)
 
 SAMPLE_MEMBERS = [
     # (psn, name, gender, department, phone, email, status, bank, account_no,
@@ -233,6 +246,29 @@ def seed_conflict_fixture(session):
         print(f"User {SMOKE_NOK_ADMIN_USERNAME!r}: linked to {SMOKE_NOK_FIXTURE_PSN}.")
 
 
+def seed_queue_paging_fixture(session):
+    """The 26 members the deduction Enter queue needs to spill onto a
+    second page. They have no login and no loans -- only a contribution
+    amount, which is what makes each of them due."""
+    created = 0
+    for index in range(1, QUEUE_FIXTURE_COUNT + 1):
+        psn = f"{QUEUE_FIXTURE_PSN_PREFIX}{index:02d}"
+        if session.execute(select(Member).where(Member.psn == psn)).scalar_one_or_none():
+            continue
+        session.add(Member(
+            psn=psn,
+            name=f"Queue Paging Member {index:02d}",
+            status=MemberStatus.FINANCIAL,
+            email=f"{QUEUE_FIXTURE_PSN_PREFIX.lower()}{index}@example.com",
+            monthly_contribution_amount=QUEUE_FIXTURE_CONTRIBUTION,
+            contribution_effective_from=QUEUE_FIXTURE_EFFECTIVE_FROM,
+        ))
+        created += 1
+    session.flush()
+    print(f"Queue paging members: {created} created, "
+          f"{QUEUE_FIXTURE_COUNT - created} already existed.")
+
+
 def seed_loan_types(session):
     created = 0
     for name, description, rate, tenure, flat, open_for_app in SAMPLE_LOAN_TYPES:
@@ -285,6 +321,7 @@ def main():
         seed_relationship(session)
         seed_loan_types(session)
         seed_conflict_fixture(session)
+        seed_queue_paging_fixture(session)
 
         m1 = session.execute(select(Member).where(Member.psn == "MCT-0001")).scalar_one()
         m3 = session.execute(select(Member).where(Member.psn == "MCT-0003")).scalar_one()
