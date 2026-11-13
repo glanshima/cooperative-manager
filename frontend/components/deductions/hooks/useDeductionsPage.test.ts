@@ -67,6 +67,7 @@ function makeDeduction(overrides: Partial<PayrollDeduction> = {}): PayrollDeduct
     status: "draft",
     contribution_total: "2000.00",
     loan_total: "500.00",
+    arrears_total: "0.00",
     other_total: "100.00",
     grand_total: "2600.00",
     submitted_at: null,
@@ -95,11 +96,12 @@ function makeSchedule(records: PayrollDeduction[]): PayrollDeductionSchedule {
     totals: {
       contribution_total: "2000.00",
       loan_total: "500.00",
+      arrears_total: "0.00",
       other_total: "100.00",
       grand_total: "2600.00",
     },
   };
-}
+} // Ensure this matches the type definition
 
 function makeWorklistItem(overrides: Partial<DeductionWorklistItem> = {}): DeductionWorklistItem {
   return {
@@ -116,12 +118,20 @@ function makeWorklistItem(overrides: Partial<DeductionWorklistItem> = {}): Deduc
         amount: "1000.00",
         loan_id: "loan-1",
         loan_type_name: "Regular loan",
-        arrears: "0.00",
-        months_behind: 0,
+        arrears: "2000.00",
+        months_behind: 2,
+      },
+      {
+        category: "loan_arrears",
+        amount: "2000.00",
+        loan_id: "loan-1",
+        loan_type_name: "Regular loan",
+        arrears: "2000.00",
+        months_behind: 2,
       },
     ],
     warnings: [],
-    expected_total: "6000.00",
+    expected_total: "8000.00",
     deduction_id: null,
     deduction_status: null,
     conflicted: false,
@@ -460,7 +470,7 @@ describe("useDeductionsPage enter queue", () => {
       makeWorklistOut([makeWorklistItem()], {
         due_count: 1,
         pending_count: 1,
-        expected_total: "6000.00",
+        expected_total: "8000.00",
       })
     );
   });
@@ -497,7 +507,24 @@ describe("useDeductionsPage enter queue", () => {
       memberStatus: "financial",
       month: result.current.filters.month,
       contribution: "5000.00",
-      loanLines: [{ loanId: "loan-1", label: "Regular loan", amount: "1000.00" }],
+      loanLines: [
+        {
+          key: "loan-1:loan_repayment",
+          loanId: "loan-1",
+          category: "loan_repayment",
+          loanName: "Regular loan",
+          label: "Regular loan",
+          amount: "1000.00",
+        },
+        {
+          key: "loan-1:loan_arrears",
+          loanId: "loan-1",
+          category: "loan_arrears",
+          loanName: "Regular loan",
+          label: "Arrears on Regular loan — 2 months behind",
+          amount: "2000.00",
+        },
+      ],
       conflicted: false,
     });
   });
