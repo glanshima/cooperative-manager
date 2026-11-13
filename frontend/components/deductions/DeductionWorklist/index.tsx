@@ -10,7 +10,17 @@ import { ConflictMarker } from "@/components/ui/ConflictMarker";
 import Pagination from "@/components/ui/Pagination";
 
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
-import { STATUS_LABELS, formatMoney, loanLineName, monthsBehind } from "../labels";
+import { STATUS_LABELS, formatMoney } from "../labels";
+import type { LoanLineCategory } from "@/lib/api";
+
+function loanLineName(category: LoanLineCategory, loanTypeName?: string | null): string {
+  const name = loanTypeName ?? "Loan";
+  return category === "loan_arrears" ? `Arrears on ${name}` : name;
+}
+
+function monthsBehind(count: number): string {
+  return `${count} month${count === 1 ? "" : "s"} behind`;
+}
 
 const SEGMENTS: {
   value: DeductionWorklistEntryState;

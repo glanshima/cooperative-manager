@@ -1,0 +1,17 @@
+{
+  "name": "cooperative-manager",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "cd frontend && npm run build",
+    "dev": "cd frontend && npm run dev",
+    "test": "cd frontend && npm test",
+    "lint": "cd frontend && npm run lint"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "workspaces": [
+    "frontend"
+  ]
+}
