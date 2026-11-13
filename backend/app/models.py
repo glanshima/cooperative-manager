@@ -1262,6 +1262,11 @@ class PayrollDeductionStatus(str, enum.Enum):
 class PayrollDeductionLineCategory(str, enum.Enum):
     MONTHLY_CONTRIBUTION = "monthly_contribution"
     LOAN_REPAYMENT = "loan_repayment"
+    # A catch-up on instalments missed in earlier months, for the loan this
+    # line names. It credits Loan.amount_repaid exactly like LOAN_REPAYMENT
+    # and is a separate category only so the printed schedule can show why a
+    # month deducts more than one instalment instead of hiding it inside one.
+    LOAN_ARREARS = "loan_arrears"
     OTHER = "other"
 
 
@@ -1365,6 +1370,10 @@ class PayrollDeduction(Base):
     @property
     def loan_total(self) -> Decimal:
         return self._total(PayrollDeductionLineCategory.LOAN_REPAYMENT)
+
+    @property
+    def arrears_total(self) -> Decimal:
+        return self._total(PayrollDeductionLineCategory.LOAN_ARREARS)
 
     @property
     def other_total(self) -> Decimal:
@@ -1472,8 +1481,11 @@ class Settings(Base):
     members_module_enabled = Column(Boolean, nullable=False, default=True)
     loans_module_enabled = Column(Boolean, nullable=False, default=True)
     deductions_module_enabled = Column(Boolean, nullable=False, default=True)
-    cashbook_module_enabled = Column(Boolean, nullable=False, default=True)
-    dividends_module_enabled = Column(Boolean, nullable=False, default=True)
+    # No cashbook or dividends module exists yet, so these start off: an
+    # enabled switch for absent software reads to an admin as broken rather
+    # than as a roadmap. Flip them here when the modules land.
+    cashbook_module_enabled = Column(Boolean, nullable=False, default=False)
+    dividends_module_enabled = Column(Boolean, nullable=False, default=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

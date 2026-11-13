@@ -230,7 +230,7 @@ def test_an_exited_member_with_a_loan_is_listed_with_the_exit_date(client, db_se
     assert item["expected_total"] == "100.00"
 
 
-def test_arrears_are_shown_without_inflating_the_expected_total(client, db_session):
+def test_arrears_arrive_as_their_own_line_in_the_expected_total(client, db_session):
     admin = make_admin_user(db_session, username="worklist_admin", super_admin=True)
     member = _financial(db_session, "PSN-WL-8", amount=None)
     loan_type = make_loan_type(db_session, "Worklist Loan")
@@ -238,11 +238,22 @@ def test_arrears_are_shown_without_inflating_the_expected_total(client, db_sessi
 
     item = _worklist(client, admin).json()["items"][0]
 
-    line = item["lines"][0]
-    assert line["amount"] == "100.00"
-    assert line["arrears"] == "700.00"
-    assert line["months_behind"] == 7
-    assert item["expected_total"] == "100.00"
+    instalment, arrears = item["lines"]
+    assert instalment["category"] == "loan_repayment"
+    assert instalment["amount"] == "100.00"
+    assert arrears["category"] == "loan_arrears"
+    assert arrears["amount"] == "600.00"
+    assert arrears["months_behind"] == 6
+    # The catch-up is money payroll should actually take, so it is in the
+    # month's expected total rather than only noted beside the instalment.
+    assert item["expected_total"] == "700.00"
+    # The missing contribution amount is a warning of its own, and this
+    # member is due for both the instalment and the catch-up.
+    assert item["due_reasons"] == [
+        "contribution_amount_missing",
+        "loan_instalment",
+        "loan_arrears",
+    ]
 
 
 def test_a_conflicted_member_stays_visible_and_flagged(client, db_session):

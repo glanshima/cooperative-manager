@@ -51,8 +51,8 @@ export default function DeductionFilters({
         {totals && (
           <span style={{ marginLeft: "auto", color: "#333", fontSize: 14 }}>
             {monthLabel(filters.month)} — contribution {formatMoney(totals.contribution_total)}, loans{" "}
-            {formatMoney(totals.loan_total)}, other {formatMoney(totals.other_total)} — total{" "}
-            <strong>{formatMoney(totals.grand_total)}</strong>
+            {formatMoney(totals.loan_total)}, arrears {formatMoney(totals.arrears_total)}, other{" "}
+            {formatMoney(totals.other_total)} — total <strong>{formatMoney(totals.grand_total)}</strong>
           </span>
         )}
       </div>

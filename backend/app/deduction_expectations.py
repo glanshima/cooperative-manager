@@ -15,9 +15,13 @@ Rules (all agreed with the cooperative):
   - A loan line is the instalment capped at the remaining balance, less
     anything the member already paid for THAT month by bank transfer and
     had verified -- otherwise they would pay the same instalment twice.
-  - Arrears are reported, not silently accumulated: only the current
-    month is pre-filled, with the shortfall and the number of months it
-    covers shown alongside so the officer can decide.
+  - Arrears are computed, never stored: they are what the schedule should
+    have collected by this month minus what has actually been repaid. A
+    member who is behind gets a second, separate line for that shortfall so
+    the catch-up is visible on the schedule instead of buried in an
+    instalment. Pre-filling the full amount is a proposal, not a sentence --
+    an officer who agrees a slower catch-up types a different figure, which
+    the override guard treats as the discretionary decision it is.
   - Verified repayments with no recorded month cannot be attributed, so
     they are surfaced as a warning instead of being netted off a guess.
 """
@@ -37,6 +41,7 @@ ZERO = Decimal("0.00")
 DUE_CONTRIBUTION = "contribution"
 DUE_CONTRIBUTION_AMOUNT_MISSING = "contribution_amount_missing"
 DUE_LOAN_INSTALMENT = "loan_instalment"
+DUE_LOAN_ARREARS = "loan_arrears"
 
 
 def months_between(first: date, last: date) -> int:
@@ -79,12 +84,19 @@ class MemberExpectation:
     def amount_for(self, line: models.PayrollDeductionLine) -> Optional[Decimal]:
         """The expectation behind an entered line, or None when the officer
         typed a figure nothing on file predicts ('other' lines, or a loan
-        that no longer expects an instalment this month)."""
+        that no longer expects an instalment this month).
+
+        Loan lines are matched on category as well as loan, because one loan
+        can legitimately contribute both this month's instalment and a
+        catch-up of earlier ones."""
         if line.category == models.PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION:
             return self.contribution_amount
-        if line.category == models.PayrollDeductionLineCategory.LOAN_REPAYMENT:
+        if line.category in (
+            models.PayrollDeductionLineCategory.LOAN_REPAYMENT,
+            models.PayrollDeductionLineCategory.LOAN_ARREARS,
+        ):
             for expected in self.lines:
-                if expected.loan_id == line.loan_id:
+                if expected.category == line.category and expected.loan_id == line.loan_id:
                     return expected.amount
         return None
 
@@ -165,36 +177,63 @@ def _unattributed_by_loan(db: Session, loan_ids: List[uuid.UUID]) -> Dict[uuid.U
 
 def _loan_expectation(
     loan: models.Loan, month: date, paid_this_month: Decimal
-) -> Optional[ExpectedLine]:
+) -> List[ExpectedLine]:
+    """This month's lines for one loan: the instalment, plus a separate
+    catch-up line when the schedule should already have collected more than
+    it has.
+
+    The two are split out of one figure rather than computed independently,
+    because both credit the same balance -- taken separately they could
+    together claim more than the loan still owes, or charge this month's
+    instalment twice."""
     remaining = loan.total_repayable - loan.amount_repaid
 
     first_due = contributions.next_month_start(loan.disbursement_date)
     due_months = months_between(first_due, month)
     if due_months == 0:
-        return None
+        return []
 
     instalment = min(loan.monthly_installment, remaining)
     amount = max(instalment - paid_this_month, ZERO)
 
-    # Arrears are measured against what the schedule should have collected
-    # by this month, not against the pre-filled line: a member who paid
-    # this month's instalment by bank can still be behind on earlier ones.
+    # What the schedule should have collected by now, measured against the
+    # loan's own history rather than this month's pre-filled line: a member
+    # who paid this month's instalment by bank can still be behind on the
+    # earlier ones.
     scheduled = min(loan.monthly_installment * due_months, loan.total_repayable)
-    arrears = max(scheduled - loan.amount_repaid - paid_this_month, ZERO)
+    outstanding = max(scheduled - loan.amount_repaid - paid_this_month, ZERO)
+    arrears = max(outstanding - amount, ZERO)
+
     months_behind = 0
     if arrears > ZERO and loan.monthly_installment > ZERO:
         months_behind = int(arrears // loan.monthly_installment)
         if arrears % loan.monthly_installment:
             months_behind += 1
 
-    return ExpectedLine(
-        category=models.PayrollDeductionLineCategory.LOAN_REPAYMENT,
-        amount=amount,
-        loan_id=loan.id,
-        loan_type_name=loan.loan_type.name if loan.loan_type else None,
-        arrears=arrears,
-        months_behind=months_behind,
-    )
+    # Arrears describe the loan, so both of its lines carry them; the queue
+    # shows them once, beside the catch-up.
+    common = {
+        "loan_id": loan.id,
+        "loan_type_name": loan.loan_type.name if loan.loan_type else None,
+        "arrears": arrears,
+        "months_behind": months_behind,
+    }
+    lines = [
+        ExpectedLine(
+            category=models.PayrollDeductionLineCategory.LOAN_REPAYMENT,
+            amount=amount,
+            **common,
+        )
+    ]
+    if arrears > ZERO:
+        lines.append(
+            ExpectedLine(
+                category=models.PayrollDeductionLineCategory.LOAN_ARREARS,
+                amount=arrears,
+                **common,
+            )
+        )
+    return lines
 
 
 def _price_member(
@@ -232,22 +271,29 @@ def _price_member(
             )
 
     for loan in loans:
-        line = _loan_expectation(loan, month, paid_by_loan.get(loan.id, ZERO))
-        if line is None:
+        loan_lines = _loan_expectation(loan, month, paid_by_loan.get(loan.id, ZERO))
+        if not loan_lines:
             continue
         unattributed = unattributed_by_loan.get(loan.id, 0)
         if unattributed:
             expectation.warnings.append(
-                f"{line.loan_type_name or 'Loan'}: {unattributed} verified repayment(s) have no "
-                "recorded payment month, so they are not netted off this month's instalment."
+                f"{loan_lines[0].loan_type_name or 'Loan'}: {unattributed} verified repayment(s) "
+                "have no recorded payment month, so they are not netted off this month's instalment."
             )
-        # A loan whose instalment is already covered still belongs in the
-        # picture (arrears, warnings), but it is not a reason to enter a
-        # deduction for this member.
-        if line.amount > ZERO:
-            if DUE_LOAN_INSTALMENT not in expectation.due_reasons:
-                expectation.due_reasons.append(DUE_LOAN_INSTALMENT)
-        expectation.lines.append(line)
+        for line in loan_lines:
+            # A zero instalment stays visible -- the loan was covered, and
+            # saying so is more useful to an officer than omitting it -- but
+            # no line that expects nothing makes this member due.
+            expectation.lines.append(line)
+            if line.amount <= ZERO:
+                continue
+            reason = (
+                DUE_LOAN_ARREARS
+                if line.category == models.PayrollDeductionLineCategory.LOAN_ARREARS
+                else DUE_LOAN_INSTALMENT
+            )
+            if reason not in expectation.due_reasons:
+                expectation.due_reasons.append(reason)
 
     return expectation
 

@@ -1,7 +1,7 @@
 "use client";
 
-import DashboardView from "@/components/dashboard/DashboardView";
-import { useDashboardPage } from "@/components/dashboard/hooks/useDashboardPage";
+import AdminDashboardView from "@/components/admin-dashboard/AdminDashboardView";
+import { useAdminDashboardPage } from "@/components/admin-dashboard/hooks/useAdminDashboardPage";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminDashboard() {
@@ -10,9 +10,9 @@ export default function AdminDashboard() {
     requirePasswordChanged: true,
     requireRole: "admin",
   });
-  const model = useDashboardPage(authLoading, user, logout);
+  const model = useAdminDashboardPage(authLoading, user, logout);
 
   if (authLoading || model.loading) return <main style={{ padding: 32 }}>Loading...</main>;
 
-  return <DashboardView model={model} />;
+  return <AdminDashboardView model={model} />;
 }

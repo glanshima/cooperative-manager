@@ -24,6 +24,7 @@ import type {
   DeductionWorklistItem,
   DeductionWorklistOut,
   Loan,
+  LoanLineCategory,
   Member,
   MemberStatus,
   PayrollDeduction,
@@ -37,6 +38,8 @@ import type {
 import { currentMonth } from "@/lib/month";
 import { readStoredPageSize, storePageSize } from "@/lib/pageSize";
 
+import { loanLineName, monthsBehind } from "../labels";
+
 export type DeductionActionKind = "submit" | "return_to_draft" | "confirm" | "not_deducted" | "void";
 
 export type DeductionsTab = "enter" | "ledger";
@@ -49,7 +52,19 @@ export interface DeductionPrefill {
   memberStatus: MemberStatus;
   month: string; // YYYY-MM
   contribution: string;
-  loanLines: { loanId: string; label: string; amount: string }[];
+  // One entry per expected LOAN line, so a loan that owes this month's
+  // instalment and a catch-up arrives as two rows the officer can each edit.
+  loanLines: {
+    key: string;
+    loanId: string;
+    category: LoanLineCategory;
+    // What the row is about ("SME Loan") and how to show it ("Arrears on
+    // SME Loan — 2 months behind"), kept apart so the input can be labelled
+    // for a screen reader without reading out the arithmetic.
+    loanName: string;
+    label: string;
+    amount: string;
+  }[];
   conflicted: boolean;
 }
 
@@ -428,13 +443,25 @@ export function useDeductionsPage(logout: () => void) {
       memberStatus: item.member_status,
       month,
       contribution: contributionLine?.amount ?? "",
-      loanLines: item.lines
-        .filter((line) => line.category === "loan_repayment" && line.loan_id)
-        .map((line) => ({
-          loanId: line.loan_id!,
-          label: line.loan_type_name ?? "Loan",
-          amount: line.amount,
-        })),
+      loanLines: item.lines.flatMap((line) => {
+        if (!line.loan_id) return [];
+        if (line.category !== "loan_repayment" && line.category !== "loan_arrears") return [];
+        const name = loanLineName(line.category, line.loan_type_name);
+        const behind =
+          line.category === "loan_arrears" && line.months_behind > 0
+            ? ` — ${monthsBehind(line.months_behind)}`
+            : "";
+        return [
+          {
+            key: `${line.loan_id}:${line.category}`,
+            loanId: line.loan_id,
+            category: line.category,
+            loanName: line.loan_type_name ?? "Loan",
+            label: `${name}${behind}`,
+            amount: line.amount,
+          },
+        ];
+      }),
       conflicted: item.conflicted,
     });
     setFormOpen(true);

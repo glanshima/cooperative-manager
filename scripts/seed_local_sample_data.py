@@ -5,7 +5,9 @@ member-to-member next-of-kin link), sample loan types with rate
 versions, two member logins (one normal, one forcing the first-login
 password reset flow), a member-linked admin fixture for the smoke test's
 Next-of-Kin conflict check, and 26 login-less members owing a
-contribution so the payroll deduction Enter queue runs past one page.
+contribution so the payroll deduction Enter queue runs past one page,
+plus one login-less member whose loan is behind schedule so the queue
+pre-fills an arrears catch-up line.
 
 THIS SCRIPT IS LOCAL-ONLY. It refuses to run unless DATABASE_URL points
 at the sandbox Postgres (127.0.0.1:55432, see scripts/local_db.py).
@@ -65,9 +67,12 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from app.account_lifecycle import validate_password_strength  # noqa: E402
 from app.auth import hash_password  # noqa: E402
+from app.loan_calc import compute_expected_end_date  # noqa: E402
 from app.models import (  # noqa: E402
     AccountStatus,
     Gender,
+    Loan,
+    LoanStatus,
     LoanType,
     LoanTypeRateVersion,
     Member,
@@ -107,6 +112,21 @@ QUEUE_FIXTURE_COUNT = 26
 QUEUE_FIXTURE_PSN_PREFIX = "QLPAGE"
 QUEUE_FIXTURE_CONTRIBUTION = Decimal("5000.00")
 QUEUE_FIXTURE_EFFECTIVE_FROM = date(2026, 1, 1)
+
+# Fixture for the arrears (catch-up) deduction line. A loan taken in July is
+# four months into its schedule by November: one instalment is due for this
+# month and the three earlier ones are owed. The expectation engine therefore
+# pre-fills TWO lines for the one loan -- the instalment and a catch-up --
+# which is the only shape that shows the split arrears maths, the per-loan
+# balance cap and the schedule's Arrears column doing anything.
+ARREARS_FIXTURE_PSN = "QLARREARS"
+ARREARS_FIXTURE_NAME = "Arrears Fixture Member"
+ARREARS_FIXTURE_DISBURSED = date(2026, 7, 1)
+ARREARS_FIXTURE_TENURE_MONTHS = 6
+ARREARS_FIXTURE_INSTALLMENT = Decimal("10000.00")
+# Interest-at-source: the repayable total is the principal, so the numbers
+# below stay readable (6 x 10,000 = 60,000).
+ARREARS_FIXTURE_PRINCIPAL = ARREARS_FIXTURE_INSTALLMENT * ARREARS_FIXTURE_TENURE_MONTHS
 
 SAMPLE_MEMBERS = [
     # (psn, name, gender, department, phone, email, status, bank, account_no,
@@ -269,6 +289,57 @@ def seed_queue_paging_fixture(session):
           f"{QUEUE_FIXTURE_COUNT - created} already existed.")
 
 
+def seed_arrears_fixture(session):
+    """One member holding a loan that is behind schedule. No login, no
+    repayments -- the missed months are the point."""
+    member = session.execute(
+        select(Member).where(Member.psn == ARREARS_FIXTURE_PSN)
+    ).scalar_one_or_none()
+    if member is None:
+        member = Member(
+            psn=ARREARS_FIXTURE_PSN,
+            name=ARREARS_FIXTURE_NAME,
+            status=MemberStatus.FINANCIAL,
+            email="qlarrears@example.com",
+            monthly_contribution_amount=QUEUE_FIXTURE_CONTRIBUTION,
+            contribution_effective_from=QUEUE_FIXTURE_EFFECTIVE_FROM,
+        )
+        session.add(member)
+        session.flush()
+        print(f"Arrears fixture: member {ARREARS_FIXTURE_PSN} created.")
+    else:
+        print(f"Arrears fixture: member {ARREARS_FIXTURE_PSN} already existed.")
+
+    loan_type = session.execute(
+        select(LoanType).where(LoanType.name == "Capital Loan")
+    ).scalar_one()
+    existing = session.execute(
+        select(Loan).where(Loan.member_id == member.id, Loan.loan_type_id == loan_type.id)
+    ).scalar_one_or_none()
+    if existing:
+        print("Arrears fixture: loan already exists.")
+        return
+
+    session.add(Loan(
+        member_id=member.id,
+        loan_type_id=loan_type.id,
+        principal=ARREARS_FIXTURE_PRINCIPAL,
+        interest_amount=Decimal("0.00"),
+        net_disbursed=ARREARS_FIXTURE_PRINCIPAL,
+        total_repayable=ARREARS_FIXTURE_PRINCIPAL,
+        monthly_installment=ARREARS_FIXTURE_INSTALLMENT,
+        disbursement_date=ARREARS_FIXTURE_DISBURSED,
+        expected_end_date=compute_expected_end_date(
+            ARREARS_FIXTURE_DISBURSED, ARREARS_FIXTURE_TENURE_MONTHS
+        ),
+        amount_repaid=Decimal("0.00"),
+        status=LoanStatus.ACTIVE,
+        notes="Sample: disbursed July, nothing repaid -- owes a catch-up line.",
+    ))
+    print(f"Arrears fixture: loan of {ARREARS_FIXTURE_PRINCIPAL} disbursed "
+          f"{ARREARS_FIXTURE_DISBURSED} with no repayments.")
+
+
 def seed_loan_types(session):
     created = 0
     for name, description, rate, tenure, flat, open_for_app in SAMPLE_LOAN_TYPES:
@@ -322,6 +393,7 @@ def main():
         seed_loan_types(session)
         seed_conflict_fixture(session)
         seed_queue_paging_fixture(session)
+        seed_arrears_fixture(session)
 
         m1 = session.execute(select(Member).where(Member.psn == "MCT-0001")).scalar_one()
         m3 = session.execute(select(Member).where(Member.psn == "MCT-0003")).scalar_one()

@@ -447,3 +447,148 @@ def test_linked_admin_cannot_confirm_own_deduction(client, db_session):
     assert res.status_code == 409
     assert res.json()["detail"]["error"] == "self_conflict"
     assert _loan(db_session, loan).amount_repaid == Decimal("0.00")
+
+
+def _catch_up_payload(member, loan, *, instalment="100.00", catch_up="600.00"):
+    return {
+        "member_id": str(member.id),
+        "deduction_month": "2026-11",
+        "lines": [
+            {"category": "loan_repayment", "loan_id": str(loan.id), "amount": instalment},
+            {"category": "loan_arrears", "loan_id": str(loan.id), "amount": catch_up},
+        ],
+    }
+
+
+def test_an_arrears_line_credits_the_loan_it_catches_up(client, db_session):
+    admin = make_admin_user(db_session, username="ded_arrears", super_admin=True)
+    member = make_member(db_session, psn="PSN-DED-ARR", email="dedarr@example.com")
+    loan_type = make_loan_type(db_session, "Long Loan")
+    # Ten instalments fell due and three were collected, so 600 of past
+    # months is missing on top of this month's 100.
+    loan = _make_loan(db_session, member, loan_type, amount_repaid=Decimal("300.00"))
+
+    res = client.post(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        json=_catch_up_payload(member, loan),
+    )
+    assert res.status_code == 201, res.text
+
+    body = res.json()
+    assert Decimal(body["loan_total"]) == Decimal("100.00")
+    assert Decimal(body["arrears_total"]) == Decimal("600.00")
+    assert Decimal(body["grand_total"]) == Decimal("700.00")
+    lines = {line["category"]: line for line in body["lines"]}
+    # Both figures come from the server, so a catch-up an officer shrank is
+    # recorded as the decision it was.
+    assert Decimal(lines["loan_arrears"]["expected_amount"]) == Decimal("600.00")
+
+    _post(client, admin, f"/api/payroll-deductions/{body['id']}/submit")
+    confirm = _post(client, admin, f"/api/payroll-deductions/{body['id']}/confirm")
+
+    assert confirm.status_code == 200, confirm.text
+    assert _loan(db_session, loan).amount_repaid == Decimal("1000.00")
+
+
+def _loan_of(db_session, member):
+    return db_session.query(models.Loan).filter(models.Loan.member_id == member.id).one()
+
+
+def test_a_shrunken_catch_up_is_recorded_as_an_override(client, db_session):
+    admin = make_admin_user(db_session, username="ded_arrears_part", super_admin=True)
+    member = make_member(db_session, psn="PSN-DED-ARR2", email="dedarr2@example.com")
+    loan_type = make_loan_type(db_session, "Long Loan")
+    loan = _make_loan(db_session, member, loan_type, amount_repaid=Decimal("300.00"))
+
+    res = client.post(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        json=_catch_up_payload(member, loan, catch_up="200.00"),
+    )
+
+    assert res.status_code == 201, res.text
+    arrears = next(line for line in res.json()["lines"] if line["category"] == "loan_arrears")
+    assert Decimal(arrears["amount"]) == Decimal("200.00")
+    assert Decimal(arrears["expected_amount"]) == Decimal("600.00")
+
+
+def test_loan_lines_together_cannot_exceed_the_remaining_balance(client, db_session):
+    admin = make_admin_user(db_session, username="ded_arrears_cap", super_admin=True)
+    member = make_member(db_session, psn="PSN-DED-ARR3", email="dedarr3@example.com")
+    loan_type = make_loan_type(db_session, "Long Loan")
+    # 50 left, but the schedule says 100 this month plus 600 of arrears.
+    loan = _make_loan(db_session, member, loan_type, amount_repaid=Decimal("1150.00"))
+
+    res = client.post(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        json=_catch_up_payload(member, loan, instalment="50.00", catch_up="50.00"),
+    )
+
+    assert res.status_code == 400, res.text
+    assert "totalling 100.00" in res.json()["detail"]
+    assert _loan(db_session, loan).amount_repaid == Decimal("1150.00")
+
+
+def test_a_loan_takes_at_most_one_line_of_each_kind(client, db_session):
+    admin = make_admin_user(db_session, username="ded_arrears_dup", super_admin=True)
+    member = make_member(db_session, psn="PSN-DED-ARR4", email="dedarr4@example.com")
+    loan_type = make_loan_type(db_session, "Long Loan")
+    loan = _make_loan(db_session, member, loan_type)
+
+    payload = _catch_up_payload(member, loan)
+    payload["lines"].append(
+        {"category": "loan_arrears", "loan_id": str(loan.id), "amount": "100.00"}
+    )
+    res = client.post("/api/payroll-deductions", headers=auth_headers(admin), json=payload)
+
+    assert res.status_code == 422
+    assert "one repayment line and one arrears line" in res.text
+
+
+def test_an_arrears_line_has_to_name_a_loan(client, db_session):
+    admin = make_admin_user(db_session, username="ded_arrears_shape", super_admin=True)
+    member = make_member(db_session, psn="PSN-DED-ARR5", email="dedarr5@example.com")
+
+    res = client.post(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        json={
+            "member_id": str(member.id),
+            "deduction_month": "2026-11",
+            "lines": [{"category": "loan_arrears", "amount": "600.00"}],
+        },
+    )
+
+    assert res.status_code == 422
+    assert "requires loan_id" in res.text
+
+
+def test_a_voided_catch_up_reopens_the_loan_it_closed(client, db_session):
+    admin = make_admin_user(db_session, username="ded_arrears_void", super_admin=True)
+    member = make_member(db_session, psn="PSN-DED-ARR6", email="dedarr6@example.com")
+    loan_type = make_loan_type(db_session, "Long Loan")
+    # 700 remaining: paying both lines settles the loan outright.
+    loan = _make_loan(db_session, member, loan_type, amount_repaid=Decimal("500.00"))
+
+    deduction = client.post(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        json=_catch_up_payload(member, loan, instalment="100.00", catch_up="600.00"),
+    ).json()
+    _post(client, admin, f"/api/payroll-deductions/{deduction['id']}/submit")
+    _post(client, admin, f"/api/payroll-deductions/{deduction['id']}/confirm")
+    assert _loan(db_session, loan).status == models.LoanStatus.COMPLETED
+
+    res = _post(
+        client,
+        admin,
+        f"/api/payroll-deductions/{deduction['id']}/void",
+        json={"reason": "the months were miscounted"},
+    )
+
+    assert res.status_code == 200, res.text
+    reverted = _loan(db_session, loan)
+    assert reverted.amount_repaid == Decimal("500.00")
+    assert reverted.status == models.LoanStatus.ACTIVE

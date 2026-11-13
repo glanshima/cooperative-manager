@@ -1,10 +1,14 @@
 import { useState } from "react";
 
-import type { PayrollDeductionLineInput } from "@/lib/api";
+import type {
+  LoanLineCategory,
+  PayrollDeductionLineCategory,
+  PayrollDeductionLineInput,
+} from "@/lib/api";
 import { currentMonth } from "@/lib/month";
 
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
-import { formatMoney } from "../labels";
+import { formatMoney, loanLineName } from "../labels";
 
 interface OtherLine {
   label: string;
@@ -14,7 +18,20 @@ interface OtherLine {
 interface LoanRow {
   key: string;
   loanId: string;
+  category: LoanLineCategory;
+  loanName: string;
   label: string;
+}
+
+// One loan can owe two things in the same month -- this month's instalment
+// and a catch-up of the instalments before it -- so a row is keyed by loan
+// AND kind, never by loan alone.
+function loanRowKey(loanId: string, category: LoanLineCategory): string {
+  return `${loanId}:${category}`;
+}
+
+function isLoanLine(category: PayrollDeductionLineCategory): category is LoanLineCategory {
+  return category === "loan_repayment" || category === "loan_arrears";
 }
 
 export default function DeductionForm({
@@ -26,6 +43,9 @@ export default function DeductionForm({
 }) {
   const editing = form.editing;
   const prefill = form.prefill;
+  // Entering from the queue means the server already said what this member
+  // owes, including whether a catch-up is one of the lines.
+  const fromQueue = Boolean(prefill) && !editing;
 
   const [memberId, setMemberId] = useState(editing?.member_id ?? prefill?.memberId ?? "");
   const [month, setMonth] = useState(
@@ -51,17 +71,21 @@ export default function DeductionForm({
     if (editing) {
       const existing: Record<string, string> = {};
       for (const line of editing.lines) {
-        if (line.category === "loan_repayment" && line.loan_id) {
-          existing[line.loan_id] = line.amount;
+        if (line.loan_id && isLoanLine(line.category)) {
+          existing[loanRowKey(line.loan_id, line.category)] = line.amount;
         }
       }
       return existing;
     }
     if (prefill) {
-      return Object.fromEntries(prefill.loanLines.map((line) => [line.loanId, line.amount]));
+      return Object.fromEntries(prefill.loanLines.map((line) => [line.key, line.amount]));
     }
     return {};
   });
+
+  // Whether to offer a catch-up at all is the officer's call when the figure
+  // did not come from the queue, so that row starts hidden.
+  const [catchUpLoans, setCatchUpLoans] = useState<string[]>([]);
 
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -69,27 +93,57 @@ export default function DeductionForm({
   const activeLoanIds = new Set(activeLoans.map((loan) => loan.id));
   // Existing loan lines stay visible even if that loan is no longer active,
   // so editing never silently drops an allocation.
-  const staleLoanLines = (editing?.lines ?? []).filter(
-    (line) => line.category === "loan_repayment" && line.loan_id && !activeLoanIds.has(line.loan_id)
-  );
+  const staleLoanRows: LoanRow[] = (editing?.lines ?? []).flatMap((line) => {
+    if (!line.loan_id || !isLoanLine(line.category) || activeLoanIds.has(line.loan_id)) {
+      return [];
+    }
+    const loanName = line.loan_type_name ?? "Loan";
+    return [
+      {
+        key: loanRowKey(line.loan_id, line.category),
+        loanId: line.loan_id,
+        category: line.category,
+        loanName,
+        label: `${loanLineName(line.category, loanName)} — no longer active`,
+      },
+    ];
+  });
 
   // Queue entry renders the server's expected loan lines directly, so the
   // amounts are right even when the Loans module is disabled and the local
   // loan lookup is empty. Blank/edit entry uses the member's active loans.
   const loanRows: LoanRow[] =
-    prefill && !editing
-      ? prefill.loanLines.map((line) => ({ key: line.loanId, loanId: line.loanId, label: line.label }))
+    fromQueue && prefill
+      ? prefill.loanLines.map((line) => ({
+          key: line.key,
+          loanId: line.loanId,
+          category: line.category,
+          loanName: line.loanName,
+          label: line.label,
+        }))
       : [
-          ...activeLoans.map((loan) => ({
-            key: loan.id,
-            loanId: loan.id,
-            label: `${loan.loan_type_name} — balance ${formatMoney(loan.balance)}`,
-          })),
-          ...staleLoanLines.map((line) => ({
-            key: line.id,
-            loanId: line.loan_id!,
-            label: `${line.loan_type_name ?? "Loan"} — no longer active`,
-          })),
+          ...activeLoans.flatMap((loan): LoanRow[] => {
+            const rows: LoanRow[] = [
+              {
+                key: loanRowKey(loan.id, "loan_repayment"),
+                loanId: loan.id,
+                category: "loan_repayment",
+                loanName: loan.loan_type_name,
+                label: `${loan.loan_type_name} — balance ${formatMoney(loan.balance)}`,
+              },
+            ];
+            if (catchUpLoans.includes(loan.id)) {
+              rows.push({
+                key: loanRowKey(loan.id, "loan_arrears"),
+                loanId: loan.id,
+                category: "loan_arrears",
+                loanName: loan.loan_type_name,
+                label: loanLineName("loan_arrears", loan.loan_type_name),
+              });
+            }
+            return rows;
+          }),
+          ...staleLoanRows,
         ];
 
   // Only financial members owe the monthly contribution. The queue carries
@@ -108,6 +162,7 @@ export default function DeductionForm({
   function changeMember(value: string) {
     setMemberId(value);
     setLoanAmounts({});
+    setCatchUpLoans([]);
   }
 
   function updateOtherLine(index: number, patch: Partial<OtherLine>) {
@@ -124,9 +179,9 @@ export default function DeductionForm({
     }
 
     for (const row of loanRows) {
-      const amount = Number(loanAmounts[row.loanId] || 0);
+      const amount = Number(loanAmounts[row.key] || 0);
       if (amount > 0) {
-        lines.push({ category: "loan_repayment", loan_id: row.loanId, amount });
+        lines.push({ category: row.category, loan_id: row.loanId, amount });
       }
     }
 
@@ -287,17 +342,31 @@ export default function DeductionForm({
         <div key={row.key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
           <span style={{ minWidth: 260 }}>{row.label}</span>
           <input
-            aria-label={`Repayment for ${row.label}`}
+            aria-label={
+              row.category === "loan_arrears"
+                ? `Arrears catch-up for ${row.loanName}`
+                : `Repayment for ${row.loanName}`
+            }
             type="number"
             min="0"
             step="0.01"
-            value={loanAmounts[row.loanId] ?? ""}
+            value={loanAmounts[row.key] ?? ""}
             disabled={isConflicted}
             onChange={(e) =>
-              setLoanAmounts((current) => ({ ...current, [row.loanId]: e.target.value }))
+              setLoanAmounts((current) => ({ ...current, [row.key]: e.target.value }))
             }
             placeholder="0.00"
           />
+          {!fromQueue &&
+            row.category === "loan_repayment" &&
+            activeLoanIds.has(row.loanId) &&
+            !catchUpLoans.includes(row.loanId) && (
+              <button
+                onClick={() => setCatchUpLoans((loans) => [...loans, row.loanId])}
+              >
+                Add arrears catch-up
+              </button>
+            )}
         </div>
       ))}
 

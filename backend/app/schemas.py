@@ -888,12 +888,17 @@ class PayrollDeductionLineInput(BaseModel):
 
     @model_validator(mode="after")
     def _validate_category_shape(self):
-        if self.category == PayrollDeductionLineCategory.LOAN_REPAYMENT:
+        if self.category in (
+            PayrollDeductionLineCategory.LOAN_REPAYMENT,
+            PayrollDeductionLineCategory.LOAN_ARREARS,
+        ):
             if self.loan_id is None:
-                raise ValueError("A loan_repayment line requires loan_id")
+                raise ValueError(f"A {self.category.value} line requires loan_id")
         else:
             if self.loan_id is not None:
-                raise ValueError("Only loan_repayment lines may reference a loan")
+                raise ValueError(
+                    "Only loan_repayment or loan_arrears lines may reference a loan"
+                )
             if self.category == PayrollDeductionLineCategory.OTHER and not self.label:
                 raise ValueError("An 'other' deduction requires a label")
         return self
@@ -902,9 +907,14 @@ class PayrollDeductionLineInput(BaseModel):
 def _validate_line_set(lines: List[PayrollDeductionLineInput]) -> List[PayrollDeductionLineInput]:
     if not lines:
         raise ValueError("At least one deduction line is required")
-    loan_ids = [line.loan_id for line in lines if line.loan_id is not None]
-    if len(loan_ids) != len(set(loan_ids)):
-        raise ValueError("Each loan may only appear once per monthly deduction")
+    # One loan can legitimately appear twice -- this month's instalment and a
+    # catch-up of earlier ones -- so uniqueness is per loan AND category.
+    loan_slots = [(line.loan_id, line.category) for line in lines if line.loan_id is not None]
+    if len(loan_slots) != len(set(loan_slots)):
+        raise ValueError(
+            "A loan may have at most one repayment line and one arrears line "
+            "in a monthly deduction"
+        )
     contributions = [
         line for line in lines if line.category == PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION
     ]
@@ -994,6 +1004,7 @@ class PayrollDeductionOut(BaseModel):
 
     contribution_total: Decimal
     loan_total: Decimal
+    arrears_total: Decimal
     other_total: Decimal
     grand_total: Decimal
 
@@ -1040,6 +1051,7 @@ class PayrollDeductionSubmittableIds(BaseModel):
 class PayrollDeductionTotals(BaseModel):
     contribution_total: Decimal
     loan_total: Decimal
+    arrears_total: Decimal
     other_total: Decimal
     grand_total: Decimal
 
@@ -1055,8 +1067,10 @@ class DeductionWorklistLine(BaseModel):
     amount: Decimal
     loan_id: Optional[uuid.UUID] = None
     loan_type_name: Optional[str] = None
-    # Reported, never added to `amount`: only the month being entered is
-    # pre-filled, so the officer decides what to do about earlier gaps.
+    # The loan's past-due position, computed rather than stored: what the
+    # schedule should already have collected. Arrears get their own line, so
+    # the catch-up is entered as a decision instead of silently accumulated;
+    # both of a loan's lines carry the figures so either reads on its own.
     arrears: Decimal
     months_behind: int
 

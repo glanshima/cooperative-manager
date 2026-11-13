@@ -20,7 +20,7 @@ what it credited and reopens any loan it had completed.
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
@@ -114,10 +114,14 @@ def _load_loans_for_lines(
     returns {loan_id: Loan}. With lock=True the rows are FOR UPDATE, so the
     balance checked here is the balance the caller then mutates.
 
+    A loan can carry both this month's instalment and an arrears catch-up, so
+    the remaining-balance cap is applied to their SUM: crediting past what a
+    loan owes would leave an amount_repaid larger than total_repayable.
+
     for_reversal=True is for voiding a confirmed record: the loan may now
-    be completed (that is exactly what this deduction may have caused), so
-    the active/remaining-balance checks that apply when crediting are not
-    appropriate -- only ownership and existence still are."""
+    be completed (that is exactly what this deduction may have caused), so the
+    balance checks that apply when crediting are not appropriate -- only
+    ownership and existence still are."""
     loan_ids = [line.loan_id for line in lines if line.loan_id is not None]
     if not loan_ids:
         return {}
@@ -127,6 +131,7 @@ def _load_loans_for_lines(
         query = query.with_for_update()
     loans = {loan.id: loan for loan in query.all()}
 
+    totals: Dict[uuid.UUID, Decimal] = {}
     for line in lines:
         if line.loan_id is None:
             continue
@@ -143,14 +148,18 @@ def _load_loans_for_lines(
         if loan.status != models.LoanStatus.ACTIVE:
             raise HTTPException(
                 status_code=400,
-                detail=f"Loan {line.loan_id} is not active and cannot take a repayment line",
+                detail=f"Loan {line.loan_id} is not active and cannot take a loan line",
             )
+        totals[loan.id] = totals.get(loan.id, Decimal("0")) + line.amount
+
+    for loan_id, total in totals.items():
+        loan = loans[loan_id]
         remaining = loan.total_repayable - loan.amount_repaid
-        if line.amount > remaining:
+        if total > remaining:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Loan {line.loan_id} line of {line.amount} exceeds the "
+                    f"Loan {loan_id} lines totalling {total} exceed the "
                     f"remaining balance of {remaining}"
                 ),
             )
@@ -565,6 +574,7 @@ def get_schedule(
             (r.contribution_total for r in records if r.status in countable), Decimal("0")
         ),
         loan_total=sum((r.loan_total for r in records if r.status in countable), Decimal("0")),
+        arrears_total=sum((r.arrears_total for r in records if r.status in countable), Decimal("0")),
         other_total=sum((r.other_total for r in records if r.status in countable), Decimal("0")),
         grand_total=sum((r.grand_total for r in records if r.status in countable), Decimal("0")),
     )

@@ -195,7 +195,8 @@ def require_module_enabled(module: str):
     Dependency factory: require_module_enabled("loans") returns a
     dependency that 403s while the Loans module is disabled in Settings,
     and allows the request when the module is enabled (or when no Settings
-    row exists yet -- the column defaults are all True).
+    row exists yet -- the flags for built modules default to True, the ones
+    with no implementation behind them default to False).
     """
     try:
         column, label = MODULE_FLAGS[module]

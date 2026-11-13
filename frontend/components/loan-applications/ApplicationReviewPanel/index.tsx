@@ -27,7 +27,7 @@ export default function ApplicationReviewPanel({
       }}
     >
       <h2>
-        Reviewing: {expanded.member_name} ({expanded.member_psn}) — {expanded.loan_type_name}
+        Reviewing: {expanded.member_name} ({expanded.member_psn?.replace("MCT-", "") ?? ""}) — {expanded.loan_type_name}
       </h2>
       <p>
         Requested: {expanded.requested_amount} · Payment reference: {expanded.payment_reference}

@@ -73,7 +73,7 @@ export default function ContributionReviewPanel({
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
               <strong>
                 {r.member_name ?? "Member"}
-                {r.member_psn ? ` · PSN ${r.member_psn}` : ""}
+                {r.member_psn ? ` · PSN ${r.member_psn?.replace("MCT-", "") ?? ""}` : ""}
               </strong>
               <span style={{ color: STATUS_COLOR[r.status], fontWeight: 600, fontSize: 13 }}>
                 {r.status}

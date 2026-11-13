@@ -139,7 +139,7 @@ describe("DeductionWorklist", () => {
     expect(screen.queryByRole("button", { name: "Enter" })).not.toBeInTheDocument();
   });
 
-  it("annotates a loan line with arrears when months are behind", () => {
+  it("shows a missed-month catch-up as its own expected line", () => {
     renderWorklist({
       items: [
         makeItem({
@@ -152,13 +152,24 @@ describe("DeductionWorklist", () => {
               arrears: "2000.00",
               months_behind: 2,
             },
+            {
+              category: "loan_arrears",
+              amount: "2000.00",
+              loan_id: "loan-1",
+              loan_type_name: "Regular loan",
+              arrears: "2000.00",
+              months_behind: 2,
+            },
           ],
+          expected_total: "8000.00",
         }),
       ],
     });
 
-    expect(screen.getByText(/arrears/)).toBeInTheDocument();
-    expect(screen.getByText(/2 months/)).toBeInTheDocument();
+    expect(screen.getByText("Arrears on Regular loan ₦2,000.00")).toBeInTheDocument();
+    expect(screen.getByText("· 2 months behind")).toBeInTheDocument();
+    // The instalment line no longer carries the arrears annotation.
+    expect(screen.getByText("Regular loan ₦1,000.00")).toBeInTheDocument();
   });
 
   it("offers a one-click undo right after an entry", async () => {

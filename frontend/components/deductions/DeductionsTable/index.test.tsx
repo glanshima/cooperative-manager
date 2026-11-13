@@ -15,6 +15,7 @@ const draft = {
   status: "draft",
   contribution_total: "2000.00",
   loan_total: "0.00",
+  arrears_total: "0.00",
   other_total: "0.00",
   grand_total: "2000.00",
   lines: [],
@@ -63,18 +64,18 @@ describe("DeductionsTable", () => {
     const user = userEvent.setup();
     const { table, onEdit } = renderTable([
       draft,
-      { ...draft, id: "ded-2", member_psn: "MCT-0002", conflicted: true },
+      { ...draft, id: "ded-2", member_psn: "0002", conflicted: true },
     ]);
 
     // The row is still on the ledger -- only its actions are gone.
-    expect(screen.getByText("MCT-0002")).toBeInTheDocument();
+    expect(screen.getByText("0002")).toBeInTheDocument();
     expect(screen.getAllByText("⚠ conflict")).toHaveLength(1);
     // One row still has the lifecycle actions; the conflicted one has none.
     expect(screen.getAllByRole("button", { name: "Submit" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Void" })).toHaveLength(1);
 
-    const conflictedCheckbox = screen.getByRole("checkbox", { name: "Select MCT-0002" });
+    const conflictedCheckbox = screen.getByRole("checkbox", { name: "Select 0002" });
     expect(conflictedCheckbox).toBeDisabled();
     await user.click(conflictedCheckbox);
     expect(table.toggleSelected).not.toHaveBeenCalled();

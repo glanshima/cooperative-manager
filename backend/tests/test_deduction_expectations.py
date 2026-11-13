@@ -9,7 +9,9 @@ server must NOT invent a figure:
   - a loan line is capped at the remaining balance and net of verified
     repayments recorded for that same month (never of unverified claims,
     never of another month's payment);
-  - arrears are reported, not added to the pre-filled line;
+  - arrears become their own pre-filled catch-up line, split out of the same
+    figure as the instalment so the two can never charge this month twice or
+    claim more than the loan owes;
   - repayments with no recorded month are surfaced, not guessed at;
   - expected_amount is always derived server-side, so a typed override
     stays visibly different from the expectation.
@@ -91,6 +93,14 @@ def _loan_lines(expectation):
         line
         for line in expectation.lines
         if line.category == models.PayrollDeductionLineCategory.LOAN_REPAYMENT
+    ]
+
+
+def _arrears_lines(expectation):
+    return [
+        line
+        for line in expectation.lines
+        if line.category == models.PayrollDeductionLineCategory.LOAN_ARREARS
     ]
 
 
@@ -182,18 +192,89 @@ def test_unverified_claims_and_other_months_do_not_reduce_the_instalment(db_sess
     assert _loan_lines(expectation)[0].amount == Decimal("100.00")
 
 
-def test_arrears_are_reported_without_inflating_the_line(db_session):
+def test_arrears_are_pre_filled_as_a_separate_catch_up_line(db_session):
     member = _member(db_session, amount=None)
     loan_type = make_loan_type(db_session, "Expect Loan")
     # Ten instalments fell due (Feb..Nov) but only three were collected.
-    _loan(db_session, member, loan_type, repaid=Decimal("300.00"))
+    loan = _loan(db_session, member, loan_type, repaid=Decimal("300.00"))
 
     expectation = expectations.for_member(db_session, member, MONTH)
 
-    line = _loan_lines(expectation)[0]
-    assert line.amount == Decimal("100.00")
-    assert line.arrears == Decimal("700.00")
-    assert line.months_behind == 7
+    # The catch-up covers the earlier months only: this month's instalment is
+    # already its own line, so entering both never charges November twice.
+    assert _loan_lines(expectation)[0].amount == Decimal("100.00")
+    arrears = _arrears_lines(expectation)
+    assert len(arrears) == 1
+    assert arrears[0].amount == Decimal("600.00")
+    assert arrears[0].months_behind == 6
+    assert arrears[0].loan_id == loan.id
+    assert arrears[0].loan_type_name == "Expect Loan"
+    assert expectation.total == Decimal("700.00")
+    assert expectations.DUE_LOAN_ARREARS in expectation.due_reasons
+
+
+def test_a_covered_month_still_owes_a_catch_up_line(db_session):
+    member = _member(db_session, amount=None)
+    loan_type = make_loan_type(db_session, "Expect Loan")
+    loan = _loan(db_session, member, loan_type, repaid=Decimal("300.00"))
+    _repayment(db_session, loan, month=MONTH)
+
+    expectation = expectations.for_member(db_session, member, MONTH)
+
+    # November is settled by bank transfer, so its instalment line expects
+    # nothing -- but the six months before it are still missing, and that on
+    # its own makes the member due.
+    assert _loan_lines(expectation)[0].amount == Decimal("0.00")
+    assert expectations.DUE_LOAN_INSTALMENT not in expectation.due_reasons
+    assert [line.amount for line in _arrears_lines(expectation)] == [Decimal("600.00")]
+    assert expectations.DUE_LOAN_ARREARS in expectation.due_reasons
+
+
+def test_up_to_date_member_gets_no_catch_up_line(db_session):
+    member = _member(db_session, amount=None)
+    loan_type = make_loan_type(db_session, "Expect Loan")
+    # Jul..Oct collected, November still due.
+    _loan(db_session, member, loan_type, repaid=Decimal("900.00"))
+
+    expectation = expectations.for_member(db_session, member, MONTH)
+
+    assert _arrears_lines(expectation) == []
+    assert expectation.total == Decimal("100.00")
+
+
+def test_a_caught_up_loan_stops_asking_for_a_catch_up(db_session):
+    member = _member(db_session, amount=None)
+    loan_type = make_loan_type(db_session, "Expect Loan")
+    # The 700 November's payroll should have taken is in, so December asks
+    # for one instalment and nothing else: arrears clear themselves as they
+    # are paid, because they are measured, not stored.
+    _loan(db_session, member, loan_type, repaid=Decimal("1000.00"))
+
+    december = expectations.for_member(db_session, member, date(2026, 12, 1))
+
+    assert _loan_lines(december)[0].amount == Decimal("100.00")
+    assert _arrears_lines(december) == []
+    assert expectations.DUE_LOAN_ARREARS not in december.due_reasons
+
+
+def test_catch_up_and_instalment_never_claim_more_than_the_loan_owes(db_session):
+    member = _member(db_session, amount=None)
+    loan_type = make_loan_type(db_session, "Expect Loan")
+    # A short loan that was never paid at all: the schedule alone would put
+    # the past due figure above the outstanding balance.
+    _loan(
+        db_session,
+        member,
+        loan_type,
+        total=Decimal("3500.00"),
+        instalment=Decimal("1000.00"),
+    )
+
+    expectation = expectations.for_member(db_session, member, MONTH)
+
+    assert _loan_lines(expectation)[0].amount == Decimal("1000.00")
+    assert _arrears_lines(expectation)[0].amount == Decimal("2500.00")
+    assert expectation.total == Decimal("3500.00")
 
 
 def test_payment_without_a_recorded_month_is_surfaced_as_a_warning(db_session):
