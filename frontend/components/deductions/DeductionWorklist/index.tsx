@@ -11,7 +11,9 @@ import Pagination from "@/components/ui/Pagination";
 
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
 import { STATUS_LABELS, formatMoney } from "../labels";
-import type { LoanLineCategory } from "@/lib/api";
+import type { PayrollDeductionLineCategory } from "@/lib/api/deductions";
+
+type LoanLineCategory = "loan_repayment" | "loan_arrears";
 
 function loanLineName(category: LoanLineCategory, loanTypeName?: string | null): string {
   const name = loanTypeName ?? "Loan";

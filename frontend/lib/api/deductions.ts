@@ -8,7 +8,15 @@ export type PayrollDeductionStatus =
   | "not_deducted"
   | "void";
 
-export type PayrollDeductionLineCategory = "monthly_contribution" | "loan_repayment" | "other";
+export type PayrollDeductionLineCategory =
+  | "monthly_contribution"
+  | "loan_repayment"
+  | "loan_arrears"
+  | "other";
+
+// The two categories that name a loan: this month's instalment and a
+// catch-up of the instalments the member missed.
+export type LoanLineCategory = "loan_repayment" | "loan_arrears";
 
 export interface PayrollDeductionLine {
   id: string;
@@ -20,6 +28,7 @@ export interface PayrollDeductionLine {
   // nothing on file predicts it; a different amount is an override.
   expected_amount?: string | null;
   loan_type_name?: string | null;
+  months_behind?: number | null;
 }
 
 export interface PayrollDeduction {
@@ -33,6 +42,7 @@ export interface PayrollDeduction {
   status: PayrollDeductionStatus;
   contribution_total: string;
   loan_total: string;
+  arrears_total: string;
   other_total: string;
   grand_total: string;
   submitted_at?: string | null;
@@ -76,6 +86,7 @@ export interface PayrollDeductionUpdateInput {
 export interface PayrollDeductionTotals {
   contribution_total: string;
   loan_total: string;
+  arrears_total: string;
   other_total: string;
   grand_total: string;
 }
