@@ -16,7 +16,7 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
 
       {model.member && (
         <p style={{ color: "#555" }}>
-          {model.member.name} · PSN {model.member.psn}
+          {model.member.name} · PSN {model.member.psn?.replace("MCT-", "") ?? ""}
         </p>
       )}
 

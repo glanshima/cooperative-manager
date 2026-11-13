@@ -60,7 +60,7 @@ export default function MemberTable({
             <tbody>
               {members.map((m) => (
                 <tr key={m.id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td>{m.psn}</td>
+                  <td>{m.psn?.replace("MCT-", "") ?? ""}</td>
                   <td>{m.name}</td>
                   <td>{m.department}</td>
                   <td>

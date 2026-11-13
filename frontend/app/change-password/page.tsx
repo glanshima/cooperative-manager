@@ -31,7 +31,7 @@ export default function ChangePasswordPage() {
     setSubmitting(true);
     try {
       const updated = await changePassword(currentPassword, newPassword);
-      router.push(updated.role === "admin" ? "/members" : "/dashboard");
+      router.push(updated.role === "admin" ? "/admin/dashboard" : "/dashboard");
     } catch (e: any) {
       setError(e.message);
     } finally {

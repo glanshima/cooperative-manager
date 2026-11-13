@@ -26,7 +26,7 @@ export default function LoansTable({ table }: { table: LoansPageModel["table"] }
             {table.items.map((loan) => (
               <tr key={loan.id} style={{ borderBottom: "1px solid #eee" }}>
                 <td>
-                  {loan.member_name} ({loan.member_psn})
+                  {loan.member_name} ({loan.member_psn?.replace("MCT-", "") ?? ""})
                 </td>
                 <td>{loan.loan_type_name}</td>
                 <td>{loan.principal}</td>

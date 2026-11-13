@@ -60,10 +60,11 @@ export default function PrintableSchedule({
       <Table>
         <thead>
           <tr style={{ textAlign: "left", borderBottom: "2px solid #333" }}>
-            <th style={cellStyle}>Member</th>
             <th style={cellStyle}>PSN</th>
+            <th style={cellStyle}>Member</th>
             <th style={cellStyle}>Contribution</th>
             <th style={cellStyle}>Loans</th>
+            <th style={cellStyle}>Arrears</th>
             <th style={cellStyle}>Other</th>
             <th style={cellStyle}>Total</th>
           </tr>
@@ -71,10 +72,11 @@ export default function PrintableSchedule({
         <tbody>
           {rows.map((record) => (
             <tr key={record.id}>
+              <td style={cellStyle}>{record.member_psn?.replace("MCT-", "") ?? ""}</td>
               <td style={cellStyle}>{record.member_name ?? "Unknown member"}</td>
-              <td style={cellStyle}>{record.member_psn}</td>
               <td style={cellStyle}>{formatMoney(record.contribution_total)}</td>
               <td style={cellStyle}>{formatMoney(record.loan_total)}</td>
+              <td style={cellStyle}>{formatMoney(record.arrears_total)}</td>
               <td style={cellStyle}>{formatMoney(record.other_total)}</td>
               <td style={cellStyle}>
                 <strong>{formatMoney(record.grand_total)}</strong>
@@ -89,6 +91,7 @@ export default function PrintableSchedule({
             </td>
             <td style={cellStyle}>{formatMoney(schedule.totals.contribution_total)}</td>
             <td style={cellStyle}>{formatMoney(schedule.totals.loan_total)}</td>
+            <td style={cellStyle}>{formatMoney(schedule.totals.arrears_total)}</td>
             <td style={cellStyle}>{formatMoney(schedule.totals.other_total)}</td>
             <td style={cellStyle}>{formatMoney(schedule.totals.grand_total)}</td>
           </tr>

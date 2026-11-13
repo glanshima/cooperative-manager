@@ -10,7 +10,7 @@ import { ConflictMarker } from "@/components/ui/ConflictMarker";
 import Pagination from "@/components/ui/Pagination";
 
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
-import { STATUS_LABELS, formatMoney } from "../labels";
+import { STATUS_LABELS, formatMoney, loanLineName, monthsBehind } from "../labels";
 
 const SEGMENTS: {
   value: DeductionWorklistEntryState;
@@ -32,28 +32,21 @@ const EMPTY_COPY: Record<DeductionWorklistEntryState, (month: string) => string>
 function ExpectedLines({ item }: { item: DeductionWorklistItem }) {
   return (
     <ul style={{ margin: "8px 0 0 0", padding: 0, listStyle: "none", fontSize: 13 }}>
-      {item.lines.map((line, index) => {
-        const arrears = Number(line.arrears);
-        return (
-          <li key={index} style={{ padding: "2px 0" }}>
-            {line.category === "monthly_contribution" && (
-              <span>Contribution ₦{formatMoney(line.amount)}</span>
-            )}
-            {line.category === "loan_repayment" && (
-              <span>
-                {line.loan_type_name ?? "Loan"} ₦{formatMoney(line.amount)}
-                {arrears > 0 && (
-                  <span style={{ color: "#b45309" }}>
-                    {" "}
-                    · arrears ₦{formatMoney(line.arrears)} / {line.months_behind} month
-                    {line.months_behind === 1 ? "" : "s"}
-                  </span>
-                )}
-              </span>
-            )}
-          </li>
-        );
-      })}
+      {item.lines.map((line, index) => (
+        <li key={index} style={{ padding: "2px 0" }}>
+          {line.category === "monthly_contribution" && (
+            <span>Contribution ₦{formatMoney(line.amount)}</span>
+          )}
+          {(line.category === "loan_repayment" || line.category === "loan_arrears") && (
+            <span style={line.category === "loan_arrears" ? { color: "#b45309" } : undefined}>
+              {loanLineName(line.category, line.loan_type_name)} ₦{formatMoney(line.amount)}
+              {line.category === "loan_arrears" && line.months_behind > 0 && (
+                <span> · {monthsBehind(line.months_behind)}</span>
+              )}
+            </span>
+          )}
+        </li>
+      ))}
     </ul>
   );
 }
@@ -141,7 +134,7 @@ export default function DeductionWorklist({
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
               <strong>
-                {item.member_name} · PSN {item.member_psn}
+                {item.member_name} · PSN {item.member_psn?.replace("MCT-", "") ?? ""}
                 {item.conflicted && <> <ConflictMarker /></>}
               </strong>
               <span style={{ fontSize: 13, color: "#555" }}>

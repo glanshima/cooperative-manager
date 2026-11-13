@@ -24,7 +24,7 @@ export default function ApplicationsTable({
         {table.items.map((a) => (
           <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
             <td>
-              {a.member_name} ({a.member_psn})
+              {a.member_name} ({a.member_psn?.replace("MCT-", "") ?? ""})
             </td>
             <td>{a.loan_type_name}</td>
             <td>{a.requested_amount}</td>

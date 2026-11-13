@@ -107,6 +107,7 @@ export default function DeductionsTable({
           <th style={cellStyle}>Member</th>
           <th style={cellStyle}>Contribution</th>
           <th style={cellStyle}>Loans</th>
+          <th style={cellStyle}>Arrears</th>
           <th style={cellStyle}>Other</th>
           <th style={cellStyle}>Total</th>
           <th style={cellStyle}>Status</th>
@@ -127,13 +128,14 @@ export default function DeductionsTable({
             </td>
             <td style={cellStyle}>
               <strong>{deduction.member_name ?? "Unknown member"}</strong>
-              <div style={{ fontSize: 12, color: "#555" }}>{deduction.member_psn}</div>
+              <div style={{ fontSize: 12, color: "#555" }}>{deduction.member_psn?.replace("MCT-", "") ?? ""}</div>
               {deduction.payroll_reference && (
                 <div style={{ fontSize: 12, color: "#555" }}>Ref {deduction.payroll_reference}</div>
               )}
             </td>
             <td style={cellStyle}>{formatMoney(deduction.contribution_total)}</td>
             <td style={cellStyle}>{formatMoney(deduction.loan_total)}</td>
+            <td style={cellStyle}>{formatMoney(deduction.arrears_total)}</td>
             <td style={cellStyle}>{formatMoney(deduction.other_total)}</td>
             <td style={cellStyle}>
               <strong>{formatMoney(deduction.grand_total)}</strong>
