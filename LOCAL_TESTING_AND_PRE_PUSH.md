@@ -122,15 +122,19 @@ not_deducted, void).
 
 ```bash
 cd frontend
-npx vitest run --pool=forks    # the default thread pool can OOM on Windows
+npm test                       # 16 files / 88 tests
 npx tsc --noEmit
 npm run build
 ```
 
-Use `--pool=forks` rather than plain `npm test`: the default worker-thread
-pool intermittently dies with `FATAL ERROR: Zone Allocation failed -
-process out of memory` on this machine. All three must exit clean — Vitest
-prints the suite total, `tsc` and `next build` print nothing but errors.
+All three must exit clean — Vitest prints the suite total, `tsc` and
+`next build` print nothing but errors. Run the suite on its own: with the
+backend suite or a build competing for CPU, Vitest's workers time out and
+report failures that a solo re-run does not repeat.
+
+(Vitest 3 needed `--pool=forks` because its default worker-thread pool died
+with `Zone Allocation failed - process out of memory` on Windows. Vitest 5
+defaults to forked processes, so plain `npm test` is the workaround now.)
 
 **Gate 4 — eyeball the flows in the browser** (`http://localhost:3000`,
 not `127.0.0.1:3000` — the backend's `ALLOWED_ORIGINS` only whitelists the
@@ -245,7 +249,7 @@ backend/.venv/Scripts/python.exe scripts/local_db.py reset --yes   # wipe .local
 | Seed says entities already exist | It is idempotent | Nothing to do |
 | Backend takes ~10s on first request | Cold start on Windows | Wait for `/api/health` to respond |
 | `pgserver` missing | Dev requirements not installed | `backend/.venv/Scripts/pip install -r backend/requirements-dev.txt` |
-| `vitest` dies with `Zone Allocation failed - process out of memory` | Default worker-thread pool on Windows | Run Gate 3 with `npx vitest run --pool=forks` |
+| `vitest` reports `Timeout calling "..."` worker errors and failures the re-run doesn't repeat | Vitest starved of CPU because the backend suite (or a build) ran alongside it | Re-run the suite on its own before believing any failure — a contended full run fails spuriously on this machine |
 | Browser pages load but every API call fails / nothing renders | Opened via `127.0.0.1:3000`, which `ALLOWED_ORIGINS` doesn't whitelist | Use `http://localhost:3000` |
 | Want a truly clean local slate | Sample data accumulated | `local_db.py reset --yes` then re-run Section 3 steps 1–3 |
 

@@ -82,8 +82,9 @@ npm run dev
 Visit http://localhost:3000/members.
 
 Tests (Vitest + React Testing Library, colocated as
-`components/**/index.test.tsx`): `npx vitest run --pool=forks` — the
-forks pool avoids an intermittent worker-thread OOM on Windows. Type
+`components/**/index.test.tsx`): `npm test` in `frontend/`. Run it on its
+own — a contended machine makes Vitest's workers time out and fail tests
+spuriously. Type
 check with `npx tsc --noEmit`. See
 [LOCAL_TESTING_AND_PRE_PUSH.md](./LOCAL_TESTING_AND_PRE_PUSH.md) Gate 3.
 
