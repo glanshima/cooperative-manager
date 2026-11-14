@@ -1,10 +1,17 @@
 import StatusMessage from "@/components/ui/StatusMessage";
+import LogoutControl from "@/components/ui/LogoutControl";
 import type { AuditPageModel } from "../hooks/useAuditPage";
 import AuditDetailModal from "../AuditDetailModal";
 import AuditFilters from "../AuditFilters";
 import AuditTable from "../AuditTable";
 
-export default function AuditView({ model }: { model: AuditPageModel }) {
+export default function AuditView({
+  model,
+  identity,
+}: {
+  model: AuditPageModel;
+  identity?: string | null;
+}) {
   return (
     <main style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -13,7 +20,7 @@ export default function AuditView({ model }: { model: AuditPageModel }) {
           <a href="/admin/users">Users</a>
           <a href="/admin/offices">Offices</a>
           <a href="/admin/roles">Roles</a>
-          <button onClick={model.auth.logout}>Log out</button>
+          <LogoutControl identity={identity} onLogout={model.auth.logout} />
         </div>
       </div>
       <p style={{ color: "#555", fontSize: 14 }}>

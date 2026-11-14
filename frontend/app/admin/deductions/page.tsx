@@ -4,10 +4,11 @@ import DeductionsView from "@/components/deductions/DeductionsView";
 import { useDeductionsPage } from "@/components/deductions/hooks/useDeductionsPage";
 import AdminShell from "@/components/admin-shell/AdminShell";
 import ModuleGate from "@/components/ui/ModuleGate";
+import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminDeductionsPage() {
-  const { loading: authLoading, logout } = useAuth({
+  const { user, loading: authLoading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -18,14 +19,20 @@ export default function AdminDeductionsPage() {
   return (
     <AdminShell>
       <ModuleGate module="deductions">
-        <DeductionsPageContent logout={logout} />
+        <DeductionsPageContent logout={logout} identity={userDisplayName(user)} />
       </ModuleGate>
     </AdminShell>
   );
 }
 
-function DeductionsPageContent({ logout }: { logout: () => void }) {
+function DeductionsPageContent({
+  logout,
+  identity,
+}: {
+  logout: () => void;
+  identity: string | null;
+}) {
   const model = useDeductionsPage(logout);
 
-  return <DeductionsView model={model} />;
+  return <DeductionsView model={model} identity={identity} />;
 }

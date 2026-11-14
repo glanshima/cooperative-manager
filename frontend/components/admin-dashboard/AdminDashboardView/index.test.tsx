@@ -116,8 +116,8 @@ describe("AdminDashboardView", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Welcome, Obi, Ada" })).toBeInTheDocument();
-    // The username still identifies the login above Log out.
-    expect(screen.getByText("localadmin")).toBeInTheDocument();
+    // The name sits above Log out instead of the login.
+    expect(screen.getByText("Obi, Ada")).toBeInTheDocument();
   });
 
   it("shows all navigation links when every module is enabled", () => {

@@ -1,4 +1,5 @@
 import StatusMessage from "@/components/ui/StatusMessage";
+import LogoutControl from "@/components/ui/LogoutControl";
 import Pagination from "@/components/ui/Pagination";
 
 import BulkActionsBar from "../BulkActionsBar";
@@ -36,7 +37,13 @@ const PENDING_COPY: Record<DeductionActionKind, { title: string; description: st
   },
 };
 
-export default function DeductionsView({ model }: { model: DeductionsPageModel }) {
+export default function DeductionsView({
+  model,
+  identity,
+}: {
+  model: DeductionsPageModel;
+  identity?: string | null;
+}) {
   if (model.print.mode) {
     return <PrintableSchedule schedule={model.schedule} onClose={model.print.close} />;
   }
@@ -49,7 +56,7 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
     <main style={{ padding: 32, maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1>Payroll Deductions</h1>
-        <button onClick={model.auth.logout}>Log out</button>
+        <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>
 
       {model.feedback.error && (

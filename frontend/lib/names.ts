@@ -17,3 +17,10 @@ export function lastNameFirst(name: string | null | undefined): string | null {
     .map((part, index) => (index === 0 ? part : `${part[0].toUpperCase()}.`));
   return `${lastName}, ${givenNames.join(" ")}`;
 }
+
+// The name to show above log out on any screen: the linked member's name when
+// there is one, otherwise the login an admin actually uses.
+export function userDisplayName(user: { username: string; member_name?: string | null } | null | undefined): string | null {
+  if (!user) return null;
+  return lastNameFirst(user.member_name) ?? user.username;
+}

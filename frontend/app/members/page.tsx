@@ -4,10 +4,11 @@ import MembersView from "@/components/members/MembersView";
 import { useMembersPage } from "@/components/members/hooks/useMembersPage";
 import AdminShell from "@/components/admin-shell/AdminShell";
 import ModuleGate from "@/components/ui/ModuleGate";
+import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function MembersPage() {
-  const { loading, logout } = useAuth({
+  const { user, loading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -18,14 +19,20 @@ export default function MembersPage() {
   return (
     <AdminShell>
       <ModuleGate module="members">
-        <MembersPageContent logout={logout} />
+        <MembersPageContent logout={logout} identity={userDisplayName(user)} />
       </ModuleGate>
     </AdminShell>
   );
 }
 
-function MembersPageContent({ logout }: { logout: () => void }) {
+function MembersPageContent({
+  logout,
+  identity,
+}: {
+  logout: () => void;
+  identity: string | null;
+}) {
   const model = useMembersPage(false, logout);
 
-  return <MembersView model={model} />;
+  return <MembersView model={model} identity={identity} />;
 }

@@ -3,10 +3,11 @@
 import OfficesView from "@/components/offices/OfficesView";
 import { useOfficesPage } from "@/components/offices/hooks/useOfficesPage";
 import AdminShell from "@/components/admin-shell/AdminShell";
+import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminOfficesPage() {
-  const { loading: authLoading, logout } = useAuth({
+  const { user, loading: authLoading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -17,7 +18,7 @@ export default function AdminOfficesPage() {
 
   return (
     <AdminShell>
-      <OfficesView model={model} />
+      <OfficesView model={model} identity={userDisplayName(user)} />
     </AdminShell>
   );
 }

@@ -3,10 +3,11 @@
 import RolesView from "@/components/roles/RolesView";
 import { useRolesPage } from "@/components/roles/hooks/useRolesPage";
 import AdminShell from "@/components/admin-shell/AdminShell";
+import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminRolesPage() {
-  const { loading: authLoading, logout } = useAuth({
+  const { user, loading: authLoading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -17,7 +18,7 @@ export default function AdminRolesPage() {
 
   return (
     <AdminShell>
-      <RolesView model={model} />
+      <RolesView model={model} identity={userDisplayName(user)} />
     </AdminShell>
   );
 }

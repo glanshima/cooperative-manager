@@ -3,10 +3,11 @@
 import AdminUsersView from "@/components/admin-users/AdminUsersView";
 import { useAdminUsersPage } from "@/components/admin-users/hooks/useAdminUsersPage";
 import AdminShell from "@/components/admin-shell/AdminShell";
+import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminUsersPage() {
-  const { loading, logout } = useAuth({
+  const { user, loading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -17,7 +18,7 @@ export default function AdminUsersPage() {
 
   return (
     <AdminShell>
-      <AdminUsersView model={model} />
+      <AdminUsersView model={model} identity={userDisplayName(user)} />
     </AdminShell>
   );
 }

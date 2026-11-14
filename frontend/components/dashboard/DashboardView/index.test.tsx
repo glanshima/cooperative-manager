@@ -39,11 +39,11 @@ function makeModel(overrides: Record<string, unknown> = {}): DashboardPageModel 
 }
 
 describe("DashboardView header", () => {
-  it("welcomes the member in Last, First form with the username above log out", () => {
+  it("welcomes the member in Last, First form with the name above log out", () => {
     render(<DashboardView model={makeModel()} />);
 
     expect(screen.getByRole("heading", { name: "Welcome, Obi, Ada" })).toBeInTheDocument();
-    expect(screen.getByText("MCT-0001")).toBeInTheDocument();
+    expect(screen.getByText("Obi, Ada")).toBeInTheDocument();
     expect(screen.getByText("PSN 0001")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
   });

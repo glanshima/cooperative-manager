@@ -3,10 +3,11 @@
 import SettingsView from "@/components/admin-settings/SettingsView";
 import { useSettingsPage } from "@/components/admin-settings/hooks/useSettingsPage";
 import AdminShell from "@/components/admin-shell/AdminShell";
+import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminSettingsPage() {
-  const { loading: authLoading, logout } = useAuth({
+  const { user, loading: authLoading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -17,7 +18,7 @@ export default function AdminSettingsPage() {
 
   return (
     <AdminShell>
-      <SettingsView model={model} />
+      <SettingsView model={model} identity={userDisplayName(user)} />
     </AdminShell>
   );
 }

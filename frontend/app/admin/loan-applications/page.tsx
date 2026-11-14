@@ -4,10 +4,11 @@ import LoanApplicationsView from "@/components/loan-applications/LoanApplication
 import { useLoanApplicationsPage } from "@/components/loan-applications/hooks/useLoanApplicationsPage";
 import AdminShell from "@/components/admin-shell/AdminShell";
 import ModuleGate from "@/components/ui/ModuleGate";
+import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminLoanApplicationsPage() {
-  const { loading: authLoading, logout } = useAuth({
+  const { user, loading: authLoading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -18,14 +19,20 @@ export default function AdminLoanApplicationsPage() {
   return (
     <AdminShell>
       <ModuleGate module="loans">
-        <LoanApplicationsPageContent logout={logout} />
+        <LoanApplicationsPageContent logout={logout} identity={userDisplayName(user)} />
       </ModuleGate>
     </AdminShell>
   );
 }
 
-function LoanApplicationsPageContent({ logout }: { logout: () => void }) {
+function LoanApplicationsPageContent({
+  logout,
+  identity,
+}: {
+  logout: () => void;
+  identity: string | null;
+}) {
   const model = useLoanApplicationsPage(false, logout);
 
-  return <LoanApplicationsView model={model} />;
+  return <LoanApplicationsView model={model} identity={identity} />;
 }

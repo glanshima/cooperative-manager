@@ -1,9 +1,16 @@
 import StatusMessage from "@/components/ui/StatusMessage";
+import LogoutControl from "@/components/ui/LogoutControl";
 import type { AdminUsersPageModel } from "../hooks/useAdminUsersPage";
 import CreateStaffForm from "../CreateStaffForm";
 import StaffTable from "../StaffTable";
 
-export default function AdminUsersView({ model }: { model: AdminUsersPageModel }) {
+export default function AdminUsersView({
+  model,
+  identity,
+}: {
+  model: AdminUsersPageModel;
+  identity?: string | null;
+}) {
   return (
     <main style={{ padding: 32, maxWidth: 1000, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -12,7 +19,7 @@ export default function AdminUsersView({ model }: { model: AdminUsersPageModel }
           <a href="/admin/offices">Offices</a>
           <a href="/admin/roles">Roles</a>
           <a href="/admin/audit">Audit log</a>
-          <button onClick={model.auth.logout}>Log out</button>
+          <LogoutControl identity={identity} onLogout={model.auth.logout} />
         </div>
       </div>
 

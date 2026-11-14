@@ -1,6 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
 import DashboardHeader from "@/components/ui/DashboardHeader";
-import { lastNameFirst } from "@/lib/names";
+import { lastNameFirst, userDisplayName } from "@/lib/names";
 import type { DashboardPageModel } from "../hooks/useDashboardPage";
 import ApplicationsSection from "../ApplicationsSection";
 import ApplyForLoan from "../ApplyForLoan";
@@ -16,7 +16,7 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
       <DashboardHeader
         name={displayName}
         fallbackTitle="My Dashboard"
-        username={model.auth.user?.username}
+        identity={displayName ?? userDisplayName(model.auth.user)}
         onLogout={model.auth.logout}
       />
 

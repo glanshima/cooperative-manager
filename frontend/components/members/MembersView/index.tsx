@@ -1,4 +1,5 @@
 import StatusMessage from "@/components/ui/StatusMessage";
+import LogoutControl from "@/components/ui/LogoutControl";
 import type { MembersPageModel } from "../hooks/useMembersPage";
 import MemberFilters from "../MemberFilters";
 import MemberForm from "../MemberForm";
@@ -6,14 +7,20 @@ import MemberSearch from "../MemberSearch";
 import MemberTable from "../MemberTable";
 import ContributionReviewPanel from "../ContributionReviewPanel";
 
-export default function MembersView({ model }: { model: MembersPageModel }) {
+export default function MembersView({
+  model,
+  identity,
+}: {
+  model: MembersPageModel;
+  identity?: string | null;
+}) {
   const { table, filters, contributions } = model;
 
   return (
     <main style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1>Members</h1>
-        <button onClick={model.auth.logout}>Log out</button>
+        <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>
 
       {model.feedback.error && (

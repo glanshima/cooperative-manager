@@ -10,7 +10,7 @@ function renderHeader(overrides: Partial<Parameters<typeof DashboardHeader>[0]> 
     <DashboardHeader
       name="Obi, Ada"
       fallbackTitle="My Dashboard"
-      username="MCT-0001"
+      identity="Obi, Ada"
       onLogout={onLogout}
       {...overrides}
     />
@@ -19,14 +19,14 @@ function renderHeader(overrides: Partial<Parameters<typeof DashboardHeader>[0]> 
 }
 
 describe("DashboardHeader", () => {
-  it("welcomes by name with the username above the log out control", () => {
+  it("welcomes by name with the identity above the log out control", () => {
     renderHeader();
 
     expect(screen.getByRole("heading", { name: "Welcome, Obi, Ada" })).toBeInTheDocument();
-    const username = screen.getByText("MCT-0001");
+    const identity = screen.getByText("Obi, Ada");
     const button = screen.getByRole("button", { name: "Log out" });
     expect(
-      username.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING
+      identity.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
   });
 
@@ -60,10 +60,32 @@ describe("DashboardHeader", () => {
   });
 
   it("keeps the plain heading when there is no name to greet", () => {
-    renderHeader({ name: null, username: null });
+    renderHeader({ name: null, identity: null });
 
     expect(screen.getByRole("heading", { name: "My Dashboard" })).toBeInTheDocument();
-    expect(screen.queryByText("MCT-0001")).not.toBeInTheDocument();
+    expect(screen.queryByText("Obi, Ada")).not.toBeInTheDocument();
+  });
+
+  it("follows the clock when the day moves on while the page is open", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 14, 11, 59));
+    try {
+      renderHeader();
+      act(() => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(screen.getByRole("heading", { name: "Good morning, Obi, Ada" })).toBeInTheDocument();
+
+      vi.setSystemTime(new Date(2026, 10, 14, 12, 1));
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(
+        screen.getByRole("heading", { name: "Good afternoon, Obi, Ada" })
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("asks before logging out and cancelling keeps the session", async () => {

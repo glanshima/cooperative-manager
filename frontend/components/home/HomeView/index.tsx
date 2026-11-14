@@ -1,3 +1,5 @@
+import LogoutControl from "@/components/ui/LogoutControl";
+import { userDisplayName } from "@/lib/names";
 import type { HomePageModel } from "../hooks/useHomePage";
 
 export default function HomeView({ model }: { model: HomePageModel }) {
@@ -29,7 +31,7 @@ export default function HomeView({ model }: { model: HomePageModel }) {
         }}
       >
         <h1>MACT Cooperative Manager</h1>
-        <button onClick={logout}>Log out</button>
+        <LogoutControl identity={userDisplayName(user)} onLogout={logout} />
       </div>
       <p style={{ color: "#555" }}>Signed in as {user.username}.</p>
 

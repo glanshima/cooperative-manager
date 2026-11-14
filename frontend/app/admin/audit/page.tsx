@@ -3,10 +3,11 @@
 import AuditView from "@/components/audit/AuditView";
 import { useAuditPage } from "@/components/audit/hooks/useAuditPage";
 import AdminShell from "@/components/admin-shell/AdminShell";
+import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminAuditPage() {
-  const { loading: authLoading, logout } = useAuth({
+  const { user, loading: authLoading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -17,7 +18,7 @@ export default function AdminAuditPage() {
 
   return (
     <AdminShell>
-      <AuditView model={model} />
+      <AuditView model={model} identity={userDisplayName(user)} />
     </AdminShell>
   );
 }

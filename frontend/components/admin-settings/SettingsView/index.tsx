@@ -1,9 +1,16 @@
 import StatusMessage from "@/components/ui/StatusMessage";
+import LogoutControl from "@/components/ui/LogoutControl";
 import type { SettingsPageModel } from "../hooks/useSettingsPage";
 import LoanApplicationSettingsSection from "../LoanApplicationSettingsSection";
 import ModulesSection from "../ModulesSection";
 
-export default function SettingsView({ model }: { model: SettingsPageModel }) {
+export default function SettingsView({
+  model,
+  identity,
+}: {
+  model: SettingsPageModel;
+  identity?: string | null;
+}) {
   if (model.loading || !model.settings) {
     return <main style={{ padding: 32 }}>Loading...</main>;
   }
@@ -14,7 +21,7 @@ export default function SettingsView({ model }: { model: SettingsPageModel }) {
     <main style={{ padding: 32, maxWidth: 700, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1>Settings</h1>
-        <button onClick={model.auth.logout}>Log out</button>
+        <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>
 
       {model.feedback.error && (
