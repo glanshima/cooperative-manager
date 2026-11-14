@@ -35,7 +35,7 @@ export default function ModuleGate({
 
   if (error) {
     return (
-      <main style={{ padding: 32 }}>
+      <main className="page">
         <StatusMessage tone="error">
           Unable to check module availability: {error}
         </StatusMessage>
@@ -43,7 +43,7 @@ export default function ModuleGate({
     );
   }
 
-  if (!settings) return <main style={{ padding: 32 }}>Loading...</main>;
+  if (!settings) return <main className="page">Loading...</main>;
 
   if (!isModuleEnabled(settings, module)) return <ModuleDisabled module={module} />;
 

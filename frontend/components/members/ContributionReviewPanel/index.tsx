@@ -51,7 +51,7 @@ export default function ContributionReviewPanel({
 
   return (
     <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: 16, marginBottom: 24 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="page-header">
         <h2 style={{ margin: 0 }}>Contribution change requests</h2>
         <button onClick={onRefresh} disabled={loading}>
           {loading ? "Loading…" : "Refresh"}
@@ -70,7 +70,7 @@ export default function ContributionReviewPanel({
             key={r.id}
             style={{ padding: 12, border: "1px solid #eee", borderRadius: 4, marginTop: 12 }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
               <strong>
                 {r.member_name ?? "Member"}
                 {r.member_psn ? ` · PSN ${r.member_psn?.replace("MCT-", "") ?? ""}` : ""}
@@ -111,7 +111,7 @@ export default function ContributionReviewPanel({
                   disabled={busy}
                   onChange={(e) => setReasons((current) => ({ ...current, [r.id]: e.target.value }))}
                 />
-                <div style={{ display: "flex", gap: 8 }}>
+                <div className="toolbar">
                   <button onClick={() => act(r.id, true)} disabled={busy}>
                     Approve
                   </button>

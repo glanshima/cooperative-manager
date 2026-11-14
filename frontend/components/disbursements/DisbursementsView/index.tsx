@@ -13,12 +13,12 @@ export default function DisbursementsView({
   identity?: string | null;
 }) {
   if (model.loading) {
-    return <main style={{ padding: 32 }}>Loading...</main>;
+    return <main className="page">Loading...</main>;
   }
 
   return (
-    <main style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <main className="page page--1100">
+      <div className="page-header">
         <h1>Disburse Loans</h1>
         <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>

@@ -12,10 +12,10 @@ export default function AdminUsersView({
   identity?: string | null;
 }) {
   return (
-    <main style={{ padding: 32, maxWidth: 1000, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <main className="page page--1000">
+      <div className="page-header">
         <h1>Staff / Admin Users</h1>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div className="toolbar">
           <a href="/admin/offices">Offices</a>
           <a href="/admin/roles">Roles</a>
           <a href="/admin/audit">Audit log</a>

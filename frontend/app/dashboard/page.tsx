@@ -12,7 +12,7 @@ export default function MemberDashboard() {
   });
   const model = useDashboardPage(authLoading, user, logout);
 
-  if (authLoading || model.loading) return <main style={{ padding: 32 }}>Loading...</main>;
+  if (authLoading || model.loading) return <main className="page">Loading...</main>;
 
   return <DashboardView model={model} />;
 }

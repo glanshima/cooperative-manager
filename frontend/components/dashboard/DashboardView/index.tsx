@@ -12,7 +12,7 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
   const displayName = model.member ? lastNameFirst(model.member.name) : null;
 
   return (
-    <main style={{ padding: 32, maxWidth: 900, margin: "0 auto" }}>
+    <main className="page page--900">
       <DashboardHeader
         name={displayName}
         fallbackTitle="My Dashboard"

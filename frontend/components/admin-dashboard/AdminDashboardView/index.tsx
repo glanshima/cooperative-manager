@@ -38,7 +38,7 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
   const headingName = user ? lastNameFirst(user.member_name) ?? user.username : null;
 
   return (
-    <main style={{ padding: 32, maxWidth: 900, margin: "0 auto" }}>
+    <main className="page page--900">
       <DashboardHeader
         name={headingName}
         fallbackTitle="Admin Dashboard"
@@ -58,7 +58,7 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
           <h2 style={{ fontSize: 15, fontWeight: 600, color: "#444", marginBottom: 12 }}>
             Members
           </h2>
-          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(260px, 100%), 1fr))" }}>
             <NavCard
               href="/members"
               label="Member records"
@@ -74,7 +74,7 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
           <h2 style={{ fontSize: 15, fontWeight: 600, color: "#444", marginBottom: 12 }}>
             Loans
           </h2>
-          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(260px, 100%), 1fr))" }}>
             <NavCard
               href="/admin/loan-applications"
               label="Loan applications"
@@ -100,7 +100,7 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
           <h2 style={{ fontSize: 15, fontWeight: 600, color: "#444", marginBottom: 12 }}>
             Deductions
           </h2>
-          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(260px, 100%), 1fr))" }}>
             <NavCard
               href="/admin/deductions"
               label="Payroll deductions"
@@ -115,7 +115,7 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
         <h2 style={{ fontSize: 15, fontWeight: 600, color: "#444", marginBottom: 12 }}>
           Administration
         </h2>
-        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(260px, 100%), 1fr))" }}>
           <NavCard
             href="/admin/users"
             label="Staff / Admin users"

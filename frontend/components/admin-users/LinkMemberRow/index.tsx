@@ -40,7 +40,7 @@ export default function LinkMemberRow({
             style={{ marginTop: 8 }}
           />
         )}
-        <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+        <div className="toolbar" style={{ marginTop: 12 }}>
           <button onClick={() => link.confirm(user)} disabled={!link.selected}>
             Confirm {user.member_id ? "change" : "link"}
           </button>

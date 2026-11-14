@@ -39,18 +39,10 @@ export default function ChangePasswordPage() {
     }
   }
 
-  if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
+  if (authLoading) return <main className="page">Loading...</main>;
 
   return (
-    <main
-      style={{
-        maxWidth: 400,
-        margin: "80px auto",
-        padding: 24,
-        border: "1px solid #ddd",
-        borderRadius: 8,
-      }}
-    >
+    <main className="auth-card">
       <h1>Change your password</h1>
       <p style={{ color: "#666" }}>
         {user?.must_change_password

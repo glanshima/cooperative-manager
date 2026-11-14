@@ -343,3 +343,45 @@ Names are now stored as parts **and** as the printed string, so every existing s
 - Five ledger rows were typed given-name-first and were corrected explicitly: `7294 Iortim, Joseph Nyijime`, `4988 Adue, Matthew Pauline`, `36020 Shagher, Beatrice`, `36023 Mlumun, Christiana Upaa`, `36029 Onu, Sunday`.
 - Four rows remain ambiguous and should be checked in the member edit form: `32061 Jon- Uan Washima`, `32087 Hon Helen Mbatomon`, `32261 Adi Yese Mchivir Loisa`, `36024 Dooyum Torikpa`.
 - `scripts/migrate_members_from_xlsx.py` now splits family-first too, so a future import does not reintroduce the inversion.
+
+## 13. Responsive layout and shared modal (2026-11-15)
+
+### 13.1 Approach
+
+Layout and responsive rules moved out of inline `style={{}}` objects into **external CSS**, as requested: `app/globals.css` (imported once in `app/layout.tsx`) plus component CSS modules where a component owns its markup. No Tailwind was introduced; the existing plain-CSS system is kept.
+
+- `.page` gives every screen fluid padding (`clamp(12px, 4vw, 32px)`, tightened to `16px 12px` under 640px) with `.page--640/700/900/1000/1100/1200` width caps. Every view and loading state now uses it.
+- `.page-header` is a wrapping title/action row; `.toolbar` is a wrapping action/filter row (`8px 12px` gaps) with `.toolbar--end` for right-aligned groups.
+- `.form-grid` is a self-collapsing grid (`repeat(auto-fit, minmax(min(220px, 100%), 1fr))`); `.form-grid__full` spans every column. Used by the member form, the disburse form, the loan-type and rate-history forms.
+- `.search-field` grows to full width on phones and never forces the page wider. `.auth-card` gives the four standalone auth screens fluid margins/padding inside a 420px cap.
+- `.table-scroll` remains the safety net for wide tables.
+
+### 13.2 Tables as stacked cards
+
+`components/ui/Table` now wraps every table in `.table-scroll` and reads the `<thead>` labels once, cloning them onto each body cell as `data-label` (spanning rows such as an inline reset-password form are skipped). Under 640px the CSS hides the header row and renders each `<tr>` as a bordered card with `label — value` rows; action cells wrap. `@media print` restores the normal table, which keeps the printable deduction schedule unchanged.
+
+All fourteen tables go through this component, so no per-table markup was needed.
+
+### 13.3 Shared modal
+
+The accessible modal from the payroll Enter form (focus move/restore, Escape, focus trap, backdrop-only click, busy lock) is now `components/ui/Modal` and is reused by:
+
+- the deduction form (`DeductionForm`), unchanged externally;
+- the **Add/Edit member form**, which is now a dialog with the same Close button, hint and busy lock (opened by the new **Add member** button, and by **Edit**), single-column on phones;
+- the audit detail dialog, the deduction reason dialog, the contribution change request dialog and the Log out confirmation.
+
+The member form's page hook gained `isOpen`/`busy`/`openCreate`/`close`, with `saving` state wrapped around the API call so the dialog cannot be dismissed mid-save.
+
+### 13.4 Other responsive fixes
+
+- Header/nav link groups, filters, pagination, bulk-action bars, review actions and form button rows now wrap instead of overflowing.
+- Fixed widths were replaced with fluid ones: member search (320px), admin member picker (260px) and the reset-password input (320px).
+- Admin dashboard card grids use `minmax(min(260px, 100%), 1fr)` so they never overflow a phone.
+- Dense deduction worklist/review rows wrap their title and status line.
+
+### 13.5 Verification
+
+- `npx tsc --noEmit` exit 0.
+- Vitest: **28 files / 184 tests passed** (3 new member-modal tests: labelled dialog for create/edit, close by button and Escape, busy lock).
+- `npm run build` compiled successfully (20/20 static pages).
+- Browser-checked on the local sandbox with the app in a **375px-wide frame**: members header wraps under the title; search and filters stack; the member table renders as labelled cards with intact values; the Add member dialog fits with single-column fields; the deductions ledger stacks into cards with no horizontal page scroll (`scrollWidth` 356 under a 371px viewport); the Enter-deduction dialog stacks its fields. Desktop (1200px) still renders normal tables (`display: table-cell`), confirming the media-query switch.

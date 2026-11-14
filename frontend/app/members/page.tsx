@@ -14,7 +14,7 @@ export default function MembersPage() {
     requireRole: "admin",
   });
 
-  if (loading) return <main style={{ padding: 32 }}>Loading...</main>;
+  if (loading) return <main className="page">Loading...</main>;
 
   return (
     <AdminShell>

@@ -24,7 +24,7 @@ export default function PrintableSchedule({
 
   if (!schedule) {
     return (
-      <main style={{ padding: 32 }}>
+      <main className="page">
         <p>The schedule has not loaded yet.</p>
         <button onClick={onClose}>Back</button>
       </main>
@@ -36,14 +36,14 @@ export default function PrintableSchedule({
   const rows = schedule.records.filter((record) => record.status !== "not_deducted");
 
   return (
-    <main style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
+    <main className="page page--1100">
       <style>{`@media print {
         .no-print { display: none !important; }
         body { margin: 12mm; }
         body > footer { display: none !important; }
       }`}</style>
 
-      <div className="no-print" style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <div className="toolbar no-print" style={{ marginBottom: 16 }}>
         <button onClick={() => window.print()}>Print</button>
         <button onClick={onClose}>Back to deductions</button>
       </div>

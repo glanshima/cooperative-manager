@@ -16,7 +16,7 @@ export default function RoleEditor({
 
   return (
     <section style={{ marginBottom: 24, border: "1px solid #ddd", borderRadius: 6, padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="page-header">
         <div>
           <strong>{role.name}</strong>{" "}
           <span style={{ color: "#888" }}>{role.description}</span>
@@ -37,7 +37,7 @@ export default function RoleEditor({
           )}
         </div>
         {editing ? (
-          <div style={{ display: "flex", gap: 8 }}>
+          <div className="toolbar">
             <button onClick={() => edit.save(role)}>Save</button>
             <button onClick={edit.cancel}>Cancel</button>
           </div>

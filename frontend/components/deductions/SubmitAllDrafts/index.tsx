@@ -39,7 +39,7 @@ export default function SubmitAllDrafts({
           Records that are already submitted, or that belong to a member you are conflicted against
           with an override, will be refused one by one and listed in the result.
         </p>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="toolbar">
           <button disabled={busy} onClick={onConfirm}>
             Submit {preview.ids.length} drafts
           </button>

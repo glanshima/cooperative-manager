@@ -6,7 +6,7 @@ export default function DisbursementFilters({
   filters: DisbursementsPageModel["filters"];
 }) {
   return (
-    <section style={{ marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+    <section className="toolbar" style={{ marginBottom: 16 }}>
       <select
         value={filters.loanTypeId}
         onChange={(e) => filters.setLoanTypeId(e.target.value)}

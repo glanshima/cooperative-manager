@@ -53,8 +53,8 @@ export default function DeductionsView({
   const pendingCopy = pending ? PENDING_COPY[pending.action] : null;
 
   return (
-    <main style={{ padding: 32, maxWidth: 1200, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <main className="page page--1200">
+      <div className="page-header">
         <h1>Payroll Deductions</h1>
         <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>
@@ -124,7 +124,7 @@ export default function DeductionsView({
             onPrint={model.print.open}
           />
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <div className="toolbar" style={{ marginBottom: 12 }}>
             <SubmitAllDrafts
               preview={model.actions.submitAll.preview}
               busy={busy}

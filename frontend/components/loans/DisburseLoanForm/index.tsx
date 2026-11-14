@@ -13,10 +13,7 @@ export default function DisburseLoanForm({ disburse }: { disburse: LoansPageMode
       }}
     >
       <h2>Disburse a loan</h2>
-      <form
-        onSubmit={disburse.submit}
-        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
-      >
+      <form onSubmit={disburse.submit} className="form-grid">
         <select
           required
           value={form.member_id}
@@ -60,16 +57,16 @@ export default function DisburseLoanForm({ disburse }: { disburse: LoansPageMode
         />
 
         <input
+          className="form-grid__full"
           placeholder="Notes (optional)"
           value={form.notes || ""}
           onChange={(e) => disburse.setField("notes", e.target.value)}
-          style={{ gridColumn: "1 / -1" }}
         />
 
         {selectedType && form.principal > 0 && (
           <div
+            className="form-grid__full"
             style={{
-              gridColumn: "1 / -1",
               background: "#f6f6f6",
               padding: 8,
               borderRadius: 6,
@@ -84,7 +81,7 @@ export default function DisburseLoanForm({ disburse }: { disburse: LoansPageMode
           </div>
         )}
 
-        <div style={{ gridColumn: "1 / -1" }}>
+        <div className="form-grid__full">
           <button type="submit">Disburse loan</button>
         </div>
       </form>

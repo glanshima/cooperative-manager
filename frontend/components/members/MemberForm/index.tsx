@@ -1,22 +1,19 @@
+import Modal from "@/components/ui/Modal";
 import type { MemberStatus } from "@/lib/api";
 import type { MembersPageModel } from "../hooks/useMembersPage";
 import NextOfKinFields from "../NextOfKinFields";
 
 export default function MemberForm({ form }: { form: MembersPageModel["form"] }) {
   return (
-    <section
-      style={{
-        border: "1px solid #ddd",
-        borderRadius: 8,
-        padding: 16,
-        marginBottom: 24,
-      }}
+    <Modal
+      title={form.editingId ? "Edit member" : "Add member"}
+      onClose={form.close}
+      busy={form.busy}
+      testId="member-modal-backdrop"
+      closeLabel="Close member form"
+      hint="Closing this form discards anything you have not saved."
     >
-      <h2>{form.editingId ? "Edit member" : "Add member"}</h2>
-      <form
-        onSubmit={form.submit}
-        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
-      >
+      <form onSubmit={form.submit} className="form-grid">
         <input
           required
           aria-label="PSN"
@@ -103,7 +100,7 @@ export default function MemberForm({ form }: { form: MembersPageModel["form"] })
 
         <NextOfKinFields form={form} />
 
-        <label style={{ gridColumn: "1 / -1" }}>
+        <label className="form-grid__full">
           <input
             type="checkbox"
             checked={form.values.loan_restricted}
@@ -113,22 +110,24 @@ export default function MemberForm({ form }: { form: MembersPageModel["form"] })
         </label>
         {form.values.loan_restricted && (
           <input
+            className="form-grid__full"
             placeholder="Reason for restriction"
             value={form.values.restriction_reason}
             onChange={(e) => form.setField("restriction_reason", e.target.value)}
-            style={{ gridColumn: "1 / -1" }}
           />
         )}
 
-        <div style={{ gridColumn: "1 / -1" }}>
-          <button type="submit">{form.editingId ? "Save changes" : "Add member"}</button>{" "}
+        <div className="form-grid__full toolbar">
+          <button type="submit" disabled={form.busy}>
+            {form.editingId ? "Save changes" : "Add member"}
+          </button>{" "}
           {form.editingId && (
-            <button type="button" onClick={form.reset}>
+            <button type="button" disabled={form.busy} onClick={form.close}>
               Cancel
             </button>
           )}
         </div>
       </form>
-    </section>
+    </Modal>
   );
 }

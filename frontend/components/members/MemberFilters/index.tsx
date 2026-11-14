@@ -22,7 +22,7 @@ export default function MemberFilters({
   onClear: () => void;
 }) {
   return (
-    <section style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+    <section className="toolbar" style={{ marginBottom: 12 }}>
       <label>
         Bank{" "}
         <select value={bank} onChange={(e) => onBankChange(e.target.value)}>

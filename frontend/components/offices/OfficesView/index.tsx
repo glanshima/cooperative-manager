@@ -12,14 +12,14 @@ export default function OfficesView({
   identity?: string | null;
 }) {
   if (model.loading) {
-    return <main style={{ padding: 32 }}>Loading...</main>;
+    return <main className="page">Loading...</main>;
   }
 
   return (
-    <main style={{ padding: 32, maxWidth: 700, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <main className="page page--700">
+      <div className="page-header">
         <h1>Offices</h1>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div className="toolbar">
           <a href="/admin/users">Users</a>
           <a href="/admin/roles">Roles</a>
           <a href="/admin/audit">Audit log</a>

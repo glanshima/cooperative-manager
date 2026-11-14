@@ -5,11 +5,11 @@ import type { HomePageModel } from "../hooks/useHomePage";
 export default function HomeView({ model }: { model: HomePageModel }) {
   const { user, loading, logout } = model.auth;
 
-  if (loading) return <main style={{ padding: 32 }}>Loading...</main>;
+  if (loading) return <main className="page">Loading...</main>;
 
   if (!user) {
     return (
-      <main style={{ padding: 32 }}>
+      <main className="page">
         <h1>MACT Cooperative Manager</h1>
         <p>
           <a href="/login">Log in &rarr;</a>
@@ -21,15 +21,8 @@ export default function HomeView({ model }: { model: HomePageModel }) {
   const { membersEnabled, loansEnabled, deductionsEnabled } = model.modules;
 
   return (
-    <main style={{ padding: 32 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          maxWidth: 640,
-        }}
-      >
+    <main className="page">
+      <div className="page-header" style={{ maxWidth: 640 }}>
         <h1>MACT Cooperative Manager</h1>
         <LogoutControl identity={userDisplayName(user)} onLogout={logout} />
       </div>

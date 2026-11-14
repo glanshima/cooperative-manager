@@ -56,10 +56,7 @@ export default function LoanTypesManager({ types }: { types: LoansPageModel["typ
       <RateHistoryPanel types={types} />
 
       <h3>Add loan type</h3>
-      <form
-        onSubmit={types.submit}
-        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
-      >
+      <form onSubmit={types.submit} className="form-grid">
         <input
           required
           placeholder="Name (e.g. Capital Loan)"
@@ -99,7 +96,7 @@ export default function LoanTypesManager({ types }: { types: LoansPageModel["typ
           value={form.effective_from}
           onChange={(e) => types.setField("effective_from", e.target.value)}
         />
-        <div style={{ gridColumn: "1 / -1" }}>
+        <div className="form-grid__full">
           <button type="submit">Add loan type</button>
         </div>
       </form>

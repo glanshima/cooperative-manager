@@ -4,7 +4,7 @@ export default function CreateOfficeForm({ form }: { form: OfficesPageModel["for
   return (
     <form
       onSubmit={form.submit}
-      style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 24 }}
+      className="toolbar" style={{ alignItems: "flex-end", marginBottom: 24 }}
     >
       <label>
         Name

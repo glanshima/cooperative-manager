@@ -31,16 +31,7 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <main
-      style={{
-        maxWidth: 420,
-        margin: "80px auto",
-        padding: 24,
-        border: "1px solid #ddd",
-        borderRadius: 8,
-        fontFamily: "system-ui, -apple-system, sans-serif",
-      }}
-    >
+    <main className="auth-card">
       <h1>Password Recovery</h1>
       <p style={{ color: "#666", fontSize: 14 }}>
         Enter your PSN (Members), Username, or registered Email address. If an account matches,

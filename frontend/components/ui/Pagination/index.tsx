@@ -16,7 +16,7 @@ export default function Pagination({
   onPageSizeChange?: (newLimit: number) => void;
 }) {
   return (
-    <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
+    <div className="toolbar" style={{ marginTop: 12 }}>
       <button disabled={skip === 0} onClick={() => onChange(skip - limit)}>
         Previous
       </button>

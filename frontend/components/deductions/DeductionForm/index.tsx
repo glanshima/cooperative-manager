@@ -1,5 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import { useState } from "react";
 
 import type {
   LoanLineCategory,
@@ -7,6 +6,7 @@ import type {
   PayrollDeductionLineInput,
 } from "@/lib/api";
 import { currentMonth } from "@/lib/month";
+import Modal from "@/components/ui/Modal";
 
 import type { DeductionsPageModel } from "../hooks/useDeductionsPage";
 import { formatMoney, loanLineName } from "../labels";
@@ -101,46 +101,6 @@ export default function DeductionForm({
   );
 
   const [localError, setLocalError] = useState<string | null>(null);
-
-  const titleId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
-
-  // Moving focus into the dialog on open and back to whatever opened it on
-  // close is what makes this a dialog rather than an inline form that
-  // happens to sit on top of the page.
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    const preferred =
-      dialogRef.current?.querySelector<HTMLElement>("[data-initial-focus]:not([disabled])") ??
-      dialogRef.current?.querySelector<HTMLElement>(
-        "input:not([disabled]), select:not([disabled]), textarea:not([disabled])"
-      );
-    (preferred ?? dialogRef.current)?.focus();
-    return () => opener?.focus?.();
-  }, []);
-
-  function handleDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      if (busy) return;
-      event.stopPropagation();
-      form.close();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
-    );
-    if (!focusable || focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
 
   const activeLoans = memberId ? form.loansForMember(memberId) : [];
   const activeLoanIds = new Set(activeLoans.map((loan) => loan.id));
@@ -291,69 +251,16 @@ export default function DeductionForm({
       : "New deduction";
 
   return (
-    <div
-      data-testid="deduction-modal-backdrop"
-      onClick={(event) => {
-        // A click on the backdrop itself closes; anything inside the dialog
-        // does not, however far the content scrolls.
-        if (event.target === event.currentTarget && !busy) form.close();
-      }}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0, 0, 0, 0.45)",
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "center",
-        padding: 16,
-        overflowY: "auto",
-        zIndex: 50,
-      }}
+    <Modal
+      title={heading}
+      onClose={form.close}
+      busy={busy}
+      testId="deduction-modal-backdrop"
+      closeLabel="Close deduction form"
+      maxWidth={820}
+      hint="Closing this form discards anything you have not saved."
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        onKeyDown={handleDialogKeyDown}
-        style={{
-          background: "#fafafa",
-          border: "1px solid #ccc",
-          borderRadius: 8,
-          padding: 20,
-          width: "100%",
-          maxWidth: 820,
-          maxHeight: "calc(100vh - 32px)",
-          overflowY: "auto",
-          textAlign: "left",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: 12,
-          }}
-        >
-          <h2 id={titleId} style={{ marginTop: 0 }}>
-            {heading}
-          </h2>
-          <button
-            type="button"
-            aria-label="Close deduction form"
-            disabled={busy}
-            onClick={form.close}
-          >
-            Close
-          </button>
-        </div>
-        <p style={{ marginTop: 0, fontSize: 12, color: "#555" }}>
-          Closing this form discards anything you have not saved.
-        </p>
-
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+      <div className="toolbar" style={{ marginBottom: 12 }}>
         <label>
           <span style={{ display: "block", fontSize: 12, color: "#555" }}>Member</span>
           <select
@@ -445,8 +352,8 @@ export default function DeductionForm({
         <p style={{ color: "#666" }}>This member has no loan instalment due.</p>
       )}
       {loanRows.map((row) => (
-        <div key={row.key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-          <span style={{ minWidth: 260 }}>{row.label}</span>
+        <div key={row.key} className="toolbar" style={{ marginBottom: 6 }}>
+          <span style={{ flex: "1 1 220px", minWidth: 0 }}>{row.label}</span>
           <input
             aria-label={
               row.category === "loan_arrears"
@@ -480,7 +387,7 @@ export default function DeductionForm({
         <>
           <h3 style={{ marginBottom: 4, marginTop: 16 }}>Other deductions</h3>
           {otherLines.map((line, index) => (
-            <div key={index} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+            <div key={index} className="toolbar" style={{ marginBottom: 6 }}>
               <input
                 aria-label={`Other deduction ${index + 1} label`}
                 value={line.label}
@@ -511,7 +418,7 @@ export default function DeductionForm({
 
       {localError && <p style={{ color: "crimson", fontWeight: 600 }}>{localError}</p>}
 
-      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+      <div className="toolbar" style={{ marginTop: 16 }}>
         <button
           disabled={busy}
           onClick={submit}
@@ -527,7 +434,6 @@ export default function DeductionForm({
           Cancel
         </button>
       </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

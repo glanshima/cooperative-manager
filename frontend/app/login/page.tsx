@@ -32,15 +32,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main
-      style={{
-        maxWidth: 400,
-        margin: "80px auto",
-        padding: 24,
-        border: "1px solid #ddd",
-        borderRadius: 8,
-      }}
-    >
+    <main className="auth-card">
       <h1>MACT Cooperative Manager</h1>
       <p style={{ color: "#666" }}>
         Members: log in with your PSN. Admins: use your admin username.

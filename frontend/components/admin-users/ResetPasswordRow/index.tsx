@@ -25,7 +25,8 @@ export default function ResetPasswordRow({
             e.preventDefault();
             onConfirm(user.id);
           }}
-          style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}
+          className="toolbar"
+          style={{ marginTop: 8 }}
         >
           <input
             type="password"
@@ -33,7 +34,7 @@ export default function ResetPasswordRow({
             value={tempPassword}
             onChange={(e) => onTempPasswordChange(e.target.value)}
             required
-            style={{ padding: 6, width: 320 }}
+            style={{ padding: 6, flex: "1 1 220px", width: "auto" }}
           />
           <button type="submit" disabled={!tempPassword}>
             Confirm Reset

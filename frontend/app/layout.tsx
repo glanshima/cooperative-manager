@@ -1,3 +1,5 @@
+import "./globals.css";
+
 export const metadata = {
   title: "MACT Cooperative Manager",
   description: "Cooperative society member, loan, and deduction management",

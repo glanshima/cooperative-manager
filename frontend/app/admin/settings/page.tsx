@@ -14,7 +14,7 @@ export default function AdminSettingsPage() {
   });
   const model = useSettingsPage(authLoading, logout);
 
-  if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
+  if (authLoading) return <main className="page">Loading...</main>;
 
   return (
     <AdminShell>

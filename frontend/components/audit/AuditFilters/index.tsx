@@ -4,7 +4,7 @@ export default function AuditFilters({ filters }: { filters: AuditPageModel["fil
   return (
     <form
       onSubmit={filters.submit}
-      style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 16 }}
+      className="toolbar" style={{ alignItems: "flex-end", marginBottom: 16 }}
     >
       <label>
         Entity type

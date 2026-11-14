@@ -4,7 +4,7 @@ export default function CreateRoleForm({ create }: { create: RolesPageModel["cre
   return (
     <form
       onSubmit={create.submit}
-      style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 24 }}
+      className="toolbar" style={{ alignItems: "flex-end", marginBottom: 24 }}
     >
       <label>
         Role name

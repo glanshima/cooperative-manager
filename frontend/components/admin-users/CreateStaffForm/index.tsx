@@ -20,7 +20,7 @@ export default function CreateStaffForm({
       </p>
       <form
         onSubmit={create.submit}
-        style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}
+        className="toolbar" style={{ alignItems: "flex-end" }}
       >
         <label>
           Username

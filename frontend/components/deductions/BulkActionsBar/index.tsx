@@ -34,6 +34,7 @@ export default function BulkActionsBar({
     <div
       style={{
         display: "flex",
+        flexWrap: "wrap",
         alignItems: "center",
         gap: 8,
         marginBottom: 12,

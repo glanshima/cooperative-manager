@@ -13,7 +13,7 @@ export default function AdminDashboard() {
   });
   const model = useAdminDashboardPage(authLoading, user, logout);
 
-  if (authLoading || model.loading) return <main style={{ padding: 32 }}>Loading...</main>;
+  if (authLoading || model.loading) return <main className="page">Loading...</main>;
 
   return (
     <AdminShell>

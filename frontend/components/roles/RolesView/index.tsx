@@ -12,14 +12,14 @@ export default function RolesView({
   identity?: string | null;
 }) {
   if (model.loading) {
-    return <main style={{ padding: 32 }}>Loading...</main>;
+    return <main className="page">Loading...</main>;
   }
 
   return (
-    <main style={{ padding: 32, maxWidth: 900, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <main className="page page--900">
+      <div className="page-header">
         <h1>Roles &amp; Permissions</h1>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div className="toolbar">
           <a href="/admin/users">Users</a>
           <a href="/admin/offices">Offices</a>
           <a href="/admin/audit">Audit log</a>

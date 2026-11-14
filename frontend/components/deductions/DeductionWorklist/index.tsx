@@ -82,7 +82,7 @@ export default function DeductionWorklist({
 
   return (
     <section style={{ marginBottom: 20 }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 12 }}>
+      <div className="toolbar" style={{ alignItems: "flex-end", marginBottom: 12 }}>
         <label>
           <span style={{ display: "block", fontSize: 12, color: "#555" }}>Payroll month</span>
           <input
@@ -175,7 +175,7 @@ export default function DeductionWorklist({
             key={item.member_id}
             style={{ border: "1px solid #eee", borderRadius: 4, padding: 12, marginBottom: 10 }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
               <strong>
                 {item.member_name} · PSN {item.member_psn?.replace("MCT-", "") ?? ""}
                 {item.conflicted && <> <ConflictMarker /></>}
@@ -196,7 +196,7 @@ export default function DeductionWorklist({
               </ul>
             )}
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+            <div className="toolbar" style={{ justifyContent: "space-between", marginTop: 10 }}>
               <span style={{ fontSize: 14 }}>
                 Expected <strong>₦{formatMoney(item.expected_total)}</strong>
               </span>

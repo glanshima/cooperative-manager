@@ -20,7 +20,7 @@ export default function DeductionFilters({
 }) {
   return (
     <section style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+      <div className="toolbar" style={{ alignItems: "flex-end" }}>
         <label>
           <span style={{ display: "block", fontSize: 12, color: "#555" }}>Payroll month</span>
           <input

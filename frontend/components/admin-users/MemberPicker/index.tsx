@@ -19,14 +19,16 @@ export default function MemberPicker({
 }) {
   return (
     <>
-      <span style={{ display: "inline-flex", gap: 8, ...style }}>
-        <input
-          placeholder="Search member by PSN, name, or phone"
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), onSearch())}
-          style={{ padding: 6, width: 260 }}
-        />
+      <span className="toolbar" style={style}>
+        <span className="search-field">
+          <input
+            placeholder="Search member by PSN, name, or phone"
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), onSearch())}
+            style={{ padding: 6 }}
+          />
+        </span>
         <button type="button" onClick={onSearch}>
           Search
         </button>

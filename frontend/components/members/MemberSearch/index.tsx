@@ -10,31 +10,20 @@ export default function MemberSearch({
   onClear: () => void;
 }) {
   return (
-    <section style={{ marginBottom: 12 }}>
-      <span style={{ position: "relative", display: "inline-block" }}>
+    <section className="toolbar" style={{ marginBottom: 12 }}>
+      <span className="search-field">
         <input
           placeholder="Search by member number/PSN, name, or phone"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && onSearch()}
-          style={{ padding: 8, paddingRight: value ? 28 : 8, width: 320, marginRight: 8 }}
+          style={{ padding: 8, paddingRight: value ? 32 : 8 }}
         />
         {value && (
           <button
+            className="search-field__clear"
             onClick={onClear}
             aria-label="Clear search"
-            style={{
-              position: "absolute",
-              right: 36,
-              top: "50%",
-              transform: "translateY(-50%)",
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              fontSize: 16,
-              lineHeight: 1,
-              padding: 4,
-            }}
           >
             ×
           </button>

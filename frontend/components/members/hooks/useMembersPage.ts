@@ -71,6 +71,8 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
 
   const [form, setForm] = useState<MemberInput>(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   // True while editing a member whose contribution is already on file: the
   // form then omits monthly_contribution_amount, because the backend refuses
   // a direct edit (409) or clear (422) -- later changes go through the
@@ -196,7 +198,9 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
           }
         : splitStoredName(m.name);
 
+    setError(null);
     setEditingId(m.id);
+    setFormOpen(true);
     setForm({
       psn: m.psn,
       first_name: nameParts.first_name,
@@ -235,6 +239,17 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     setNokSelectedMember(null);
     setNokQuery("");
     setNokResults([]);
+  }
+
+  function openCreate() {
+    setError(null);
+    resetForm();
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    resetForm();
+    setFormOpen(false);
   }
 
   function chooseNokIsMember(value: boolean) {
@@ -313,6 +328,7 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     // omitting it leaves an existing member's gender untouched.
     if (!payload.gender) delete payload.gender;
 
+    setSaving(true);
     try {
       if (editingId) {
         await updateMember(editingId, payload);
@@ -320,9 +336,12 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
         await createMember(payload);
       }
       resetForm();
+      setFormOpen(false);
       await refresh();
     } catch (e: any) {
       setError(describeError(e));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -490,10 +509,13 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     form: {
       values: form,
       editingId,
+      isOpen: formOpen,
+      busy: saving,
       contributionLocked: editingContributionLocked,
       setField,
       submit: handleSubmit,
-      reset: resetForm,
+      openCreate,
+      close: closeForm,
       startEdit,
       nok: {
         isMember: nokIsMember,

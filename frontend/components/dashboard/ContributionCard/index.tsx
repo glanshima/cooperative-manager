@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { formatMoney } from "@/components/deductions/labels";
+import Modal from "@/components/ui/Modal";
 import type { Member } from "@/lib/api";
 import {
   ContributionChangeRequest,
@@ -135,7 +136,7 @@ export default function ContributionCard({ member }: { member: Member }) {
         <span style={{ fontSize: 12, color: "#666" }}>per month</span>
       </div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <div className="toolbar">
         <button onClick={() => setShowRequestModal(true)} disabled={loading || pending !== undefined}>
           {pending ? "Request pending" : "Request change"}
         </button>
@@ -168,72 +169,59 @@ export default function ContributionCard({ member }: { member: Member }) {
       )}
 
       {showRequestModal && (
-        <section
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowRequestModal(false);
-          }}
+        <Modal
+          title="Request contribution change"
+          onClose={() => setShowRequestModal(false)}
+          busy={loading}
+          closeLabel="Close contribution request"
+          maxWidth={400}
         >
-          <section
-            style={{ background: "white", borderRadius: 8, padding: 24, maxWidth: 400, width: "90%" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ marginTop: 0 }}>Request contribution change</h2>
-            <p style={{ color: "#666", marginBottom: 16 }}>
-              Your current contribution is ₦{formatMoney(amount)}. Enter a new amount and a reason.
-            </p>
-            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#555", marginBottom: 4 }}>
-                  New amount
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min={MINIMUM}
-                  required
-                  value={requestedAmount}
-                  onChange={(e) => setRequestedAmount(e.target.value)}
-                  placeholder="e.g. 8000.00"
-                  style={{ width: "100%" }}
-                />
-                <p style={{ fontSize: 12, color: "#b45309", marginTop: 4 }}>
-                  Minimum is ₦{MINIMUM.toLocaleString()} per month.
-                </p>
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#555", marginBottom: 4 }}>
-                  Reason
-                </label>
-                <textarea
-                  required
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Salary increase, need to increase savings"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              {error && <p style={{ color: "crimson", fontSize: 14 }}>{error}</p>}
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button type="submit" disabled={loading}>
-                  Submit request
-                </button>
-                <button type="button" onClick={() => setShowRequestModal(false)} disabled={loading}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </section>
-        </section>
+          <p style={{ color: "#666", marginBottom: 16 }}>
+            Your current contribution is ₦{formatMoney(amount)}. Enter a new amount and a reason.
+          </p>
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#555", marginBottom: 4 }}>
+                New amount
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min={MINIMUM}
+                required
+                value={requestedAmount}
+                onChange={(e) => setRequestedAmount(e.target.value)}
+                placeholder="e.g. 8000.00"
+                style={{ width: "100%" }}
+              />
+              <p style={{ fontSize: 12, color: "#b45309", marginTop: 4 }}>
+                Minimum is ₦{MINIMUM.toLocaleString()} per month.
+              </p>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#555", marginBottom: 4 }}>
+                Reason
+              </label>
+              <textarea
+                required
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={3}
+                placeholder="e.g. Salary increase, need to increase savings"
+                style={{ width: "100%" }}
+              />
+            </div>
+            {error && <p style={{ color: "crimson", fontSize: 14 }}>{error}</p>}
+            <div className="toolbar" style={{ marginTop: 8 }}>
+              <button type="submit" disabled={loading}>
+                Submit request
+              </button>
+              <button type="button" onClick={() => setShowRequestModal(false)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </section>
   );

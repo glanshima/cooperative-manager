@@ -24,7 +24,7 @@ export default function AssignRoleForm({
 
   return (
     <div style={{ marginTop: 12 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <div className="toolbar">
         <select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
           <option value="">Select a role...</option>
           {roles.map((r) => (

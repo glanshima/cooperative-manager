@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { MembersPageModel } from "../hooks/useMembersPage";
@@ -15,10 +16,13 @@ function makeForm(overrides: Record<string, unknown> = {}) {
       loan_restricted: false,
     },
     editingId: null,
+    isOpen: true,
+    busy: false,
     contributionLocked: false,
     setField: vi.fn(),
     submit: vi.fn(),
-    reset: vi.fn(),
+    openCreate: vi.fn(),
+    close: vi.fn(),
     startEdit: vi.fn(),
     nok: {
       isMember: null,
@@ -64,5 +68,40 @@ describe("MemberForm registration fields", () => {
 
     expect(screen.getByText("Next of kin")).toBeInTheDocument();
     expect(screen.queryByText("Next of kin *")).not.toBeInTheDocument();
+  });
+});
+
+describe("MemberForm modal", () => {
+  it("renders as a labelled dialog for both create and edit", () => {
+    const { rerender } = render(<MemberForm form={makeForm()} />);
+
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Add member");
+    expect(screen.getByRole("button", { name: "Close member form" })).toBeInTheDocument();
+    expect(screen.getByText(/Closing this form discards/)).toBeInTheDocument();
+
+    rerender(<MemberForm form={makeForm({ editingId: "member-1" })} />);
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Edit member");
+  });
+
+  it("closes from the close button and Escape", async () => {
+    const user = userEvent.setup();
+    const form = makeForm();
+    render(<MemberForm form={form} />);
+
+    await user.click(screen.getByRole("button", { name: "Close member form" }));
+    expect(form.close).toHaveBeenCalledTimes(1);
+
+    await user.keyboard("{Escape}");
+    expect(form.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("locks the dialog while a save is in flight", async () => {
+    const user = userEvent.setup();
+    const form = makeForm({ busy: true });
+    render(<MemberForm form={form} />);
+
+    expect(screen.getByRole("button", { name: "Close member form" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(form.close).not.toHaveBeenCalled();
   });
 });

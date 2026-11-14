@@ -1,0 +1,277 @@
+/* Global, external styling for the whole app. Layout and responsive rules
+   live here (with component CSS modules where a component owns its markup);
+   components keep only content-specific inline styles. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.45;
+  color: #111;
+  background: #fff;
+}
+
+img,
+svg,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  max-width: 100%;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  min-height: 36px;
+}
+
+button {
+  min-height: 36px;
+  padding: 4px 12px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* Page shells: fluid padding grows with the viewport; the modifier caps the
+   readable width on large screens. */
+.page {
+  margin: 0 auto;
+  padding: clamp(12px, 4vw, 32px);
+}
+
+.page--640 {
+  max-width: 640px;
+}
+
+.page--700 {
+  max-width: 700px;
+}
+
+.page--900 {
+  max-width: 900px;
+}
+
+.page--1000 {
+  max-width: 1000px;
+}
+
+.page--1100 {
+  max-width: 1100px;
+}
+
+.page--1200 {
+  max-width: 1200px;
+}
+
+/* Standalone auth screens: a narrow card that keeps breathing room on phones. */
+.auth-card {
+  max-width: 420px;
+  margin: clamp(24px, 8vh, 80px) auto;
+  padding: clamp(16px, 5vw, 24px);
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+
+.page-header h1,
+.page-header h2 {
+  margin: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.toolbar--end {
+  justify-content: flex-end;
+}
+
+.form-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+
+.form-grid__full {
+  grid-column: 1 / -1;
+}
+
+/* Search controls: grow on phones but never force the page wider. */
+.search-field {
+  position: relative;
+  display: inline-block;
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+
+.search-field input {
+  width: 100%;
+}
+
+.search-field__clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  min-height: 0;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* Tables: horizontal scroll is the safety net; phones get stacked cards. */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* Shared dialog shell used by the modal-styled components. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+}
+
+.modal-card {
+  width: 100%;
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 16px 12px;
+  }
+
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .search-field {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .data-table,
+  .data-table tbody,
+  .data-table tr,
+  .data-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .data-table tr {
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    border: 1px solid #ddd !important;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .data-table td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 0;
+    border: none !important;
+    text-align: right;
+    overflow-wrap: break-word;
+  }
+
+  .data-table td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 42%;
+    text-align: left;
+    font-weight: 600;
+    color: #555;
+  }
+
+  .data-table td:last-child {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .modal-card {
+    padding: 16px;
+  }
+}
+
+@media print {
+  .data-table,
+  .data-table thead,
+  .data-table tbody,
+  .data-table tr,
+  .data-table th,
+  .data-table td {
+    display: revert;
+  }
+
+  .data-table td[data-label]::before {
+    content: none;
+  }
+
+  .table-scroll {
+    overflow: visible;
+  }
+}

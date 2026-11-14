@@ -14,7 +14,7 @@ export default function AdminUsersPage() {
   });
   const model = useAdminUsersPage(loading, logout);
 
-  if (loading || model.loading) return <main style={{ padding: 32 }}>Loading...</main>;
+  if (loading || model.loading) return <main className="page">Loading...</main>;
 
   return (
     <AdminShell>

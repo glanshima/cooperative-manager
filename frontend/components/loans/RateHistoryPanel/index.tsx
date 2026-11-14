@@ -44,10 +44,7 @@ export default function RateHistoryPanel({ types }: { types: LoansPageModel["typ
         loans disbursed on or after the effective date you choose (which can be in the future, to
         schedule an upcoming change).
       </p>
-      <form
-        onSubmit={types.submitVersion}
-        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
-      >
+      <form onSubmit={types.submitVersion} className="form-grid">
         <input
           required
           type="number"
@@ -78,7 +75,7 @@ export default function RateHistoryPanel({ types }: { types: LoansPageModel["typ
           value={newVersion.effective_from}
           onChange={(e) => types.setVersionField("effective_from", e.target.value)}
         />
-        <div style={{ gridColumn: "1 / -1" }}>
+        <div className="form-grid__full">
           <button type="submit">Add rate version</button>
         </div>
       </form>

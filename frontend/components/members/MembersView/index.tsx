@@ -17,10 +17,15 @@ export default function MembersView({
   const { table, filters, contributions } = model;
 
   return (
-    <main style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <main className="page page--1100">
+      <div className="page-header">
         <h1>Members</h1>
-        <LogoutControl identity={identity} onLogout={model.auth.logout} />
+        <div className="toolbar">
+          <button type="button" onClick={model.form.openCreate}>
+            Add member
+          </button>
+          <LogoutControl identity={identity} onLogout={model.auth.logout} />
+        </div>
       </div>
 
       {model.feedback.error && (
@@ -52,7 +57,7 @@ export default function MembersView({
         )}
       </section>
 
-      <MemberForm form={model.form} />
+      {model.form.isOpen && <MemberForm form={model.form} />}
       {contributions.available && (
         <ContributionReviewPanel
           requests={contributions.requests}

@@ -12,12 +12,12 @@ export default function LoanRepaymentsView({
   identity?: string | null;
 }) {
   if (model.loading) {
-    return <main style={{ padding: 32 }}>Loading...</main>;
+    return <main className="page">Loading...</main>;
   }
 
   return (
-    <main style={{ padding: 32, maxWidth: 1000, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <main className="page page--1000">
+      <div className="page-header">
         <h1>Loan Repayments</h1>
         <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>

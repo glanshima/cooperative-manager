@@ -40,14 +40,7 @@ export default function DashboardHeader({
   const title = name ? (greeting ? `${greeting}, ${name}` : `Welcome, ${name}`) : fallbackTitle;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        marginBottom: 16,
-      }}
-    >
+    <div className="page-header" style={{ alignItems: "flex-start", marginBottom: 16 }}>
       <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>{title}</h1>
       <LogoutControl identity={identity} onLogout={onLogout} />
     </div>
