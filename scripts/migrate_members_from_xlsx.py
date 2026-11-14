@@ -33,6 +33,20 @@ engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 
 
+def name_parts(full_name):
+    """The sheet writes names given-name-first; split them the way the
+    member form captures them (family name last in the sheet)."""
+    parts = str(full_name).strip().split()
+    if len(parts) == 1:
+        return None, parts[0], None
+    return parts[-1], parts[0], " ".join(parts[1:-1]) or None
+
+
+def compose_name(last_name, first_name, other_names):
+    composed = f"{last_name or ''}, {first_name or ''}"
+    return f"{composed} {other_names}" if other_names else composed
+
+
 def gender_map(value):
     if not value:
         return None
@@ -63,9 +77,13 @@ def main():
             skipped += 1
             continue
 
+        last_name, first_name, other_names = name_parts(name)
         record = {
             "psn": str(psn).strip(),
-            "name": str(name).strip(),
+            "name": compose_name(last_name, first_name, other_names),
+            "first_name": first_name,
+            "last_name": last_name,
+            "other_names": other_names,
             "bank_name": row[3].value,        # D
             "account_number": str(row[4].value) if row[4].value else None,  # E
             "gender": gender_map(row[5].value),  # F
@@ -80,11 +98,13 @@ def main():
         session.execute(
             """
             INSERT INTO members
-                (id, psn, name, bank_name, account_number, gender, department,
+                (id, psn, name, first_name, last_name, other_names,
+                 bank_name, account_number, gender, department,
                  phone, email, next_of_kin, next_of_kin_phone, status,
                  created_at, updated_at)
             VALUES
-                (gen_random_uuid(), :psn, :name, :bank_name, :account_number,
+                (gen_random_uuid(), :psn, :name, :first_name, :last_name, :other_names,
+                 :bank_name, :account_number,
                  :gender, :department, :phone, :email, :next_of_kin,
                  :next_of_kin_phone, :status, now(), now())
             ON CONFLICT (psn) DO NOTHING

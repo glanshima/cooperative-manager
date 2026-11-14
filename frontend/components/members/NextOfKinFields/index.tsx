@@ -6,7 +6,9 @@ export default function NextOfKinFields({ form }: { form: MembersPageModel["form
 
   return (
     <>
-      <div style={{ gridColumn: "1 / -1", fontWeight: 600, marginTop: 8 }}>Next of kin</div>
+      <div style={{ gridColumn: "1 / -1", fontWeight: 600, marginTop: 8 }}>
+        Next of kin{form.editingId ? "" : " *"}
+      </div>
 
       {/* This Yes/No question is required for a NEW member (checked in
           the hook's submit handler); for an existing legacy member it may

@@ -58,7 +58,14 @@ class Member(Base):
     # throughout the spreadsheet for lookups (VLOOKUP/XLOOKUP key)
     psn = Column(String, unique=True, nullable=False, index=True)
 
+    # The printed name: "Last, First Other(s)" -- the single field every
+    # screen and report reads. It is composed from the parts below when
+    # they are supplied, so the registration form can capture the name in
+    # its three pieces without any caller re-deriving the print order.
     name = Column(String, nullable=False, index=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    other_names = Column(String, nullable=True)
     bank_name = Column(String, nullable=True)
     account_number = Column(String, nullable=True)
     gender = Column(Enum(Gender), nullable=True)

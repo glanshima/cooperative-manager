@@ -16,7 +16,7 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
       <DashboardHeader
         name={displayName}
         fallbackTitle="My Dashboard"
-        identity={displayName ?? userDisplayName(model.auth.user)}
+        identity={model.member?.name ?? userDisplayName(model.auth.user)}
         onLogout={model.auth.logout}
       />
 

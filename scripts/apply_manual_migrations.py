@@ -70,6 +70,7 @@ ORDERED_MIGRATIONS = [
     "manual_migration_2026_11_membership_exit.sql",
     "manual_migration_2026_11_contribution_amounts.sql",
     "manual_migration_2026_11_loan_arrears_lines.sql",
+    "manual_migration_2026_11_member_name_parts.sql",
 ]
 
 # Postgres SQLSTATEs meaning "this object already exists" -- treated as

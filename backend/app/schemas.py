@@ -25,7 +25,15 @@ from . import validation
 
 class MemberBase(BaseModel):
     psn: str
-    name: str
+    # name is the printed form ("Last, First Other(s)"). It is composed by
+    # routers/members.py whenever first_name/last_name are sent, so the
+    # registration form never has to build the display string itself.
+    # Callers that predate the split (imports, older tests) may still send
+    # name alone; the router stores that as given.
+    name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    other_names: Optional[str] = None
     bank_name: Optional[str] = None
     account_number: Optional[str] = None
     gender: Optional[Gender] = None
@@ -54,6 +62,9 @@ class MemberBase(BaseModel):
     _validate_nokp = field_validator("next_of_kin_phone")(validation.validate_phone_format)
     _validate_contribution = field_validator("monthly_contribution_amount")(
         validation.validate_contribution_amount_optional
+    )
+    _normalize_name = field_validator("name", "first_name", "last_name", "other_names")(
+        validation.normalize_name_part
     )
 
 
@@ -87,6 +98,15 @@ class MemberCreate(MemberBase):
     next_of_kin_member_id: Optional[uuid.UUID] = None
 
     @model_validator(mode="after")
+    def _validate_name(self):
+        # Registration captures Last and First separately; the legacy
+        # single-field name is still accepted for imports and older
+        # callers, but a member without any usable name is rejected.
+        if not (self.first_name and self.last_name) and not self.name:
+            raise ValueError("Provide first_name and last_name (or a legacy name)")
+        return self
+
+    @model_validator(mode="after")
     def _validate_next_of_kin_choice(self):
         if self.next_of_kin_is_member and self.next_of_kin_member_id is None:
             raise ValueError(
@@ -100,7 +120,13 @@ class MemberCreate(MemberBase):
 
 
 class MemberUpdate(BaseModel):
+    # Supplying any of first_name/last_name/other_names makes the router
+    # recompose the printed name from the merged parts; banking fields
+    # below are unaffected by that rule.
     name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    other_names: Optional[str] = None
     bank_name: Optional[str] = None
     account_number: Optional[str] = None
     gender: Optional[Gender] = None
@@ -123,6 +149,9 @@ class MemberUpdate(BaseModel):
 
     _validate_contribution = field_validator("monthly_contribution_amount")(
         validation.validate_contribution_amount_optional
+    )
+    _normalize_name = field_validator("name", "first_name", "last_name", "other_names")(
+        validation.normalize_name_part
     )
 
     # Member Relationship / Next-of-Kin Controlled Remediation, Section

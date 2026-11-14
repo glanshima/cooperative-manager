@@ -9,7 +9,11 @@ export type LoginAccountStatus = "active" | "deactivated" | "suspended";
 export interface Member {
   id: string;
   psn: string;
+  // The printed form: "Last, First Other(s)".
   name: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  other_names?: string | null;
   bank_name?: string | null;
   account_number?: string | null;
   gender?: string | null;
@@ -60,7 +64,12 @@ export interface Member {
 
 export interface MemberInput {
   psn: string;
-  name: string;
+  // The form sends the name in parts; the backend composes `name`. `name`
+  // is only sent by legacy callers and is omitted by this app.
+  first_name?: string;
+  last_name?: string;
+  other_names?: string;
+  name?: string;
   bank_name?: string;
   account_number?: string;
   gender?: string;

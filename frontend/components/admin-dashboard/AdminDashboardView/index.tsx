@@ -1,6 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
 import DashboardHeader from "@/components/ui/DashboardHeader";
-import { userDisplayName } from "@/lib/names";
+import { lastNameFirst } from "@/lib/names";
 import type { AdminDashboardPageModel } from "../hooks/useAdminDashboardPage";
 
 interface NavCardProps {
@@ -33,15 +33,16 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
   const { user, logout } = model.auth;
   const { membersEnabled, loansEnabled, deductionsEnabled } = model.modules;
   // Admin accounts have no name of their own; a linked member record supplies
-  // one, otherwise the login is the only identity to greet.
-  const displayName = userDisplayName(user);
+  // one for the greeting, otherwise the login is what there is to greet. The
+  // identity line above Log out stays the login an admin actually uses.
+  const headingName = user ? lastNameFirst(user.member_name) ?? user.username : null;
 
   return (
     <main style={{ padding: 32, maxWidth: 900, margin: "0 auto" }}>
       <DashboardHeader
-        name={displayName}
+        name={headingName}
         fallbackTitle="Admin Dashboard"
-        identity={displayName}
+        identity={user?.username ?? null}
         onLogout={logout}
       />
 

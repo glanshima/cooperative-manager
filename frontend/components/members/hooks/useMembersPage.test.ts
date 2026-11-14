@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createMember,
   getMemberFilterOptions,
   listMembers,
   updateMember,
@@ -42,6 +43,7 @@ const listMock = vi.mocked(listMembers);
 const filterMock = vi.mocked(getMemberFilterOptions);
 const withdrawMock = vi.mocked(withdrawMember);
 const updateMock = vi.mocked(updateMember);
+const createMock = vi.mocked(createMember);
 const contribListMock = vi.mocked(listContributionChangeRequests);
 const contribApproveMock = vi.mocked(approveContributionChangeRequest);
 const contribRejectMock = vi.mocked(rejectContributionChangeRequest);
@@ -65,6 +67,23 @@ const exitedMember = {
   name: "Bee Kule",
   status: "non_financial",
   membership_exit_date: "2026-09-30",
+} as unknown as Member;
+
+const legacyNameMember = {
+  ...activeMember,
+  id: "member-4",
+  psn: "MCT-0004",
+  name: "Ada Ngozi Obiora",
+} as unknown as Member;
+
+const partedNameMember = {
+  ...activeMember,
+  id: "member-5",
+  psn: "MCT-0005",
+  name: "Okafor, Adaeze Ngozi Chika",
+  first_name: "Adaeze",
+  last_name: "Okafor",
+  other_names: "Ngozi Chika",
 } as unknown as Member;
 
 const withdrawal = {
@@ -249,5 +268,69 @@ describe("useMembersPage contributions", () => {
 
     expect(updateMock).toHaveBeenCalledTimes(1);
     expect(updateMock.mock.calls[0][1]).toHaveProperty("monthly_contribution_amount", 6000);
+  });
+});
+
+describe("useMembersPage name fields", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listMock.mockResolvedValue({
+      items: [activeMember],
+      total: 1,
+      skip: 0,
+      limit: 25,
+    } as MemberListResult);
+    filterMock.mockResolvedValue({ banks: [], departments: [] });
+    contribListMock.mockResolvedValue([]);
+  });
+
+  it("prefills the three name fields from a legacy stored name", async () => {
+    const rendered = await renderLoadedHook();
+
+    act(() => rendered.result.current.form.startEdit(legacyNameMember));
+
+    expect(rendered.result.current.form.values).toMatchObject({
+      last_name: "Obiora",
+      first_name: "Ada",
+      other_names: "Ngozi",
+    });
+  });
+
+  it("prefers the stored parts over re-parsing the printed name", async () => {
+    const rendered = await renderLoadedHook();
+
+    act(() => rendered.result.current.form.startEdit(partedNameMember));
+
+    expect(rendered.result.current.form.values).toMatchObject({
+      last_name: "Okafor",
+      first_name: "Adaeze",
+      other_names: "Ngozi Chika",
+    });
+  });
+
+  it("creates a member by sending the name in parts, never a composed name", async () => {
+    const rendered = await renderLoadedHook();
+
+    act(() => rendered.result.current.form.nok.chooseIsMember(false));
+    act(() => rendered.result.current.form.setField("psn", "MCT-0042"));
+    act(() => rendered.result.current.form.setField("last_name", "Okafor"));
+    act(() => rendered.result.current.form.setField("first_name", "Adaeze"));
+    act(() => rendered.result.current.form.setField("other_names", "Ngozi"));
+
+    await act(async () => {
+      await rendered.result.current.form.submit({ preventDefault: () => {} } as any);
+    });
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+    const payload = createMock.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      psn: "MCT-0042",
+      last_name: "Okafor",
+      first_name: "Adaeze",
+      other_names: "Ngozi",
+      next_of_kin_is_member: false,
+    });
+    expect(payload).not.toHaveProperty("name");
+    expect(payload).not.toHaveProperty("gender");
   });
 });

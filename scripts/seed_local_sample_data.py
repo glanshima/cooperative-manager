@@ -66,6 +66,7 @@ from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from app.account_lifecycle import validate_password_strength  # noqa: E402
+from app.validation import compose_member_name  # noqa: E402
 from app.auth import hash_password  # noqa: E402
 from app.loan_calc import compute_expected_end_date  # noqa: E402
 from app.models import (  # noqa: E402
@@ -120,7 +121,6 @@ QUEUE_FIXTURE_EFFECTIVE_FROM = date(2026, 1, 1)
 # which is the only shape that shows the split arrears maths, the per-loan
 # balance cap and the schedule's Arrears column doing anything.
 ARREARS_FIXTURE_PSN = "QLARREARS"
-ARREARS_FIXTURE_NAME = "Arrears Fixture Member"
 ARREARS_FIXTURE_DISBURSED = date(2026, 7, 1)
 ARREARS_FIXTURE_TENURE_MONTHS = 6
 ARREARS_FIXTURE_INSTALLMENT = Decimal("10000.00")
@@ -161,14 +161,26 @@ SAMPLE_LOAN_TYPES = [
 RATE_EFFECTIVE_FROM = date(2026, 1, 1)
 
 
+def _split_full_name(full_name: str) -> tuple[str, str, str | None]:
+    """The sample list is written given-name-first ("Adaeze Okafor"); store
+    it the way the app prints it, with the family name separate."""
+    parts = full_name.split()
+    if len(parts) == 1:
+        return parts[0], "", None
+    return parts[-1], parts[0], " ".join(parts[1:-1]) or None
+
+
 def seed_members(session):
     created = 0
     for (psn, name, gender, department, phone, email, status, bank, account_no,
          nok, nok_phone, restricted, restriction_reason) in SAMPLE_MEMBERS:
         if session.execute(select(Member).where(Member.psn == psn)).scalar_one_or_none():
             continue
+        last_name, first_name, other_names = _split_full_name(name)
         session.add(Member(
-            psn=psn, name=name, gender=gender, department=department, phone=phone,
+            psn=psn, name=compose_member_name(last_name, first_name, other_names),
+            first_name=first_name, last_name=last_name, other_names=other_names,
+            gender=gender, department=department, phone=phone,
             email=email, status=status, bank_name=bank, account_number=account_no,
             next_of_kin=nok, next_of_kin_phone=nok_phone,
             loan_restricted=restricted, restriction_reason=restriction_reason,
@@ -223,13 +235,21 @@ def seed_conflict_fixture(session):
     if fixture is None:
         fixture = Member(
             psn=SMOKE_NOK_FIXTURE_PSN,
-            name="Smoke NOK Fixture (no login)",
+            name=compose_member_name("Fixture", "Smoke", "NOK"),
+            first_name="Smoke",
+            last_name="Fixture",
+            other_names="NOK",
             status=MemberStatus.NON_FINANCIAL,
         )
         session.add(fixture)
         session.flush()
         print(f"Member {SMOKE_NOK_FIXTURE_PSN} (smoke conflict fixture): created.")
     else:
+        # The fixture predates split names; the seed owns its own fixtures,
+        # so bring an existing row onto the composed-name form too.
+        if fixture.first_name != "Smoke" or fixture.last_name != "Fixture":
+            fixture.first_name, fixture.last_name, fixture.other_names = "Smoke", "Fixture", "NOK"
+            fixture.name = compose_member_name("Fixture", "Smoke", "NOK")
         print(f"Member {SMOKE_NOK_FIXTURE_PSN} (smoke conflict fixture): already exists.")
 
     relationship = session.execute(
@@ -273,11 +293,20 @@ def seed_queue_paging_fixture(session):
     created = 0
     for index in range(1, QUEUE_FIXTURE_COUNT + 1):
         psn = f"{QUEUE_FIXTURE_PSN_PREFIX}{index:02d}"
-        if session.execute(select(Member).where(Member.psn == psn)).scalar_one_or_none():
+        existing = session.execute(select(Member).where(Member.psn == psn)).scalar_one_or_none()
+        if existing is not None:
+            if existing.first_name != "Queue" or existing.last_name != f"Member{index:02d}":
+                existing.first_name = "Queue"
+                existing.last_name = f"Member{index:02d}"
+                existing.other_names = "Paging"
+                existing.name = compose_member_name(f"Member{index:02d}", "Queue", "Paging")
             continue
         session.add(Member(
             psn=psn,
-            name=f"Queue Paging Member {index:02d}",
+            name=compose_member_name(f"Member{index:02d}", "Queue", "Paging"),
+            first_name="Queue",
+            last_name=f"Member{index:02d}",
+            other_names="Paging",
             status=MemberStatus.FINANCIAL,
             email=f"{QUEUE_FIXTURE_PSN_PREFIX.lower()}{index}@example.com",
             monthly_contribution_amount=QUEUE_FIXTURE_CONTRIBUTION,
@@ -298,7 +327,10 @@ def seed_arrears_fixture(session):
     if member is None:
         member = Member(
             psn=ARREARS_FIXTURE_PSN,
-            name=ARREARS_FIXTURE_NAME,
+            name=compose_member_name("Fixture", "Arrears", "Member"),
+            first_name="Arrears",
+            last_name="Fixture",
+            other_names="Member",
             status=MemberStatus.FINANCIAL,
             email="qlarrears@example.com",
             monthly_contribution_amount=QUEUE_FIXTURE_CONTRIBUTION,
@@ -308,6 +340,9 @@ def seed_arrears_fixture(session):
         session.flush()
         print(f"Arrears fixture: member {ARREARS_FIXTURE_PSN} created.")
     else:
+        if member.first_name != "Arrears" or member.last_name != "Fixture":
+            member.first_name, member.last_name, member.other_names = "Arrears", "Fixture", "Member"
+            member.name = compose_member_name("Fixture", "Arrears", "Member")
         print(f"Arrears fixture: member {ARREARS_FIXTURE_PSN} already existed.")
 
     loan_type = session.execute(

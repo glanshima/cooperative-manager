@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 
-from .. import models, schemas, audit_service, member_relationships
+from .. import models, schemas, audit_service, member_relationships, validation
 from .. import contributions as contribution_rules
 from .. import savings as savings_service
 from ..database import get_db
@@ -264,6 +264,16 @@ def list_members(
                 models.Member.name.ilike(like),
                 models.Member.psn.ilike(like),
                 models.Member.phone.ilike(like),
+                # The printed name puts family names first, so "Ada Okafor"
+                # typed in the old given-name-first order would no longer
+                # match `name` alone. Matching the parts in that order too
+                # keeps both habits working.
+                func.concat_ws(
+                    " ",
+                    models.Member.first_name,
+                    models.Member.last_name,
+                    models.Member.other_names,
+                ).ilike(like),
             )
         )
 
@@ -357,6 +367,15 @@ def create_member(
     next_of_kin_is_member = payload_data.pop("next_of_kin_is_member")
     next_of_kin_member_id = payload_data.pop("next_of_kin_member_id")
 
+    # The registration form captures the name in parts; the printed form
+    # ("Last, First Other(s)") is composed here so it is the one string
+    # every screen and report reads. Legacy callers that send only `name`
+    # keep what they sent.
+    if payload_data.get("first_name") and payload_data.get("last_name"):
+        payload_data["name"] = validation.compose_member_name(
+            payload_data["last_name"], payload_data["first_name"], payload_data.get("other_names")
+        )
+
     member = models.Member(**payload_data)
     if member.monthly_contribution_amount is not None:
         contribution_rules.assert_may_have_contribution(member)
@@ -415,6 +434,24 @@ def update_member(
     )
 
     changes = payload.model_dump(exclude_unset=True)
+
+    # An edit that touches any name part recomposes the printed name from
+    # the merged set, so last/first/other cannot drift out of step with
+    # what every screen shows. Both given and family names must still be
+    # present after the merge.
+    if {"first_name", "last_name", "other_names"} & changes.keys():
+        merged = {
+            field: changes.get(field, getattr(member, field))
+            for field in ("first_name", "last_name", "other_names")
+        }
+        if not (merged["first_name"] and merged["last_name"]):
+            raise HTTPException(
+                status_code=422,
+                detail="Both first name and last name are required when changing a name.",
+            )
+        changes["name"] = validation.compose_member_name(
+            merged["last_name"], merged["first_name"], merged["other_names"]
+        )
 
     # next_of_kin_is_member / next_of_kin_member_id (Member Relationship
     # / Next-of-Kin Controlled Remediation, Section 8) aren't Member

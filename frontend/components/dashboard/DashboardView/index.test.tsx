@@ -26,7 +26,7 @@ function makeModel(overrides: Record<string, unknown> = {}): DashboardPageModel 
     member: {
       id: "member-1",
       psn: "MCT-0001",
-      name: "Ada Obi",
+      name: "Obi, Ada Ngozi",
       status: "financial",
       monthly_contribution_amount: "5000.00",
       loan_restricted: false,
@@ -39,11 +39,11 @@ function makeModel(overrides: Record<string, unknown> = {}): DashboardPageModel 
 }
 
 describe("DashboardView header", () => {
-  it("welcomes the member in Last, First form with the name above log out", () => {
+  it("abbreviates other names in the greeting but prints the full name above log out", () => {
     render(<DashboardView model={makeModel()} />);
 
-    expect(screen.getByRole("heading", { name: "Welcome, Obi, Ada" })).toBeInTheDocument();
-    expect(screen.getByText("Obi, Ada")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Welcome, Obi, Ada N." })).toBeInTheDocument();
+    expect(screen.getByText("Obi, Ada Ngozi")).toBeInTheDocument();
     expect(screen.getByText("PSN 0001")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
   });

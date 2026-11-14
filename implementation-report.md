@@ -300,3 +300,38 @@ Because the control is shared, the confirmation applies everywhere, not just the
 - Frontend: **27 files / 170 tests passed**; `npx tsc --noEmit` exit 0; `npm run build` compiled successfully.
 - Browser-verified on the local production build: the member dashboard greets as `Good morning, Okafor, Adaeze` with the name above Log out, and the same identity line and confirmation appear on admin screens.
 - Changes are **not committed or pushed**.
+
+---
+
+## 12. Structured member names and role-aware identity (2026-11-14)
+
+### 12.1 Design
+
+Names are now stored as parts **and** as the printed string, so every existing screen keeps printing correctly without touching its display code, while registration captures the parts explicitly:
+
+- `members` gains `first_name`, `last_name`, `other_names` (all nullable). `name` remains the authoritative printed form, composed as **`Last, First Other(s)`** (e.g. `Okafor, Adaeze Ngozi`) whenever the parts change.
+- Requests may still send `name` alone (legacy importers/tests); the router stores it unchanged and leaves the parts null. Sending any part requires both `first_name` and `last_name` (422 otherwise), and a part update recomposes `name`.
+- Search matches the stored printed `name`, the legacy `First Other Last` concatenation, PSN, and phone, so both name orders and partial parts find a member.
+
+### 12.2 Migration
+
+`scripts/manual_migration_2026_11_member_name_parts.sql` (registered in `ORDERED_MIGRATIONS`):
+
+- adds the three columns idempotently;
+- for every row whose parts are all null, parses existing `name` — comma form: family before the comma, first word after it as given name, the rest as other names; whitespace form: last token as family, first as given name, the middle as other names; a single word is left untouched — and rewrites `name` to the canonical `Last, First Other(s)` form.
+
+**Run this migration against production/Neon before deploying this build.** Without it the API inserts/updates fail on the missing columns, and existing rows keep their old order until backfilled. The local sandbox was migrated and verified (e.g. `Ada Obi` → `Obi, Ada`, parts populated).
+
+### 12.3 Form and display
+
+- The Add/Edit member form captures **PSN \***, **Last name \***, **First name \***, **Other name(s)** in that order; the required inputs carry both a visible `*` and the HTML `required` attribute. Next of kin is labelled `Next of kin *` on create (an explicit Yes/No answer is mandatory) and unstarred on edit. Editing prefills from the stored parts, falling back to parsing `name` for records created before the split.
+- `lib/names.ts`: `lastNameFirst()` prints `Last, First Other(s)` and abbreviates second-and-later given names with a period (`Okafor, Adaeze N. C.`); `splitStoredName()` feeds the edit form; `userDisplayName()` is role-aware.
+- **Admin identity:** the line above Log out is always `user.username` on admin screens (the greeting may still use the linked member's name). **Member identity:** the full printed name; only the dashboard heading abbreviates other names (`Welcome, Okafor, Adaeze C.` above the full `Okafor, Adaeze Chika`).
+- Fixed a pre-existing create blocker found during browser verification: the form sent `gender: ""`, which the API rejects as an invalid enum (422). Blank gender is now omitted from the payload, leaving an existing member's value untouched.
+
+### 12.4 Tests and verification
+
+- Backend: new `tests/test_member_name_parts.py` (7) — composition, optional other names, legacy single-name payload, missing name 422, search across orders/parts, recomposition on update incl. clearing other names, refusing to drop the family name. Name-related files: **72 passed** against `mact_test`.
+- Frontend: `lib/names.test.ts` (13), `useMembersPage.test.ts` (12, incl. prefill from legacy name, preferring stored parts, create sending parts and never `name`/blank `gender`), new `MemberForm/index.test.tsx` (3: field order, asterisks/required attributes, edit mode), plus updated dashboard/admin-dashboard header tests.
+- Frontend: **28 files / 181 tests passed**; `npx tsc --noEmit` exit 0; `npm run build` compiled successfully (20/20 static pages).
+- Browser-verified on the local sandbox: admin identity `localadmin` above Log out; form order and asterisks; creating `MCT-9102` produced `Okafor, Adaeze Ngozi Chika`; search by `Adaeze Okafor` found it; Edit prefilled all three fields; member dashboard greeted `Okafor, Adaeze C.` with the full name above Log out. The temporary test member and name tweak were removed afterwards.

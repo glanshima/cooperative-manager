@@ -100,10 +100,11 @@ describe("AdminDashboardView", () => {
     render(<AdminDashboardView model={makeModel()} />);
 
     expect(screen.getByRole("heading", { name: "Welcome, localadmin" })).toBeInTheDocument();
+    // The identity line above Log out.
     expect(screen.getByText("localadmin")).toBeInTheDocument();
   });
 
-  it("prefers the linked member's name in Last, First form", () => {
+  it("greets the linked member's name but keeps the login above log out", () => {
     render(
       <AdminDashboardView
         model={makeModel({
@@ -116,8 +117,9 @@ describe("AdminDashboardView", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Welcome, Obi, Ada" })).toBeInTheDocument();
-    // The name sits above Log out instead of the login.
-    expect(screen.getByText("Obi, Ada")).toBeInTheDocument();
+    // Admins are identified by the login they actually use.
+    expect(screen.getByText("localadmin")).toBeInTheDocument();
+    expect(screen.queryByText("Obi, Ada")).not.toBeInTheDocument();
   });
 
   it("shows all navigation links when every module is enabled", () => {

@@ -106,6 +106,31 @@ def month_start_from_label(value: str) -> date:
     return date(int(year), int(month), 1)
 
 
+def normalize_name_part(value: Optional[str]) -> Optional[str]:
+    """Collapse whitespace so "  Ada " and "Ada" store identically. Blank
+    parts become None: "no other names" is an absence, not an empty string."""
+    if value is None:
+        return None
+    collapsed = " ".join(str(value).split())
+    return collapsed or None
+
+
+def compose_member_name(last_name: str, first_name: str, other_names: Optional[str]) -> str:
+    """
+    The one printed form of a member's name: "Last, First Other(s)".
+
+    Stored in Member.name so every screen, report and search result prints
+    the same order without each of them re-deriving it. Other names are
+    kept in full here; abbreviating them is a presentation choice made by
+    the greeting (frontend/lib/names.ts).
+    """
+    last = normalize_name_part(last_name) or ""
+    first = normalize_name_part(first_name) or ""
+    other = normalize_name_part(other_names)
+    composed = f"{last}, {first}"
+    return f"{composed} {other}" if other else composed
+
+
 def validate_receipt_content_type(value: str) -> str:
     if value not in ALLOWED_RECEIPT_CONTENT_TYPES:
         raise ValueError(

@@ -19,16 +19,31 @@ export default function MemberForm({ form }: { form: MembersPageModel["form"] })
       >
         <input
           required
-          placeholder="PSN"
+          aria-label="PSN"
+          placeholder="PSN *"
           value={form.values.psn}
           disabled={!!form.editingId}
           onChange={(e) => form.setField("psn", e.target.value)}
         />
         <input
           required
-          placeholder="Name"
-          value={form.values.name}
-          onChange={(e) => form.setField("name", e.target.value)}
+          aria-label="Last name"
+          placeholder="Last name *"
+          value={form.values.last_name ?? ""}
+          onChange={(e) => form.setField("last_name", e.target.value)}
+        />
+        <input
+          required
+          aria-label="First name"
+          placeholder="First name *"
+          value={form.values.first_name ?? ""}
+          onChange={(e) => form.setField("first_name", e.target.value)}
+        />
+        <input
+          aria-label="Other name(s)"
+          placeholder="Other name(s)"
+          value={form.values.other_names ?? ""}
+          onChange={(e) => form.setField("other_names", e.target.value)}
         />
         <input
           placeholder="Bank name"

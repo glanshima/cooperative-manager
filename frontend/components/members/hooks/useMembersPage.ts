@@ -22,6 +22,8 @@ import {
   rejectContributionChangeRequest,
 } from "@/lib/api/contributions";
 
+import { splitStoredName } from "@/lib/names";
+
 import type { NokMemberOption } from "../types";
 import { describeError } from "../utils";
 
@@ -29,7 +31,9 @@ export const PAGE_SIZE = 25;
 
 const EMPTY_FORM: MemberInput = {
   psn: "",
-  name: "",
+  first_name: "",
+  last_name: "",
+  other_names: "",
   bank_name: "",
   account_number: "",
   gender: "",
@@ -181,10 +185,23 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
   }
 
   function startEdit(m: Member) {
+    // Records created before names were split have no parts; derive them
+    // from the stored name so the three fields open populated.
+    const nameParts =
+      m.first_name || m.last_name
+        ? {
+            first_name: m.first_name ?? "",
+            last_name: m.last_name ?? "",
+            other_names: m.other_names ?? "",
+          }
+        : splitStoredName(m.name);
+
     setEditingId(m.id);
     setForm({
       psn: m.psn,
-      name: m.name,
+      first_name: nameParts.first_name,
+      last_name: nameParts.last_name,
+      other_names: nameParts.other_names,
       bank_name: m.bank_name || "",
       account_number: m.account_number || "",
       gender: m.gender || "",
@@ -290,6 +307,11 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     if (editingContributionLocked || typeof payload.monthly_contribution_amount !== "number") {
       delete payload.monthly_contribution_amount;
     }
+
+    // This form has no gender control, so this field is always blank. The
+    // API expects a Gender value or nothing at all -- "" is a 422 -- and
+    // omitting it leaves an existing member's gender untouched.
+    if (!payload.gender) delete payload.gender;
 
     try {
       if (editingId) {
