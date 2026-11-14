@@ -318,7 +318,7 @@ Names are now stored as parts **and** as the printed string, so every existing s
 `scripts/manual_migration_2026_11_member_name_parts.sql` (registered in `ORDERED_MIGRATIONS`):
 
 - adds the three columns idempotently;
-- for every row whose parts are all null, parses existing `name` — comma form: family before the comma, first word after it as given name, the rest as other names; whitespace form: last token as family, first as given name, the middle as other names; a single word is left untouched — and rewrites `name` to the canonical `Last, First Other(s)` form.
+- for every row whose parts are all null, parses existing `name` — comma form: family before the comma, first word after it as given name, the rest as other names; whitespace form: **the ledger writes names family-first**, so the first token is the family name, the second the given name and the rest other names; a single word is left untouched — and rewrites `name` to the canonical `Last, First Other(s)` form.
 
 **Run this migration against production/Neon before deploying this build.** Without it the API inserts/updates fail on the missing columns, and existing rows keep their old order until backfilled. The local sandbox was migrated and verified (e.g. `Ada Obi` → `Obi, Ada`, parts populated).
 
@@ -335,3 +335,11 @@ Names are now stored as parts **and** as the printed string, so every existing s
 - Frontend: `lib/names.test.ts` (13), `useMembersPage.test.ts` (12, incl. prefill from legacy name, preferring stored parts, create sending parts and never `name`/blank `gender`), new `MemberForm/index.test.tsx` (3: field order, asterisks/required attributes, edit mode), plus updated dashboard/admin-dashboard header tests.
 - Frontend: **28 files / 181 tests passed**; `npx tsc --noEmit` exit 0; `npm run build` compiled successfully (20/20 static pages).
 - Browser-verified on the local sandbox: admin identity `localadmin` above Log out; form order and asterisks; creating `MCT-9102` produced `Okafor, Adaeze Ngozi Chika`; search by `Adaeze Okafor` found it; Edit prefilled all three fields; member dashboard greeted `Okafor, Adaeze C.` with the full name above Log out. The temporary test member and name tweak were removed afterwards.
+
+### 12.5 Production rollout (2026-11-14)
+
+- The ordered runner applied the migration to production Neon (`16 applied, 1 already`) and backfilled all 191 members.
+- **Correction:** the first release of the file assumed the last token was the family name (matching the local seed data, which is typed given-name-first). The real ledger is **family-first** (`Atagher Nguwasen Priscilla`, `Lanshima Gandepuun`), so that run inverted every row. The file's whitespace rule was changed to first-token family, the backfill was reset and re-run atomically against production, and the result verified: 191 rows, 0 null parts, 0 composed-name mismatches; e.g. `10468` is now `Atagher, Nguwasen Priscilla`.
+- Five ledger rows were typed given-name-first and were corrected explicitly: `7294 Iortim, Joseph Nyijime`, `4988 Adue, Matthew Pauline`, `36020 Shagher, Beatrice`, `36023 Mlumun, Christiana Upaa`, `36029 Onu, Sunday`.
+- Four rows remain ambiguous and should be checked in the member edit form: `32061 Jon- Uan Washima`, `32087 Hon Helen Mbatomon`, `32261 Adi Yese Mchivir Loisa`, `36024 Dooyum Torikpa`.
+- `scripts/migrate_members_from_xlsx.py` now splits family-first too, so a future import does not reintroduce the inversion.

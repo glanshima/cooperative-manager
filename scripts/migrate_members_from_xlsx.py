@@ -34,12 +34,12 @@ Session = sessionmaker(bind=engine)
 
 
 def name_parts(full_name):
-    """The sheet writes names given-name-first; split them the way the
-    member form captures them (family name last in the sheet)."""
+    """The sheet writes names family-name-first ("Agbatar Benjamin
+    Terkaa"); split them the way the member form captures them."""
     parts = str(full_name).strip().split()
     if len(parts) == 1:
-        return None, parts[0], None
-    return parts[-1], parts[0], " ".join(parts[1:-1]) or None
+        return parts[0], None, None
+    return parts[0], parts[1], " ".join(parts[2:]) or None
 
 
 def compose_name(last_name, first_name, other_names):

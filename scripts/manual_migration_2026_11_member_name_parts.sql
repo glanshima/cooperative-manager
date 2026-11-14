@@ -11,13 +11,19 @@
 --     so re-running the file (or a name captured after this change) is a
 --     no-op.
 --
--- Parsing rule for pre-split rows:
+-- Parsing rule for pre-split rows. The production ledger writes names
+-- family-first ("Agbatar Benjamin Terkaa"), so:
 --   * with a comma: everything before it is the family name, the first
 --     word after it the given name, the rest other names;
---   * without: the last word is the family name, the first word the given
---     name, anything between them other names;
+--   * without: the first word is the family name, the second word the
+--     given name, the rest other names;
 --   * a single-word name keeps its text untouched (there is no given name
 --     to split off).
+-- 2026-11-14 correction: the first release of this file treated the LAST
+-- word as the family name and inverted all 191 production rows; the
+-- branch above now matches the ledger's family-first order. A minority of
+-- ledger rows were typed given-name-first and need fixing individually in
+-- the member edit form.
 
 ALTER TABLE members ADD COLUMN IF NOT EXISTS first_name VARCHAR;
 ALTER TABLE members ADD COLUMN IF NOT EXISTS last_name VARCHAR;
@@ -62,12 +68,12 @@ BEGIN
         ELSE
             tokens := regexp_split_to_array(clean, '\s+');
             n := array_length(tokens, 1);
-            family := tokens[n];
+            family := tokens[1];
             IF n >= 2 THEN
-                given_name := tokens[1];
+                given_name := tokens[2];
             END IF;
             IF n > 2 THEN
-                others := array_to_string(tokens[2:n - 1], ' ');
+                others := array_to_string(tokens[3:n], ' ');
             END IF;
         END IF;
 
