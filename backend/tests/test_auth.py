@@ -88,3 +88,35 @@ def test_logout_revokes_session(client, db_session):
     assert client.post("/api/auth/logout", headers=headers).status_code == 204
     # The same token must no longer work after logout.
     assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+
+def test_me_reports_the_members_stored_name(client, db_session):
+    member = make_member(db_session, psn="PSN-ME-1", name="Ada Obi")
+    make_member_user(db_session, member)
+
+    login = client.post("/api/auth/login", json={"username": "PSN-ME-1", "password": "Passw0rd!"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    body = client.get("/api/auth/me", headers=headers).json()
+    # The stored name is returned whole; the dashboard derives "Last, First".
+    assert body["member_name"] == "Ada Obi"
+
+
+def test_me_only_names_an_admin_through_a_linked_member(client, db_session):
+    member = make_member(db_session, psn="PSN-ME-2", name="Bola Ade")
+    unlinked = make_admin_user(db_session, username="admin_unlinked", password="Passw0rd!")
+    make_admin_user(
+        db_session,
+        username="admin_linked",
+        password="Passw0rd!",
+        member_id=member.id,
+    )
+
+    def me(username):
+        login = client.post("/api/auth/login", json={"username": username, "password": "Passw0rd!"})
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        return client.get("/api/auth/me", headers=headers).json()
+
+    assert unlinked.member_id is None
+    assert me("admin_unlinked")["member_name"] is None
+    assert me("admin_linked")["member_name"] == "Bola Ade"

@@ -16,6 +16,8 @@ export interface CurrentUser {
   username: string;
   role: UserRole;
   member_id?: string | null;
+  // Present on GET /api/auth/me when the account is linked to a member record.
+  member_name?: string | null;
   must_change_password: boolean;
   is_active: boolean;
   account_status: AccountStatus;

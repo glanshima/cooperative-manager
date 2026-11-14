@@ -177,8 +177,19 @@ def change_password(
 
 
 @router.get("/me", response_model=schemas.UserOut)
-def get_me(current_user: models.User = Depends(get_current_user)):
-    return current_user
+def get_me(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    out = schemas.UserOut.model_validate(current_user)
+    if current_user.member_id:
+        member_name = (
+            db.query(models.Member.name)
+            .filter(models.Member.id == current_user.member_id)
+            .scalar()
+        )
+        out = out.model_copy(update={"member_name": member_name})
+    return out
 
 
 @router.post("/create-member-login", response_model=schemas.UserOut, status_code=201)

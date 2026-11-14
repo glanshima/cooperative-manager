@@ -499,6 +499,9 @@ class UserOut(BaseModel):
     username: str
     role: UserRole
     member_id: Optional[uuid.UUID] = None
+    # Only populated by GET /api/auth/me: the linked member's stored name, so
+    # a dashboard can greet the person rather than only their login.
+    member_name: Optional[str] = None
     must_change_password: bool
     is_active: bool
     account_status: AccountStatus

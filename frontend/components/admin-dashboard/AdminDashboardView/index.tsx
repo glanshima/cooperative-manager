@@ -1,4 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
+import DashboardHeader from "@/components/ui/DashboardHeader";
+import { lastNameFirst } from "@/lib/names";
 import type { AdminDashboardPageModel } from "../hooks/useAdminDashboardPage";
 
 interface NavCardProps {
@@ -30,19 +32,18 @@ function NavCard({ href, label, description }: NavCardProps) {
 export default function AdminDashboardView({ model }: { model: AdminDashboardPageModel }) {
   const { user, logout } = model.auth;
   const { membersEnabled, loansEnabled, deductionsEnabled } = model.modules;
+  // Admin accounts have no name of their own; a linked member record supplies
+  // one, otherwise the login is the only identity to greet.
+  const displayName = user?.member_name ? lastNameFirst(user.member_name) : user?.username ?? null;
 
   return (
     <main style={{ padding: 32, maxWidth: 900, margin: "0 auto" }}>
-      <div
-        style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-      >
-        <h1>Admin Dashboard</h1>
-        <button onClick={logout}>Log out</button>
-      </div>
-
-      {user && (
-        <p style={{ color: "#555", marginBottom: 24 }}>Signed in as {user.username}.</p>
-      )}
+      <DashboardHeader
+        name={displayName}
+        fallbackTitle="Admin Dashboard"
+        username={user?.username}
+        onLogout={logout}
+      />
 
       {model.settingsError && (
         <StatusMessage tone="error">

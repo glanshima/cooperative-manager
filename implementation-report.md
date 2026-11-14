@@ -106,7 +106,7 @@ All commands were run locally; the backend suite ran against the offline sandbox
 | Check | Command | Result |
 |---|---|---|
 | Backend tests | `pytest` in `backend/` with `DATABASE_URL` → `mact_test` | **296 passed**, 0 failed |
-| Frontend tests | `npx vitest run` in `frontend/` | **23 files / 148 tests passed**, 0 failed |
+| Frontend tests | `npx vitest run` in `frontend/` | **27 files / 166 tests passed**, 0 failed |
 | Type check | `npx tsc --noEmit` | clean (exit 0) |
 | Production build | `npm run build` | compiled successfully; TypeScript finished with no errors; 20/20 static pages generated |
 
@@ -254,3 +254,46 @@ The ledger's **Select all** checkbox selects every non-conflicted row on the pag
 - Frontend: **23 files / 148 tests passed**; `npx tsc --noEmit` exit 0; `npm run build` compiled successfully with 20/20 static pages.
 - Backend (unchanged, re-run as the gate): **296 passed** against `mact_test` on the local sandbox.
 - No application deploy was performed for this fix.
+
+---
+
+## 11. Dashboard welcome, greeting and logout confirmation (2026-11-14)
+
+Both dashboards render a shared `DashboardHeader` (`components/ui/DashboardHeader`) instead of each rolling their own heading and logout button.
+
+### 11.1 Name shown
+
+No first/last-name fields exist in the schema: a member has a single free-text `Member.name`, and an admin has only `username` (plus an optional linked `member_id`).
+
+- `GET /api/auth/me` now returns `member_name` (`UserOut.member_name`, optional) — the stored name of the member linked to the signed-in user, looked up in the same request. Admins without a linked member get `null`.
+- `lib/names.ts` turns the stored name into `Last, First`: the last whitespace-separated token is the surname, the first given name is kept, and every further given name is reduced to an initial — `Ada Ngozi Chika Obi` → `Obi, Ada N. C.`. Names that already contain a comma are returned unchanged; a single token is returned as-is.
+- Admin heading: linked member's name when available, otherwise the username. Member heading: the member's own name.
+
+### 11.2 Greeting
+
+The heading opens as `Welcome, <name>` and, five seconds after mount, settles into `timeOfDayGreeting(new Date())` + name (`lib/greeting.ts`): **Good morning** 05:00–11:59, **Good afternoon** 12:00–16:59, **Good evening** 17:00–04:59. The timer is cleared on unmount. Without a name the heading falls back to the page title ("Admin Dashboard" / "My Dashboard").
+
+The heading stays an `<h1>` for document structure but renders at body size with emphasis (16px, weight 600) rather than the browser's 32px default.
+
+The username sits directly above the **Log out** button on both dashboards.
+
+### 11.3 Logout confirmation
+
+Clicking **Log out** opens a modal confirmation (`role="dialog"`, `aria-modal="true"`, labelled by its heading, Escape and backdrop click close it, Cancel receives focus):
+
+- **Cancel** keeps the session and closes the dialog.
+- **Log out** calls the existing `logout()` and returns to `/login`.
+
+### 11.4 Tests
+
+- `lib/names.test.ts` (5): two-part, three-part, four-part abbreviation, comma-preserved, single-word/blank.
+- `lib/greeting.test.ts` (3): every branch boundary.
+- `components/ui/DashboardHeader/index.test.tsx` (7): welcome with username, no change before 5s, greeting after 5s (fake timers, fixed clock), plain fallback, Cancel keeps session, confirm logs out once, Escape closes without logging out.
+- `components/dashboard/DashboardView/index.test.tsx` (2) and updated `components/admin-dashboard/AdminDashboardView/index.test.tsx` (linked-member name preference).
+- `backend/tests/test_auth.py` (+2): `/auth/me` reports the member's stored name; an unlinked admin gets `null` while a linked one gets the member's name. File run: 10 passed.
+
+### 11.5 Results
+
+- Frontend: **27 files / 166 tests passed**; `npx tsc --noEmit` exit 0; `npm run build` compiled successfully.
+- Browser-verified on the local production build: admin shows `Welcome, localadmin` → `Good evening, localadmin` after 5 s; member shows `Welcome, Okafor, Adaeze` → `Good evening, Okafor, Adaeze`; Cancel, Escape and confirmed logout all behave as above.
+- Changes are **not committed or pushed**.

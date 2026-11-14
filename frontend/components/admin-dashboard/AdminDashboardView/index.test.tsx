@@ -96,11 +96,28 @@ function makeModel(overrides: Partial<AdminDashboardPageModel> = {}): AdminDashb
 // AdminDashboardView rendering tests
 // ---------------------------------------------------------------------------
 describe("AdminDashboardView", () => {
-  it("renders the heading and the signed-in username", () => {
+  it("welcomes the admin by username and shows it above the log out control", () => {
     render(<AdminDashboardView model={makeModel()} />);
 
-    expect(screen.getByRole("heading", { name: /admin dashboard/i })).toBeInTheDocument();
-    expect(screen.getByText(/signed in as localadmin/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Welcome, localadmin" })).toBeInTheDocument();
+    expect(screen.getByText("localadmin")).toBeInTheDocument();
+  });
+
+  it("prefers the linked member's name in Last, First form", () => {
+    render(
+      <AdminDashboardView
+        model={makeModel({
+          auth: {
+            user: { ...adminUser, member_id: "member-1", member_name: "Ada Obi" },
+            logout: vi.fn(),
+          },
+        })}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "Welcome, Obi, Ada" })).toBeInTheDocument();
+    // The username still identifies the login above Log out.
+    expect(screen.getByText("localadmin")).toBeInTheDocument();
   });
 
   it("shows all navigation links when every module is enabled", () => {

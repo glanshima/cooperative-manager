@@ -1,4 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
+import DashboardHeader from "@/components/ui/DashboardHeader";
+import { lastNameFirst } from "@/lib/names";
 import type { DashboardPageModel } from "../hooks/useDashboardPage";
 import ApplicationsSection from "../ApplicationsSection";
 import ApplyForLoan from "../ApplyForLoan";
@@ -7,17 +9,19 @@ import LoansSection from "../LoansSection";
 import RestrictionBanner from "../RestrictionBanner";
 
 export default function DashboardView({ model }: { model: DashboardPageModel }) {
+  const displayName = model.member ? lastNameFirst(model.member.name) : null;
+
   return (
     <main style={{ padding: 32, maxWidth: 900, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>My Dashboard</h1>
-        <button onClick={model.auth.logout}>Log out</button>
-      </div>
+      <DashboardHeader
+        name={displayName}
+        fallbackTitle="My Dashboard"
+        username={model.auth.user?.username}
+        onLogout={model.auth.logout}
+      />
 
       {model.member && (
-        <p style={{ color: "#555" }}>
-          {model.member.name} · PSN {model.member.psn?.replace("MCT-", "") ?? ""}
-        </p>
+        <p style={{ color: "#555" }}>PSN {model.member.psn?.replace("MCT-", "") ?? ""}</p>
       )}
 
       {model.member && <ContributionCard member={model.member} />}

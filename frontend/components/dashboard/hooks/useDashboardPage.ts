@@ -262,7 +262,7 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
   const previewInstallment = previewTenure > 0 ? previewTotalRepayable / previewTenure : 0;
 
   return {
-    auth: { logout },
+    auth: { user, logout },
     loading,
     member,
     settings,
