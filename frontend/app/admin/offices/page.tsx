@@ -2,6 +2,7 @@
 
 import OfficesView from "@/components/offices/OfficesView";
 import { useOfficesPage } from "@/components/offices/hooks/useOfficesPage";
+import AdminShell from "@/components/admin-shell/AdminShell";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminOfficesPage() {
@@ -14,5 +15,9 @@ export default function AdminOfficesPage() {
 
   if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
 
-  return <OfficesView model={model} />;
+  return (
+    <AdminShell>
+      <OfficesView model={model} />
+    </AdminShell>
+  );
 }

@@ -2,6 +2,7 @@
 
 import AdminDashboardView from "@/components/admin-dashboard/AdminDashboardView";
 import { useAdminDashboardPage } from "@/components/admin-dashboard/hooks/useAdminDashboardPage";
+import AdminShell from "@/components/admin-shell/AdminShell";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminDashboard() {
@@ -14,5 +15,9 @@ export default function AdminDashboard() {
 
   if (authLoading || model.loading) return <main style={{ padding: 32 }}>Loading...</main>;
 
-  return <AdminDashboardView model={model} />;
+  return (
+    <AdminShell>
+      <AdminDashboardView model={model} />
+    </AdminShell>
+  );
 }

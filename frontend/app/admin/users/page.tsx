@@ -2,6 +2,7 @@
 
 import AdminUsersView from "@/components/admin-users/AdminUsersView";
 import { useAdminUsersPage } from "@/components/admin-users/hooks/useAdminUsersPage";
+import AdminShell from "@/components/admin-shell/AdminShell";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminUsersPage() {
@@ -14,5 +15,9 @@ export default function AdminUsersPage() {
 
   if (loading || model.loading) return <main style={{ padding: 32 }}>Loading...</main>;
 
-  return <AdminUsersView model={model} />;
+  return (
+    <AdminShell>
+      <AdminUsersView model={model} />
+    </AdminShell>
+  );
 }

@@ -2,6 +2,7 @@
 
 import SettingsView from "@/components/admin-settings/SettingsView";
 import { useSettingsPage } from "@/components/admin-settings/hooks/useSettingsPage";
+import AdminShell from "@/components/admin-shell/AdminShell";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminSettingsPage() {
@@ -14,5 +15,9 @@ export default function AdminSettingsPage() {
 
   if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
 
-  return <SettingsView model={model} />;
+  return (
+    <AdminShell>
+      <SettingsView model={model} />
+    </AdminShell>
+  );
 }

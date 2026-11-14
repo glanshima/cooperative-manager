@@ -2,6 +2,7 @@
 
 import RolesView from "@/components/roles/RolesView";
 import { useRolesPage } from "@/components/roles/hooks/useRolesPage";
+import AdminShell from "@/components/admin-shell/AdminShell";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminRolesPage() {
@@ -14,5 +15,9 @@ export default function AdminRolesPage() {
 
   if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
 
-  return <RolesView model={model} />;
+  return (
+    <AdminShell>
+      <RolesView model={model} />
+    </AdminShell>
+  );
 }

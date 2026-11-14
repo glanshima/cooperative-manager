@@ -2,6 +2,7 @@
 
 import AuditView from "@/components/audit/AuditView";
 import { useAuditPage } from "@/components/audit/hooks/useAuditPage";
+import AdminShell from "@/components/admin-shell/AdminShell";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminAuditPage() {
@@ -14,5 +15,9 @@ export default function AdminAuditPage() {
 
   if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
 
-  return <AuditView model={model} />;
+  return (
+    <AdminShell>
+      <AuditView model={model} />
+    </AdminShell>
+  );
 }

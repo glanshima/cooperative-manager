@@ -106,7 +106,7 @@ All commands were run locally; the backend suite ran against the offline sandbox
 | Check | Command | Result |
 |---|---|---|
 | Backend tests | `pytest` in `backend/` with `DATABASE_URL` → `mact_test` | **296 passed**, 0 failed |
-| Frontend tests | `npx vitest run` in `frontend/` | **21 files / 132 tests passed**, 0 failed |
+| Frontend tests | `npx vitest run` in `frontend/` | **23 files / 148 tests passed**, 0 failed |
 | Type check | `npx tsc --noEmit` | clean (exit 0) |
 | Production build | `npm run build` | compiled successfully; TypeScript finished with no errors; 20/20 static pages generated |
 
@@ -167,3 +167,90 @@ Next.js prints a deprecation notice for React 18 (Next 16 still supports it); th
 **Tests:** 7 modal tests (semantics, close button, Escape, backdrop vs inside click, initial focus/restore, busy guard, validation stays open) plus the editing test above.
 
 No code was pushed or merged, and no application deploy was performed. The only production change was the arrears schema migration recorded in §8.1.
+
+---
+
+## 9. Admin navigation (2026-11-14)
+
+### 9.1 Shared shell
+
+`frontend/components/admin-shell/AdminNav/index.tsx` renders a `<header>` containing the brand link ("MACT Admin" → `/admin/dashboard`), a mobile menu button and a `<nav id="admin-navigation" aria-label="Admin">` landmark with a `<ul>` of links. `frontend/components/admin-shell/AdminShell/index.tsx` is a thin wrapper (`<AdminNav />{children}`) so every page gets the same menu from one list.
+
+`frontend/components/admin-shell/hooks/useAdminNav.ts` fetches `GET /api/settings` once and derives the link list. There is a single source of truth, so no page keeps its own list.
+
+| Link | Shown when |
+|---|---|
+| Dashboard → `/admin/dashboard` | always |
+| Members → `/members` | `members` module enabled |
+| Loans → `/loans` | `loans` module enabled |
+| Loan applications → `/admin/loan-applications` | `loans` module enabled |
+| Disbursements → `/admin/disbursements` | `loans` module enabled |
+| Loan repayments → `/admin/loan-repayments` | `loans` module enabled |
+| Payroll deductions → `/admin/deductions` | `deductions` module enabled |
+| Staff / Admin users → `/admin/users` | always |
+| Offices → `/admin/offices` | always |
+| Roles and permissions → `/admin/roles` | always |
+| Audit log → `/admin/audit` | always |
+| Settings → `/admin/settings` | always |
+
+Module-gated links are omitted until settings confirm the module is on; if the settings request fails the menu keeps only the core links, so it never advertises an area the app would then refuse to open. Every link points at a route that exists.
+
+**Permission limitation.** The API's `CurrentUser` payload carries the user's role and super-admin flag but not permission codes, so the menu cannot hide individual links per permission grant. Visibility therefore follows the admin role plus the module flags, which is what the application already exposes client-side. The destination pages keep their own permission enforcement.
+
+### 9.2 Accessibility and responsive behaviour
+
+- Current page: the matching link gets `aria-current="page"` and a distinct active style; matching is exact-path.
+- Semantic landmark with an accessible name (`aria-label="Admin"`); descriptive link text.
+- Visible `:focus-visible` outlines on the brand, the menu button and every link.
+- The menu button is labelled "Open admin navigation" / "Close admin navigation" and exposes `aria-expanded` plus `aria-controls="admin-navigation"`.
+- Below 900px width the list collapses behind the menu button (`.nav` hidden, shown when `data-open="true"`); above it the menu button is hidden and links wrap in a row. Escape closes the open menu and returns focus to the button; following a link also closes it.
+- Member navigation and the member dashboard are untouched — no `AdminShell` was added to any member route.
+
+### 9.3 Files changed
+
+- Added: `frontend/components/admin-shell/AdminNav/index.tsx`, `AdminNav.module.css`, `AdminNav/index.test.tsx`, `frontend/components/admin-shell/AdminShell/index.tsx`, `frontend/components/admin-shell/hooks/useAdminNav.ts`.
+- Wrapped with `AdminShell`: `app/admin/dashboard`, `app/admin/users`, `app/admin/offices`, `app/admin/roles`, `app/admin/settings`, `app/admin/audit`, `app/admin/deductions`, `app/admin/loan-applications`, `app/admin/disbursements`, `app/admin/loan-repayments`, `app/members`, `app/loans` (`page.tsx` in each).
+- The auth-loading early returns are left as bare `<main>` blocks; the menu renders once auth resolves.
+
+### 9.4 Verification
+
+- `AdminNav/index.test.tsx` — **9 tests**: all twelve links and their hrefs; module links omitted when modules are off; `aria-current="page"` on the current page; menu button opens and closes the panel (`aria-expanded`, `aria-controls`, `data-open`); Escape closes and restores focus; a link click closes the menu; hook adds module links once settings arrive, keeps core links when all modules are off, and keeps core links when settings fail.
+- Full frontend suite: **22 files / 141 tests passed**; `npx tsc --noEmit` exit 0; `npm run build` compiled successfully (TypeScript clean, 20/20 static pages, all admin routes plus `/members` and `/loans`).
+- Browser check on the local build (`http://localhost:3000`, `localadmin`): the menu starts collapsed at mobile width, the labelled button expands it to all 12 links, "Dashboard" is shown active, Escape closes it and returns focus, and following "Roles and permissions" navigates to `/admin/roles`, collapses the menu and leaves `aria-current="page"` on that link (`navLinks: 12`, `menuExpanded: "false"`).
+
+No code was pushed or merged, and no deploy was performed for this change.
+
+---
+
+## 10. Deduction feedback and bulk-action eligibility (2026-11-14)
+
+### 10.1 Why "Only submitted deductions can be confirmed" appeared next to "5 of 13 deductions updated"
+
+The ledger's **Select all** checkbox selects every non-conflicted row on the page, whatever its status. The bulk bar then sent all selected ids to the server, and the server correctly refused the rows that were not submitted (already confirmed, drafts, etc.) one by one. The client reported the successes, then printed the collected refusals as the error banner — accurate, but it read as a failure of an action the officer had no way to scope.
+
+**Fix:**
+
+- `frontend/components/deductions/hooks/useDeductionsPage.ts` now mirrors the backend transition guards (`submit` → draft; `confirm`/`return_to_draft` → submitted; `not_deducted` → draft or submitted; `void` → anything not already void). A bulk request filters the selected ids to the rows the action can actually reach before calling the API.
+- Rows skipped this way are stated in the result, e.g. "5 of 5 deductions updated. 8 skipped — only submitted deductions can be confirmed." A selection where nothing qualifies performs no request and explains the required state instead of surfacing a server refusal.
+- `frontend/components/deductions/BulkActionsBar/index.tsx` receives the per-action reachable count, labels a partially applicable action as `Confirm (5)` out of 13 selected, disables an action no selected row can reach, and gives the reason in its `title`.
+- Row-level actions are unchanged: the table already offers only the transitions each row's status allows, so a single id still goes to the server as chosen (which keeps the server's precise message for stale state).
+
+### 10.2 Feedback that never cleared
+
+`StatusMessage` printed the banner until the next action replaced it. In the deductions page both tones now:
+
+- clear themselves after **10 seconds** (`useDeductionsPage`, one timer per tone, cleared on change/unmount), and
+- carry a labelled **Dismiss** button ("Dismiss error" / "Dismiss message") wired to `feedback.dismissError` / `feedback.dismissMessage`.
+
+`StatusMessage` gained optional `onDismiss` / `dismissLabel` props and now exposes `role="alert"` for errors and `role="status"` for successes; other pages that pass no dismiss handler render exactly as before.
+
+### 10.3 Tests
+
+- `useDeductionsPage.test.ts` (+5): mixed 13-row style selection confirms only the submitted rows and reports the skip; an all-ineligible bulk selection makes no API call and explains why; manual dismissal clears both tones; the success banner clears itself after the timeout (fake timers). The existing per-record bulk report test still passes unchanged.
+- New `BulkActionsBar/index.test.tsx` (3): reachable counts in the label, disabled action with its status hint, chosen action dispatched.
+
+### 10.4 Results
+
+- Frontend: **23 files / 148 tests passed**; `npx tsc --noEmit` exit 0; `npm run build` compiled successfully with 20/20 static pages.
+- Backend (unchanged, re-run as the gate): **296 passed** against `mact_test` on the local sandbox.
+- No application deploy was performed for this fix.

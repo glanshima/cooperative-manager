@@ -2,6 +2,7 @@
 
 import DisbursementsView from "@/components/disbursements/DisbursementsView";
 import { useDisbursementsPage } from "@/components/disbursements/hooks/useDisbursementsPage";
+import AdminShell from "@/components/admin-shell/AdminShell";
 import ModuleGate from "@/components/ui/ModuleGate";
 import { useAuth } from "@/lib/useAuth";
 
@@ -15,9 +16,11 @@ export default function AdminDisbursementsPage() {
   if (authLoading) return <main style={{ padding: 32 }}>Loading...</main>;
 
   return (
-    <ModuleGate module="loans">
-      <DisbursementsPageContent logout={logout} />
-    </ModuleGate>
+    <AdminShell>
+      <ModuleGate module="loans">
+        <DisbursementsPageContent logout={logout} />
+      </ModuleGate>
+    </AdminShell>
   );
 }
 

@@ -2,6 +2,7 @@
 
 import MembersView from "@/components/members/MembersView";
 import { useMembersPage } from "@/components/members/hooks/useMembersPage";
+import AdminShell from "@/components/admin-shell/AdminShell";
 import ModuleGate from "@/components/ui/ModuleGate";
 import { useAuth } from "@/lib/useAuth";
 
@@ -15,9 +16,11 @@ export default function MembersPage() {
   if (loading) return <main style={{ padding: 32 }}>Loading...</main>;
 
   return (
-    <ModuleGate module="members">
-      <MembersPageContent logout={logout} />
-    </ModuleGate>
+    <AdminShell>
+      <ModuleGate module="members">
+        <MembersPageContent logout={logout} />
+      </ModuleGate>
+    </AdminShell>
   );
 }
 

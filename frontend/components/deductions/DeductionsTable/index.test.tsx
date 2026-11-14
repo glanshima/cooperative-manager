@@ -26,6 +26,13 @@ function renderTable(items: PayrollDeduction[], selected: string[] = [], search 
     items,
     selected,
     loading: false,
+    eligible: {
+      submit: items.length,
+      return_to_draft: 0,
+      confirm: 0,
+      not_deducted: items.length,
+      void: items.length,
+    },
     toggleAll: vi.fn(),
     toggleSelected: vi.fn(),
     clearSelection: vi.fn(),

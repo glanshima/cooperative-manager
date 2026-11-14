@@ -86,6 +86,37 @@ const BULK_ACTION_NAMES: Partial<Record<DeductionActionKind, PayrollDeductionBul
 
 const REASON_ACTIONS = new Set<DeductionActionKind>(["return_to_draft", "not_deducted", "void"]);
 
+// Mirrors the backend transition guards. Bulk actions skip rows that are not
+// in a state the action applies to instead of sending them to be refused one
+// by one, which is how "5 of 13 updated" plus a raw server error happens.
+const ACTION_STATUSES: Record<DeductionActionKind, PayrollDeductionStatus[]> = {
+  submit: ["draft"],
+  return_to_draft: ["submitted"],
+  confirm: ["submitted"],
+  not_deducted: ["draft", "submitted"],
+  void: ["draft", "submitted", "confirmed", "not_deducted"],
+};
+
+const SKIP_NOTES: Record<DeductionActionKind, string> = {
+  submit: "only drafts can be submitted",
+  return_to_draft: "only submitted deductions can be returned to draft",
+  confirm: "only submitted deductions can be confirmed",
+  not_deducted: "only drafts and submitted deductions can be marked not deducted",
+  void: "voided records cannot be voided again",
+};
+
+const ACTION_VERBS: Record<DeductionActionKind, string> = {
+  submit: "submit",
+  return_to_draft: "return to draft",
+  confirm: "confirm",
+  not_deducted: "mark not deducted",
+  void: "void",
+};
+
+// Feedback is transient: a stale banner outlives its moment and reads as a
+// current problem, so both tones clear themselves as well as being dismissible.
+const FEEDBACK_TIMEOUT_MS = 10_000;
+
 export function useDeductionsPage(logout: () => void) {
   const [month, setMonth] = useState(currentMonth());
   const [status, setStatus] = useState<PayrollDeductionStatus | "all">("all");
@@ -121,7 +152,11 @@ export function useDeductionsPage(logout: () => void) {
   const [editing, setEditing] = useState<PayrollDeduction | null>(null);
   const [formOpen, setFormOpen] = useState(false);
 
-  const [pending, setPending] = useState<{ action: DeductionActionKind; ids: string[] } | null>(null);
+  const [pending, setPending] = useState<{
+    action: DeductionActionKind;
+    ids: string[];
+    skipped: number;
+  } | null>(null);
   const [reason, setReason] = useState("");
   const [submitAll, setSubmitAll] = useState<{
     month: string;
@@ -139,6 +174,18 @@ export function useDeductionsPage(logout: () => void) {
   const [queueSkip, setQueueSkip] = useState(0);
   const [prefill, setPrefill] = useState<DeductionPrefill | null>(null);
   const [lastEntered, setLastEntered] = useState<{ id: string; memberName: string } | null>(null);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(null), FEEDBACK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [error]);
+
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(null), FEEDBACK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [message]);
 
   async function refresh(overrides: { skip?: number } = {}) {
     const effectiveSkip = overrides.skip !== undefined ? overrides.skip : skip;
@@ -352,7 +399,22 @@ export function useDeductionsPage(logout: () => void) {
     setSubmitAll(null);
   }
 
-  async function runAction(action: DeductionActionKind, ids: string[], reasonText?: string) {
+  function eligibleFor(action: DeductionActionKind, ids: string[]): string[] {
+    const allowed = ACTION_STATUSES[action];
+    return ids.filter((id) => {
+      const record = items.find((item) => item.id === id);
+      // Selection is page-scoped, so every id normally resolves. If one does
+      // not, leave the verdict to the server rather than guessing.
+      return record ? allowed.includes(record.status) : true;
+    });
+  }
+
+  async function runAction(
+    action: DeductionActionKind,
+    ids: string[],
+    reasonText?: string,
+    skipped = 0
+  ) {
     if (!ids.length) return;
     setBusy(true);
     setError(null);
@@ -382,6 +444,8 @@ export function useDeductionsPage(logout: () => void) {
         if (failures.length) failureText = failures.join("; ");
       }
 
+      if (skipped) successText += ` ${skipped} skipped — ${SKIP_NOTES[action]}.`;
+
       setPending(null);
       setSelected([]);
       await refresh();
@@ -399,14 +463,29 @@ export function useDeductionsPage(logout: () => void) {
 
   function requestAction(action: DeductionActionKind, ids: string[]) {
     if (!ids.length) return;
+    // Row actions already offer only the transitions their status allows, so
+    // a single id goes to the server as chosen. A bulk selection is what can
+    // be mixed, and that is where the rows need filtering.
+    const eligible = ids.length > 1 ? eligibleFor(action, ids) : ids;
+    const skipped = ids.length - eligible.length;
+
+    // Acting on a selection where nothing qualifies would only come back as
+    // a refusal; say why up front instead.
+    if (!eligible.length) {
+      setMessage(null);
+      setError(
+        `Nothing to ${ACTION_VERBS[action]} in this selection — ${SKIP_NOTES[action]}.`
+      );
+      return;
+    }
+
     if (REASON_ACTIONS.has(action)) {
-      setPending({ action, ids });
+      setPending({ action, ids: eligible, skipped });
       setReason("");
       return;
     }
-    runAction(action, ids);
+    return runAction(action, eligible, undefined, skipped);
   }
-
   function confirmPendingAction() {
     if (!pending) return;
     const trimmed = reason.trim();
@@ -414,7 +493,7 @@ export function useDeductionsPage(logout: () => void) {
       setError("A reason is required for this action.");
       return;
     }
-    runAction(pending.action, pending.ids, trimmed);
+    runAction(pending.action, pending.ids, trimmed, pending.skipped);
   }
 
   function cancelPendingAction() {
@@ -581,9 +660,26 @@ export function useDeductionsPage(logout: () => void) {
     return loans.filter((loan) => loan.member_id === memberId && loan.status === "active");
   }
 
+  // How many of the selected rows each bulk action can actually reach, so the
+  // bar can label the button honestly instead of letting a mixed selection
+  // fail record by record at the server.
+  const eligibleCounts = (Object.keys(ACTION_STATUSES) as DeductionActionKind[]).reduce(
+    (counts, action) => {
+      counts[action] = eligibleFor(action, selected).length;
+      return counts;
+    },
+    {} as Record<DeductionActionKind, number>
+  );
+
   return {
     auth: { logout },
-    feedback: { error, message, busy },
+    feedback: {
+      error,
+      message,
+      busy,
+      dismissError: () => setError(null),
+      dismissMessage: () => setMessage(null),
+    },
     filters: { month, setMonth, status, setStatus, search, setSearch },
     pageSize: { chosen: chosenPageSize, change: changePageSize },
     tab,
@@ -611,6 +707,7 @@ export function useDeductionsPage(logout: () => void) {
       items,
       loading,
       selected,
+      eligible: eligibleCounts,
       toggleSelected,
       toggleAll,
       clearSelection,

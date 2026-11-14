@@ -53,10 +53,22 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
       </div>
 
       {model.feedback.error && (
-        <StatusMessage tone="error">{model.feedback.error}</StatusMessage>
+        <StatusMessage
+          tone="error"
+          onDismiss={model.feedback.dismissError}
+          dismissLabel="Dismiss error"
+        >
+          {model.feedback.error}
+        </StatusMessage>
       )}
       {model.feedback.message && (
-        <StatusMessage tone="success">{model.feedback.message}</StatusMessage>
+        <StatusMessage
+          tone="success"
+          onDismiss={model.feedback.dismissMessage}
+          dismissLabel="Dismiss message"
+        >
+          {model.feedback.message}
+        </StatusMessage>
       )}
 
       <div role="tablist" aria-label="Deductions view" style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -117,6 +129,7 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
 
           <BulkActionsBar
             count={model.table.selected.length}
+            eligible={model.table.eligible}
             busy={busy}
             onAction={(action) => model.actions.request(action, model.table.selected)}
             onClear={model.table.clearSelection}

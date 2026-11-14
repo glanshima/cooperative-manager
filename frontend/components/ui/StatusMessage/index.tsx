@@ -8,9 +8,27 @@ const TONE_STYLES: Record<"error" | "success", CSSProperties> = {
 export default function StatusMessage({
   tone,
   children,
+  onDismiss,
+  dismissLabel,
 }: {
   tone: "error" | "success";
   children: ReactNode;
+  onDismiss?: () => void;
+  dismissLabel?: string;
 }) {
-  return <p style={TONE_STYLES[tone]}>{children}</p>;
+  return (
+    <p style={TONE_STYLES[tone]} role={tone === "error" ? "alert" : "status"}>
+      {children}
+      {onDismiss ? (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label={dismissLabel ?? "Dismiss message"}
+          style={{ marginLeft: 8, fontSize: 12, fontWeight: 400 }}
+        >
+          Dismiss
+        </button>
+      ) : null}
+    </p>
+  );
 }

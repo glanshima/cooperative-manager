@@ -803,4 +803,109 @@ describe("useDeductionsPage enter queue", () => {
     expect(result.current.worklist.data).toBeNull();
     expect(result.current.table.items).toHaveLength(1);
   });
+
+  it("confirms only the submitted rows of a mixed selection", async () => {
+    const records = [
+      makeDeduction({ id: "submitted-1", status: "submitted" }),
+      makeDeduction({ id: "submitted-2", status: "submitted" }),
+      makeDeduction({ id: "draft-1", status: "draft" }),
+    ];
+    listDeductionsMock.mockResolvedValue(makePage(records));
+    getScheduleMock.mockResolvedValue(makeSchedule(records));
+    bulkDeductionsMock.mockResolvedValue({
+      results: [
+        { id: "submitted-1", ok: true, status: "confirmed" },
+        { id: "submitted-2", ok: true, status: "confirmed" },
+      ],
+    });
+
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    act(() => result.current.table.toggleAll(["submitted-1", "submitted-2", "draft-1"]));
+    expect(result.current.table.eligible.confirm).toBe(2);
+    expect(result.current.table.eligible.submit).toBe(1);
+
+    await act(async () => {
+      await result.current.actions.request("confirm", result.current.table.selected);
+    });
+
+    expect(bulkDeductionsMock).toHaveBeenCalledWith(
+      "confirm",
+      ["submitted-1", "submitted-2"],
+      undefined
+    );
+    expect(result.current.feedback.message).toBe(
+      "2 of 2 deductions updated. 1 skipped — only submitted deductions can be confirmed."
+    );
+    expect(result.current.feedback.error).toBeNull();
+  });
+
+  it("refuses a bulk action when no selected row is in a state it applies to", async () => {
+    const records = [
+      makeDeduction({ id: "draft-1", status: "draft" }),
+      makeDeduction({ id: "draft-2", status: "draft" }),
+    ];
+    listDeductionsMock.mockResolvedValue(makePage(records));
+    getScheduleMock.mockResolvedValue(makeSchedule(records));
+
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    act(() => result.current.table.toggleAll(["draft-1", "draft-2"]));
+    expect(result.current.table.eligible.confirm).toBe(0);
+
+    await act(async () => {
+      await result.current.actions.request("confirm", result.current.table.selected);
+    });
+
+    expect(confirmDeductionMock).not.toHaveBeenCalled();
+    expect(bulkDeductionsMock).not.toHaveBeenCalled();
+    expect(result.current.feedback.error).toBe(
+      "Nothing to confirm in this selection — only submitted deductions can be confirmed."
+    );
+  });
+
+  it("lets the officer dismiss feedback without waiting for it to clear", async () => {
+    confirmDeductionMock.mockResolvedValue(makeDeduction({ status: "confirmed" }));
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.actions.request("confirm", ["deduction-1"]);
+    });
+    expect(result.current.feedback.message).toBe("Confirm deduction completed.");
+
+    act(() => result.current.feedback.dismissMessage());
+    expect(result.current.feedback.message).toBeNull();
+
+    confirmDeductionMock.mockRejectedValueOnce(new Error("Only submitted deductions can be confirmed"));
+    await act(async () => {
+      await result.current.actions.request("confirm", ["deduction-1"]);
+    });
+    expect(result.current.feedback.error).toBe("Only submitted deductions can be confirmed");
+    act(() => result.current.feedback.dismissError());
+    expect(result.current.feedback.error).toBeNull();
+  });
+
+  it("clears feedback on its own after the timeout", async () => {
+    confirmDeductionMock.mockResolvedValue(makeDeduction({ status: "confirmed" }));
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.table.loading).toBe(false));
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        await result.current.actions.request("confirm", ["deduction-1"]);
+      });
+      expect(result.current.feedback.message).toBe("Confirm deduction completed.");
+
+      act(() => {
+        vi.advanceTimersByTime(10_000);
+      });
+      expect(result.current.feedback.message).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
