@@ -1403,9 +1403,12 @@ class PayrollDeductionLine(Base):
     __tablename__ = "payroll_deduction_lines"
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_payroll_deduction_lines_amount_positive"),
+        # Every loan line (repayment or arrears) names its loan; only the
+        # non-loan categories omit it. Naming categories positively instead
+        # of listing loan ones keeps this in step with new loan line kinds.
         CheckConstraint(
-            "(category = 'loan_repayment' AND loan_id IS NOT NULL) "
-            "OR (category <> 'loan_repayment' AND loan_id IS NULL)",
+            "(category NOT IN ('monthly_contribution', 'other') AND loan_id IS NOT NULL) "
+            "OR (category IN ('monthly_contribution', 'other') AND loan_id IS NULL)",
             name="ck_payroll_deduction_lines_loan_link",
         ),
     )

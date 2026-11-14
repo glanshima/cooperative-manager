@@ -76,11 +76,13 @@ export default function DeductionsTable({
   table,
   actions,
   busy,
+  search = "",
   onEdit,
 }: {
   table: DeductionsPageModel["table"];
   actions: DeductionsPageModel["actions"];
   busy: boolean;
+  search?: string;
   onEdit: (deduction: PayrollDeduction) => void;
 }) {
   // Bulk actions are writes, so conflicted rows aren't offered for
@@ -89,7 +91,13 @@ export default function DeductionsTable({
   const allSelected = ids.length > 0 && ids.every((id) => table.selected.includes(id));
 
   if (!table.items.length) {
-    return <p>No deduction records for this month and status.</p>;
+    return (
+      <p>
+        {search.trim()
+          ? `No deduction records match “${search.trim()}” for this month and status.`
+          : "No deduction records for this month and status."}
+      </p>
+    );
   }
 
   return (

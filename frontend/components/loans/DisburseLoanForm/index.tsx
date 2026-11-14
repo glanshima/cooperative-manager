@@ -76,7 +76,8 @@ export default function DisburseLoanForm({ disburse }: { disburse: LoansPageMode
               fontSize: 14,
             }}
           >
-            Interest: {preview.interest.toFixed(2)}
+            Interest (deducted at source): {preview.interest.toFixed(2)} · Amount paid out:{" "}
+            {preview.netDisbursed.toFixed(2)}
             {preview.flatCharge > 0 && ` · Flat charge: ${preview.flatCharge.toFixed(2)}`}
             {" "}· Total repayable: {preview.total.toFixed(2)} · Monthly installment:{" "}
             {preview.installment.toFixed(2)}

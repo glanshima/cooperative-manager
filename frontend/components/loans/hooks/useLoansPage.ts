@@ -48,6 +48,37 @@ export const EMPTY_TYPE_FORM: LoanTypeCreateInput = {
   effective_from: today(),
 };
 
+export interface DisbursePreview {
+  interest: number;
+  netDisbursed: number;
+  flatCharge: number;
+  total: number;
+  installment: number;
+}
+
+// Mirrors loan_calc.compute_loan_terms: interest is deducted at source, so
+// it lowers what the member receives rather than raising what they repay.
+// Only the flat charge is added to the repayable amount, and the instalment
+// is that total spread over the tenure.
+export function computeDisbursePreview(
+  principal: number,
+  type?: Pick<LoanType, "interest_rate" | "flat_charge" | "tenure_months">
+): DisbursePreview {
+  if (!type) {
+    return { interest: 0, netDisbursed: 0, flatCharge: 0, total: 0, installment: 0 };
+  }
+  const interest = principal * parseFloat(type.interest_rate);
+  const flatCharge = parseFloat(type.flat_charge);
+  const total = principal + flatCharge;
+  return {
+    interest,
+    netDisbursed: principal - interest,
+    flatCharge,
+    total,
+    installment: type.tenure_months > 0 ? total / type.tenure_months : 0,
+  };
+}
+
 export function useLoansPage(authLoading: boolean, logout: () => void) {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loanTypes, setLoanTypes] = useState<LoanType[]>([]);
@@ -206,13 +237,7 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
   }
 
   const selectedType = loanTypes.find((t) => t.id === loanForm.loan_type_id);
-  const previewInterest =
-    selectedType && loanForm.principal
-      ? loanForm.principal * parseFloat(selectedType.interest_rate)
-      : 0;
-  const previewFlatCharge = selectedType ? parseFloat(selectedType.flat_charge) : 0;
-  const previewTotal = loanForm.principal + previewInterest + previewFlatCharge;
-  const previewInstallment = selectedType ? previewTotal / selectedType.tenure_months : 0;
+  const preview = computeDisbursePreview(loanForm.principal, selectedType);
 
   return {
     auth: { logout },
@@ -241,12 +266,7 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
       members,
       activeTypes: loanTypes.filter((t) => t.is_active),
       selectedType,
-      preview: {
-        interest: previewInterest,
-        flatCharge: previewFlatCharge,
-        total: previewTotal,
-        installment: previewInstallment,
-      },
+      preview,
       submit: handleDisburse,
     },
     table: {

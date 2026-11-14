@@ -100,6 +100,7 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
           <DeductionFilters
             filters={model.filters}
             totals={model.totals}
+            resultCount={model.table.pagination.total}
             onCreate={model.form.openCreate}
             onPrint={model.print.open}
           />
@@ -127,6 +128,7 @@ export default function DeductionsView({ model }: { model: DeductionsPageModel }
               table={model.table}
               actions={model.actions}
               busy={busy}
+              search={model.filters.search}
               onEdit={model.form.openEdit}
             />
           )}

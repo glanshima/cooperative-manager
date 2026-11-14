@@ -105,6 +105,21 @@ export default function DeductionWorklist({
             </button>
           ))}
         </div>
+        <label>
+          <span style={{ display: "block", fontSize: 12, color: "#555" }}>Search due members</span>
+          <input
+            type="search"
+            value={worklist.search}
+            onChange={(e) => worklist.setSearch(e.target.value)}
+            aria-label="Search due members by name or PSN"
+            placeholder="Name or PSN"
+          />
+        </label>
+        {worklist.search && (
+          <button type="button" onClick={() => worklist.setSearch("")}>
+            Clear search
+          </button>
+        )}
         <button onClick={onAddAny}>Add any member</button>
         <button onClick={() => worklist.refresh()} disabled={worklist.loading}>
           {worklist.loading ? "Loading…" : "Refresh"}
@@ -133,8 +148,24 @@ export default function DeductionWorklist({
       {worklist.error && <p style={{ color: "crimson" }}>Error loading queue: {worklist.error}</p>}
       {worklist.loading && !data && <p>Loading queue…</p>}
 
+      {data && worklist.search.trim() && data.items.length > 0 && (
+        <p role="status" style={{ margin: "0 0 8px", fontSize: 14 }}>
+          {data.total} matching member{data.total === 1 ? "" : "s"} for “
+          {worklist.search.trim()}”. The counts and amount above cover the whole month.
+        </p>
+      )}
+
       {data && data.items.length === 0 && !worklist.loading && (
-        <p style={{ color: "#666" }}>{EMPTY_COPY[worklist.entryState](monthLabel(month))}</p>
+        worklist.search.trim() ? (
+          <p role="status" style={{ color: "#666" }}>
+            No due members match “{worklist.search.trim()}” for {monthLabel(month)}.{" "}
+            <button type="button" onClick={() => worklist.setSearch("")}>
+              Clear search
+            </button>
+          </p>
+        ) : (
+          <p style={{ color: "#666" }}>{EMPTY_COPY[worklist.entryState](monthLabel(month))}</p>
+        )
       )}
 
       {data?.items.map((item) => {

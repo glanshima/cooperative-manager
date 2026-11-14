@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -68,18 +68,21 @@ function renderWorklist({
   entryState = "pending" as DeductionWorklistEntryState,
   lastEntered = null,
   error = null,
+  search = "",
   dataOverrides = {},
 }: {
   items?: DeductionWorklistItem[];
   entryState?: DeductionWorklistEntryState;
   lastEntered?: { id: string; memberName: string } | null;
   error?: string | null;
+  search?: string;
   dataOverrides?: Partial<DeductionWorklistOut>;
 } = {}) {
   const data = makeWorklistOut(items, entryState, dataOverrides);
   const openItem = vi.fn();
   const undo = vi.fn();
   const setEntryState = vi.fn();
+  const setSearch = vi.fn();
   const goToPage = vi.fn();
   const onPageSizeChange = vi.fn();
   const onAddAny = vi.fn();
@@ -89,6 +92,8 @@ function renderWorklist({
     error,
     entryState,
     setEntryState,
+    search,
+    setSearch,
     refresh: vi.fn(),
     openItem,
     lastEntered,
@@ -105,7 +110,7 @@ function renderWorklist({
       busy={false}
     />
   );
-  return { openItem, undo, setEntryState, goToPage, onPageSizeChange, onAddAny };
+  return { openItem, undo, setEntryState, setSearch, goToPage, onPageSizeChange, onAddAny };
 }
 
 describe("DeductionWorklist", () => {
@@ -247,5 +252,51 @@ describe("DeductionWorklist", () => {
     });
 
     expect(screen.getByText(/Nothing left to enter for/)).toBeInTheDocument();
+  });
+
+  it("searches due members through a labelled field and clears it", async () => {
+    const user = userEvent.setup();
+    const { setSearch } = renderWorklist({ search: "ada" });
+
+    const field = screen.getByLabelText("Search due members by name or PSN");
+    expect(field).toHaveValue("ada");
+
+    await user.type(field, "e");
+    expect(setSearch).toHaveBeenLastCalledWith("adae");
+
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(setSearch).toHaveBeenLastCalledWith("");
+  });
+
+  it("announces the filtered count while the segment counts stay month-wide", () => {
+    renderWorklist({
+      items: [makeItem({ member_id: "m1" }), makeItem({ member_id: "m2" }), makeItem({ member_id: "m3" })],
+      search: "ada",
+      dataOverrides: { total: 3, due_count: 42, pending_count: 40, entered_count: 2 },
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(/3 matching members for “ada”/);
+    expect(status).toHaveTextContent(/counts and amount above cover the whole month/);
+
+    // The month-wide tabs did not shrink to the search.
+    expect(screen.getByRole("button", { name: "Pending (40)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Entered (2)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All (42)" })).toBeInTheDocument();
+  });
+
+  it("explains an empty search result and offers to clear it", async () => {
+    const user = userEvent.setup();
+    const { setSearch } = renderWorklist({
+      items: [],
+      search: "zzz",
+      dataOverrides: { total: 0, due_count: 12, pending_count: 12, entered_count: 0 },
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(/No due members match “zzz”/);
+
+    await user.click(within(status).getByRole("button", { name: "Clear search" }));
+    expect(setSearch).toHaveBeenCalledWith("");
   });
 });

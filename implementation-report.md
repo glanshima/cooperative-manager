@@ -99,55 +99,71 @@ Protected by `useAuth({ requireRole: "admin" })` and `ModuleGate module="members
 
 ---
 
-## 7. Build and test results
+## 7. Build and test results (2026-11-14)
 
-### Next.js production build
+All commands were run locally; the backend suite ran against the offline sandbox Postgres (`127.0.0.1:55432`, database `mact_test`), never production.
 
-```
-▲ Next.js 16.4.6 (Turbopack)
-✓ Compiled successfully
-✓ Running TypeScript … no errors
-✓ Generating static pages (20/20)
+| Check | Command | Result |
+|---|---|---|
+| Backend tests | `pytest` in `backend/` with `DATABASE_URL` → `mact_test` | **296 passed**, 0 failed |
+| Frontend tests | `npx vitest run` in `frontend/` | **21 files / 132 tests passed**, 0 failed |
+| Type check | `npx tsc --noEmit` | clean (exit 0) |
+| Production build | `npm run build` | compiled successfully; TypeScript finished with no errors; 20/20 static pages generated |
 
-/admin/dashboard  ○  static — build succeeded
-```
+Next.js prints a deprecation notice for React 18 (Next 16 still supports it); the build is not affected.
 
-### Frontend tests (Vitest, 24/24 passed)
+---
 
-```
-✓ app/login/login-redirects.test.tsx (4 tests)
-    ✓ redirects to /change-password when must_change_password is true
-    ✓ redirects to /admin/dashboard for an admin who has already changed their password
-    ✓ redirects to /dashboard for a member who has already changed their password
-    ✓ shows an error message and does not redirect when login fails
+## 8. Payroll deductions work order (2026-11-14)
 
-✓ components/admin-dashboard/AdminDashboardView/index.test.tsx (12 tests)
-  AdminDashboardView (5)
-    ✓ renders the heading and the signed-in username
-    ✓ shows all navigation links when every module is enabled
-    ✓ hides module-gated links when every module is disabled
-    ✓ renders each nav link with the correct href
-    ✓ shows the settings error banner when settings failed to load
-  useAdminDashboardPage (7)
-    ✓ does not fetch while auth is still loading
-    ✓ does not fetch when user is null (unauthenticated)
-    ✓ calls getSettings (and only getSettings) once auth resolves
-    ✓ exposes correct module flags when all modules are on
-    ✓ exposes correct module flags when all modules are off
-    ✓ surfaces a settingsError and clears loading when getSettings rejects
-    ✓ re-fetches when auth transitions from loading to resolved
+### 8.1 Draft creation failing after a void — root cause and fix
 
-✓ components/dashboard/hooks/useDashboardPage.test.ts (4 tests)
-    ✓ loads loan data when the Loans module is enabled
-    ✓ skips every loan request when the Loans module is disabled
-    ✓ sends the month the member says they paid, not today's month
-    ✓ refuses to submit without a payment month
+**Root cause.** `loan_arrears` is a native Postgres enum value plus a check constraint on `payroll_deduction_lines`. The production database has **not** had `scripts/manual_migration_2026_11_loan_arrears_lines.sql` applied, so a replacement draft that carries an arrears line is rejected by the database. That unhandled error becomes a 500 from the serverless function; Vercel's error response carries no CORS headers, so the browser surfaces it as `TypeError: Failed to fetch`. The transaction rolls back, so the draft was **not** committed despite the client showing no response.
 
-✓ components/home/HomeView/index.test.tsx (4 tests)
-    ✓ shows only the login link when signed out
-    ✓ shows admin pages but hides disabled modules
-    ✓ shows the deductions link to admins while the module is enabled
-    ✓ shows a member only their dashboard and enabled modules
-```
+**Fixes (implemented and verified):**
 
-Date: 2026-11-14
+- `backend/app/models.py` — the `ck_payroll_deduction_lines_loan_link` check constraint now names the two categories that must **not** carry a loan (`monthly_contribution`, `other`) instead of listing only `loan_repayment`, so `loan_arrears` lines are valid when the schema is created from the models.
+- `frontend/lib/api/client.ts` — `fetch` rejection is caught and reported as an `ApiError` with `transport: true` and an actionable message (check connection, reload before retrying so a retry cannot duplicate an entry). Server-provided validation/permission messages are unchanged.
+- `frontend/components/deductions/hooks/useDeductionsPage.ts` — `saveDraft` no longer treats a failed post-save refresh as a failed save, and when a create fails at the transport layer it looks the member/month up in the ledger first. If the draft is already there, it reports "Draft saved…" and refreshes both lists instead of inviting a duplicate retry.
+- After a void the officer is returned to the ledger and can re-enter the member from the **Entered/Pending** worklist; a replacement arrears draft saves and appears in **Entered**.
+
+**Tests:** `test_a_replacement_arrears_draft_can_follow_a_void` (backend); `sends a replacement arrears draft after the previous entry was voided`, `reports an unreachable server without claiming the draft was lost`, `treats a draft found in the ledger as saved when the reply never arrives`, `replaces a rejected fetch with an actionable transport message` (frontend).
+
+**Deployment action — completed 2026-11-14.** The production database was missing the enum value and still carried the old constraint, so `scripts/manual_migration_2026_11_loan_arrears_lines.sql` was applied directly to the production Neon database (branch `production`) in a single committed transaction. Verified afterwards: the `payrolldeductionlinecategory` enum now includes `loan_arrears`, the `ck_payroll_deduction_lines_loan_link` constraint has the corrected positive form, and the existing 20 deduction lines are untouched. The connection string was never printed.
+
+### 8.2 Accessible server-side search
+
+- `GET /api/payroll-deductions` accepts `search` (max 100 chars) and filters on member name, member PSN, payroll reference and note. `GET /api/payroll-deductions/worklist` accepts `search` and filters on member name and PSN. Both use case-insensitive matching with `%` / `_` / `\` escaped, so a typed wildcard is literal.
+- Search is applied before pagination, so it reaches records outside the loaded page; `total` is the filtered count.
+- Worklist month-wide counts (`due_count`, `pending_count`, `entered_count`, `expected_total`) stay month-wide; only the rows and page total narrow. The ledger month totals stay schedule-derived and month-wide.
+- UI: labelled search fields (worklist "Search due members by name or PSN"; ledger "Search ledger by name, PSN, payroll reference or note"), a labelled Clear search action, a `role="status"` line announcing the filtered count and stating which figures are month-wide, and search-aware empty states. Month/status/segment filters are preserved while searching and page size changes keep the active term.
+- `frontend/lib/api/deductions.ts` carries the new parameter for both endpoints.
+
+**Tests:** backend `test_ledger_search_finds_a_member_across_pages_by_psn_name_reference_and_note` (across pagination, combined with status, literal `%`), `test_worklist_search_narrows_rows_but_keeps_the_month_wide_counts`; frontend worklist (labelled field, clear, filtered announcement, empty result), ledger filters (new `DeductionFilters/index.test.tsx`), ledger table empty state.
+
+### 8.3 The "0.3" amount change
+
+**Evidence.** A read-only audit of production deduction lines found **no** amount that differs from the server's expected amount (20 lines, 0 mismatches) and no 0.30 anywhere in live data. The three production loans have 18/24/30-month tenures, where instalment rounding drift is at most 0.15. No fixed adjustment, percentage conversion or rounding step in the payroll path adds or subtracts 0.30.
+
+**Where 0.30 can legitimately come from.** The loan model is interest-at-source: `total_repayable = principal + flat_charge`, `monthly_installment = total_repayable / tenure` stored as `Numeric(14,2)`. At long tenures the rounded instalment can overshoot the total. Concrete case: principal 100,000.50 over 60 months → stored instalment 1,666.68; 60 × 1,666.68 = 100,000.80, i.e. **0.30 more** than the total. The expectation engine caps the final instalment at the remaining balance (1,666.38) and does not emit a spurious arrears line for the over-rounding.
+
+**Defects found and fixed while tracing it:**
+
+- The admin disburse preview added interest to "Total repayable" even though the backend deducts interest at source. `computeDisbursePreview` in `frontend/components/loans/hooks/useLoansPage.ts` now mirrors `loan_calc.compute_loan_terms` (only the flat charge is added; net paid-out is shown) and the form labels the interest as deducted at source.
+- Editing a draft silently dropped its existing `loan_arrears` line, because the form only offered a catch-up row when the officer added one. The form now starts with the arrears line already on the draft.
+
+**Test:** `test_a_sixty_month_instalment_that_rounds_to_0_30_more_is_absorbed_by_the_last_payment` (asserts the 0.30 overshoot in the stored instalment and the final 1,666.38 instalment); `useLoansPage.test.ts` for the preview; `keeps an existing arrears line when editing a draft`.
+
+### 8.4 Deduction form as an accessible modal
+
+`frontend/components/deductions/DeductionForm/index.tsx` now renders a modal for Enter, Add any member, New deduction and Edit draft:
+
+- `role="dialog"`, `aria-modal="true"`, `aria-labelledby` pointing at the heading; visible close button top-right ("Close deduction form").
+- Closes on Escape and on a backdrop click; clicks inside the dialog do not close it. While a save is busy, Escape, backdrop clicks and the close button are inert.
+- Focus moves to the first sensible control on open (member picker for blank entry, contribution for queue/edit entry) and returns to the opener on close; Tab is contained within the dialog.
+- The discard notice "Closing this form discards anything you have not saved." is shown in every mode.
+- Saving, conflict locking, validation messages and busy states behave as before; validation errors keep the dialog open.
+
+**Tests:** 7 modal tests (semantics, close button, Escape, backdrop vs inside click, initial focus/restore, busy guard, validation stays open) plus the editing test above.
+
+No code was pushed or merged, and no application deploy was performed. The only production change was the arrears schema migration recorded in §8.1.

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 
 import type {
   LoanLineCategory,
@@ -84,10 +85,62 @@ export default function DeductionForm({
   });
 
   // Whether to offer a catch-up at all is the officer's call when the figure
-  // did not come from the queue, so that row starts hidden.
-  const [catchUpLoans, setCatchUpLoans] = useState<string[]>([]);
+  // did not come from the queue, so a blank entry starts with none. An
+  // existing draft's arrears line is not a choice any more, though: it has
+  // to stay on the form or saving would silently drop it.
+  const [catchUpLoans, setCatchUpLoans] = useState<string[]>(() =>
+    editing
+      ? Array.from(
+          new Set(
+            editing.lines.flatMap((line) =>
+              line.category === "loan_arrears" && line.loan_id ? [line.loan_id] : []
+            )
+          )
+        )
+      : []
+  );
 
   const [localError, setLocalError] = useState<string | null>(null);
+
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Moving focus into the dialog on open and back to whatever opened it on
+  // close is what makes this a dialog rather than an inline form that
+  // happens to sit on top of the page.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const preferred =
+      dialogRef.current?.querySelector<HTMLElement>("[data-initial-focus]:not([disabled])") ??
+      dialogRef.current?.querySelector<HTMLElement>(
+        "input:not([disabled]), select:not([disabled]), textarea:not([disabled])"
+      );
+    (preferred ?? dialogRef.current)?.focus();
+    return () => opener?.focus?.();
+  }, []);
+
+  function handleDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      if (busy) return;
+      event.stopPropagation();
+      form.close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    );
+    if (!focusable || focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   const activeLoans = memberId ? form.loansForMember(memberId) : [];
   const activeLoanIds = new Set(activeLoans.map((loan) => loan.id));
@@ -238,22 +291,74 @@ export default function DeductionForm({
       : "New deduction";
 
   return (
-    <section
+    <div
+      data-testid="deduction-modal-backdrop"
+      onClick={(event) => {
+        // A click on the backdrop itself closes; anything inside the dialog
+        // does not, however far the content scrolls.
+        if (event.target === event.currentTarget && !busy) form.close();
+      }}
       style={{
-        border: "1px solid #ccc",
-        borderRadius: 6,
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0, 0, 0, 0.45)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
         padding: 16,
-        marginBottom: 20,
-        background: "#fafafa",
+        overflowY: "auto",
+        zIndex: 50,
       }}
     >
-      <h2 style={{ marginTop: 0 }}>{heading}</h2>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={handleDialogKeyDown}
+        style={{
+          background: "#fafafa",
+          border: "1px solid #ccc",
+          borderRadius: 8,
+          padding: 20,
+          width: "100%",
+          maxWidth: 820,
+          maxHeight: "calc(100vh - 32px)",
+          overflowY: "auto",
+          textAlign: "left",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 12,
+          }}
+        >
+          <h2 id={titleId} style={{ marginTop: 0 }}>
+            {heading}
+          </h2>
+          <button
+            type="button"
+            aria-label="Close deduction form"
+            disabled={busy}
+            onClick={form.close}
+          >
+            Close
+          </button>
+        </div>
+        <p style={{ marginTop: 0, fontSize: 12, color: "#555" }}>
+          Closing this form discards anything you have not saved.
+        </p>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
         <label>
           <span style={{ display: "block", fontSize: 12, color: "#555" }}>Member</span>
           <select
             aria-label="Member"
+            data-initial-focus={!editing && !prefill ? "true" : undefined}
             value={memberId}
             disabled={Boolean(editing) || Boolean(prefill)}
             onChange={(e) => changeMember(e.target.value)}
@@ -317,6 +422,7 @@ export default function DeductionForm({
           <h3 style={{ marginBottom: 4 }}>Monthly contribution</h3>
           <input
             aria-label="Monthly contribution"
+            data-initial-focus={editing || prefill ? "true" : undefined}
             type="number"
             min="0"
             step="0.01"
@@ -421,6 +527,7 @@ export default function DeductionForm({
           Cancel
         </button>
       </div>
-    </section>
+      </div>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ApiError,
   bulkDeductions,
   confirmDeduction,
   createDeduction,
@@ -25,6 +26,16 @@ import { readStoredPageSize, storePageSize } from "@/lib/pageSize";
 import { useDeductionsPage } from "./useDeductionsPage";
 
 vi.mock("@/lib/api", () => ({
+  ApiError: class ApiError extends Error {
+    detail: unknown;
+    transport: boolean;
+    constructor(message: string, detail?: unknown, transport = false) {
+      super(message);
+      this.name = "ApiError";
+      this.detail = detail;
+      this.transport = transport;
+    }
+  },
   BULK_CHUNK_SIZE: 25,
   LEDGER_PAGE_SIZE: 50,
   QUEUE_PAGE_SIZE: 20,
@@ -574,6 +585,107 @@ describe("useDeductionsPage enter queue", () => {
     expect(voidDeductionMock).toHaveBeenCalledWith("deduction-new", "Entered in error");
     await waitFor(() => expect(result.current.worklist.lastEntered).toBeNull());
     expect(result.current.feedback.message).toBe("Entry for Test Member undone.");
+  });
+
+  it("sends a replacement arrears draft after the previous entry was voided", async () => {
+    createDeductionMock
+      .mockResolvedValueOnce(makeDeduction({ id: "deduction-first" }))
+      .mockResolvedValueOnce(makeDeduction({ id: "deduction-replacement" }));
+    voidDeductionMock.mockResolvedValue(
+      makeDeduction({ id: "deduction-first", status: "void" })
+    );
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    const lines = [
+      { category: "loan_repayment" as const, loan_id: "loan-1", amount: 1000 },
+      { category: "loan_arrears" as const, loan_id: "loan-1", amount: 2000 },
+    ];
+    const save = () =>
+      result.current.form.save({
+        member_id: "member-1",
+        deduction_month: "2026-11",
+        lines,
+      });
+
+    act(() => result.current.worklist.openItem(makeWorklistItem()));
+    await act(async () => {
+      await save();
+    });
+    await act(async () => {
+      await result.current.worklist.undo();
+    });
+
+    act(() => result.current.worklist.openItem(makeWorklistItem()));
+    await act(async () => {
+      await save();
+    });
+
+    expect(createDeductionMock).toHaveBeenCalledTimes(2);
+    expect(createDeductionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        lines: expect.arrayContaining([
+          { category: "loan_arrears", loan_id: "loan-1", amount: 2000 },
+        ]),
+      })
+    );
+    expect(result.current.worklist.lastEntered?.id).toBe("deduction-replacement");
+  });
+
+  it("reports an unreachable server without claiming the draft was lost", async () => {
+    createDeductionMock.mockRejectedValue(
+      new ApiError("Could not reach the server.", undefined, true)
+    );
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    act(() => result.current.worklist.openItem(makeWorklistItem()));
+    // The ledger has no row for this member/month, so the create truly failed.
+    listDeductionsMock.mockResolvedValue({ items: [], total: 0, skip: 0, limit: 1 });
+
+    await act(async () => {
+      await result.current.form.save({
+        member_id: "member-1",
+        deduction_month: "2026-11",
+        lines: [{ category: "loan_arrears", loan_id: "loan-1", amount: 2000 }],
+      });
+    });
+
+    expect(result.current.form.open).toBe(true);
+    expect(result.current.feedback.error).toContain("Could not reach the server");
+  });
+
+  it("treats a draft found in the ledger as saved when the reply never arrives", async () => {
+    createDeductionMock.mockRejectedValue(
+      new ApiError("Could not reach the server.", undefined, true)
+    );
+    const { result } = renderHook(() => useDeductionsPage(logout));
+    await waitFor(() => expect(result.current.worklist.loading).toBe(false));
+
+    act(() => result.current.worklist.openItem(makeWorklistItem()));
+    // The insert committed; only the response was lost on the way back.
+    listDeductionsMock.mockResolvedValue({
+      items: [makeDeduction({ id: "deduction-saved" })],
+      total: 1,
+      skip: 0,
+      limit: 1,
+    });
+
+    await act(async () => {
+      await result.current.form.save({
+        member_id: "member-1",
+        deduction_month: "2026-11",
+        lines: [{ category: "loan_arrears", loan_id: "loan-1", amount: 2000 }],
+      });
+    });
+
+    expect(result.current.form.open).toBe(false);
+    expect(result.current.feedback.message).toContain("Draft saved");
+    expect(result.current.feedback.error).toBeNull();
+    expect(result.current.worklist.lastEntered).toEqual({
+      id: "deduction-saved",
+      memberName: "Test Member",
+    });
   });
 
   it("does not offer undo for a draft created outside the queue", async () => {

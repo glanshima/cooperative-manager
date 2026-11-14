@@ -21,7 +21,7 @@ const draft = {
   lines: [],
 } as unknown as PayrollDeduction;
 
-function renderTable(items: PayrollDeduction[], selected: string[] = []) {
+function renderTable(items: PayrollDeduction[], selected: string[] = [], search = "") {
   const table = {
     items,
     selected,
@@ -47,7 +47,7 @@ function renderTable(items: PayrollDeduction[], selected: string[] = []) {
   };
   const onEdit = vi.fn();
   render(
-    <DeductionsTable table={table} actions={actions} busy={false} onEdit={onEdit} />
+    <DeductionsTable table={table} actions={actions} busy={false} search={search} onEdit={onEdit} />
   );
   return { table, actions, onEdit };
 }
@@ -86,5 +86,11 @@ describe("DeductionsTable", () => {
     expect(table.toggleAll).toHaveBeenCalledWith(["ded-1"]);
 
     expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it("explains an empty search result instead of claiming the month is empty", () => {
+    renderTable([], [], "zzz");
+
+    expect(screen.getByText(/No deduction records match “zzz”/)).toBeInTheDocument();
   });
 });

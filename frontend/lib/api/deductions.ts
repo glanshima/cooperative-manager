@@ -134,6 +134,7 @@ export async function listDeductions(
     month?: string;
     status?: PayrollDeductionStatus;
     member_id?: string;
+    search?: string;
     skip?: number;
     limit?: number;
   } = {}
@@ -143,6 +144,7 @@ export async function listDeductions(
       month: params.month,
       status: params.status,
       member_id: params.member_id,
+      search: params.search,
       skip: params.skip !== undefined ? String(params.skip) : undefined,
       limit: params.limit !== undefined ? String(params.limit) : undefined,
     },
@@ -267,6 +269,7 @@ export async function getDeductionWorklist(
   month: string,
   params: {
     entry_state?: DeductionWorklistEntryState;
+    search?: string;
     skip?: number;
     limit?: number;
   } = {}
@@ -275,6 +278,7 @@ export async function getDeductionWorklist(
     searchParams: {
       month,
       entry_state: params.entry_state,
+      search: params.search,
       skip: params.skip !== undefined ? String(params.skip) : undefined,
       limit: params.limit !== undefined ? String(params.limit) : undefined,
     },

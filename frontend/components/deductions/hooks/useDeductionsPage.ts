@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import {
+  ApiError,
   BULK_CHUNK_SIZE,
   LEDGER_PAGE_SIZE,
   QUEUE_PAGE_SIZE,
@@ -88,6 +89,12 @@ const REASON_ACTIONS = new Set<DeductionActionKind>(["return_to_draft", "not_ded
 export function useDeductionsPage(logout: () => void) {
   const [month, setMonth] = useState(currentMonth());
   const [status, setStatus] = useState<PayrollDeductionStatus | "all">("all");
+  // Search is server-side so it reaches records that are not on the loaded
+  // page. The ledger matches member, payroll reference and note; the queue
+  // matches the member only (a member is the unit of entry), so the two
+  // lists carry separate terms rather than one box that means two things.
+  const [search, setSearchState] = useState("");
+  const [queueSearch, setQueueSearchState] = useState("");
 
   // How many rows a page holds. One choice serves both tabs, because the same
   // officer works the queue and reads the ledger and does not want to fit each
@@ -142,6 +149,7 @@ export function useDeductionsPage(logout: () => void) {
         listDeductions({
           month,
           status: status === "all" ? undefined : status,
+          search: search.trim() || undefined,
           skip: effectiveSkip,
           limit: ledgerLimit,
         }),
@@ -186,7 +194,14 @@ export function useDeductionsPage(logout: () => void) {
     // Every filter change starts back at page 1.
     refresh({ skip: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, status, ledgerLimit]);
+  }, [month, status, ledgerLimit, search]);
+
+  function setSearch(value: string) {
+    setSearchState(value);
+    // A new term is a new result set, not a different page of the old one.
+    setSkip(0);
+    setSelected([]);
+  }
 
   // Member and active-loan lookups make the entry form usable, but the
   // deductions list itself must still work when the Members or Loans
@@ -210,6 +225,7 @@ export function useDeductionsPage(logout: () => void) {
     try {
       const page = await getDeductionWorklist(month, {
         entry_state: entryState,
+        search: queueSearch.trim() || undefined,
         skip: effectiveSkip,
         limit: queueLimit,
       });
@@ -243,7 +259,12 @@ export function useDeductionsPage(logout: () => void) {
   useEffect(() => {
     refreshWorklist({ skip: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, entryState, queueLimit]);
+  }, [month, entryState, queueLimit, queueSearch]);
+
+  function setQueueSearch(value: string) {
+    setQueueSearchState(value);
+    setQueueSkip(0);
+  }
 
   // Each bulk call commits every record it accepts as it goes, so a call
   // that outlives the server's function timeout would leave a batch half
@@ -475,6 +496,18 @@ export function useDeductionsPage(logout: () => void) {
     setFormOpen(false);
   }
 
+  // A save whose response never arrived may still have committed. Ask the
+  // ledger before reporting failure, so the officer does not create a
+  // duplicate by retrying a draft that already exists.
+  async function findLiveDeductionId(memberId: string, deductionMonth: string) {
+    try {
+      const page = await listDeductions({ month: deductionMonth, member_id: memberId, limit: 1 });
+      return page.items[0]?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async function saveDraft(
     input: PayrollDeductionCreateInput | PayrollDeductionUpdateInput,
     id?: string
@@ -498,13 +531,32 @@ export function useDeductionsPage(logout: () => void) {
           setLastEntered({ id: created.id, memberName: enteredFromQueue.memberName });
         }
       }
-      await refresh();
-      await refreshWorklist();
     } catch (e: any) {
+      if (!id && e instanceof ApiError && e.transport) {
+        const create = input as PayrollDeductionCreateInput;
+        const savedId = await findLiveDeductionId(create.member_id, create.deduction_month);
+        if (savedId) {
+          closeForm();
+          setMessage(
+            "Draft saved. The reply did not arrive, so the ledger was checked — the entry is in Entered, ready to submit."
+          );
+          if (enteredFromQueue) {
+            setLastEntered({ id: savedId, memberName: enteredFromQueue.memberName });
+          }
+          await refresh();
+          await refreshWorklist();
+          setBusy(false);
+          return;
+        }
+      }
       setError(e.message);
-    } finally {
       setBusy(false);
+      return;
     }
+    // The save is done; a failed reload must not read as a failed save.
+    await refresh();
+    await refreshWorklist();
+    setBusy(false);
   }
 
   async function undoLastEntered() {
@@ -532,7 +584,7 @@ export function useDeductionsPage(logout: () => void) {
   return {
     auth: { logout },
     feedback: { error, message, busy },
-    filters: { month, setMonth, status, setStatus },
+    filters: { month, setMonth, status, setStatus, search, setSearch },
     pageSize: { chosen: chosenPageSize, change: changePageSize },
     tab,
     setTab,
@@ -542,6 +594,8 @@ export function useDeductionsPage(logout: () => void) {
       error: worklistError,
       entryState,
       setEntryState: changeEntryState,
+      search: queueSearch,
+      setSearch: setQueueSearch,
       refresh: refreshWorklist,
       openItem: openFromWorklist,
       lastEntered,

@@ -63,6 +63,22 @@ describe("apiFetch", () => {
     expect((error as ApiError).detail).toEqual(detail);
   });
 
+  it("replaces a rejected fetch with an actionable transport message", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+    let error: unknown;
+    try {
+      await listOffices();
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).transport).toBe(true);
+    expect((error as ApiError).message).toContain("Could not reach the server");
+    expect((error as ApiError).message).not.toContain("Failed to fetch");
+  });
+
   it("falls back to a status message when detail is missing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({}, 500)));
 

@@ -592,3 +592,229 @@ def test_a_voided_catch_up_reopens_the_loan_it_closed(client, db_session):
     reverted = _loan(db_session, loan)
     assert reverted.amount_repaid == Decimal("500.00")
     assert reverted.status == models.LoanStatus.ACTIVE
+
+
+def test_a_replacement_arrears_draft_can_follow_a_void(client, db_session):
+    """Voiding releases the member/month, so the replacement a treasurer
+    enters for the same arrears has to be accepted with its loan link intact
+    and be what the Entered segment shows. This is the flow that failed in
+    production when the arrears enum value/constraint were undeployed."""
+    admin = make_admin_user(db_session, username="ded_arrears_replace", super_admin=True)
+    member = make_member(db_session, psn="PSN-DED-ARR7", email="dedarr7@example.com")
+    loan_type = make_loan_type(db_session, "Long Loan")
+    loan = _make_loan(db_session, member, loan_type, amount_repaid=Decimal("300.00"))
+
+    original = client.post(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        json=_catch_up_payload(member, loan),
+    ).json()
+    _post(client, admin, f"/api/payroll-deductions/{original['id']}/submit")
+    _post(client, admin, f"/api/payroll-deductions/{original['id']}/confirm")
+
+    void = _post(
+        client,
+        admin,
+        f"/api/payroll-deductions/{original['id']}/void",
+        json={"reason": "wrong month"},
+    )
+    assert void.status_code == 200, void.text
+
+    replacement = client.post(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        json=_catch_up_payload(member, loan),
+    )
+
+    assert replacement.status_code == 201, replacement.text
+    body = replacement.json()
+    assert body["status"] == "draft"
+    assert body["id"] != original["id"]
+    lines = {line["category"]: line for line in body["lines"]}
+    assert Decimal(lines["loan_arrears"]["amount"]) == Decimal("600.00")
+    assert lines["loan_arrears"]["loan_id"] == str(loan.id)
+
+    entered = client.get(
+        "/api/payroll-deductions/worklist",
+        headers=auth_headers(admin),
+        params={"month": "2026-11", "entry_state": "entered"},
+    )
+    assert entered.status_code == 200, entered.text
+    entered_item = next(
+        item for item in entered.json()["items"] if item["member_id"] == str(member.id)
+    )
+    assert entered_item["deduction_id"] == body["id"]
+
+    pending = client.get(
+        "/api/payroll-deductions/worklist",
+        headers=auth_headers(admin),
+        params={"month": "2026-11", "entry_state": "pending"},
+    )
+    assert pending.status_code == 200, pending.text
+    assert all(item["member_id"] != str(member.id) for item in pending.json()["items"])
+
+
+def _search_ledger(client, admin, term, **params):
+    res = client.get(
+        "/api/payroll-deductions",
+        headers=auth_headers(admin),
+        params={"month": "2026-11", "search": term, **params},
+    )
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_ledger_search_finds_a_member_across_pages_by_psn_name_reference_and_note(
+    client, db_session
+):
+    """Search must run server-side, so a match on page 3 is found while
+    asking for a single row, and it composes with the month/status filters
+    rather than replacing them."""
+    admin = make_admin_user(db_session, username="ded_search", super_admin=True)
+    loan_type = make_loan_type(db_session, "Capital Loan")
+    members = [
+        make_member(db_session, psn="PSN-SEARCH-1", name="Adaeze Okafor", email="adaeze@example.com"),
+        make_member(db_session, psn="PSN-SEARCH-2", name="Bola Adeyemi", email="bola@example.com"),
+        make_member(db_session, psn="PSN-SEARCH-3", name="Chidi Eze", email="chidi@example.com"),
+    ]
+    created = {}
+    for member, reference, note in zip(
+        members,
+        ["PAY-ALPHA", "PAY-BETA", "PAY-GAMMA"],
+        ["first note", "second note", "third note"],
+    ):
+        loan = _make_loan(db_session, member, loan_type)
+        res = client.post(
+            "/api/payroll-deductions",
+            headers=auth_headers(admin),
+            json={
+                "member_id": str(member.id),
+                "deduction_month": "2026-11",
+                "payroll_reference": reference,
+                "note": note,
+                "lines": [
+                    {"category": "loan_repayment", "loan_id": str(loan.id), "amount": "100.00"}
+                ],
+            },
+        )
+        assert res.status_code == 201, res.text
+        created[member.id] = res.json()["id"]
+
+    # A single row comes back, so matching the third member proves the
+    # server searched the whole filtered set rather than the loaded page.
+    body = _search_ledger(client, admin, "SEARCH-3", limit=1)
+    assert body["total"] == 1
+    assert [item["id"] for item in body["items"]] == [created[members[2].id]]
+
+    assert _search_ledger(client, admin, "adeyemi", limit=1)["items"][0]["id"] == created[
+        members[1].id
+    ]
+    assert _search_ledger(client, admin, "pay-gamma", limit=1)["items"][0]["id"] == created[
+        members[2].id
+    ]
+    assert _search_ledger(client, admin, "second note", limit=1)["items"][0]["id"] == created[
+        members[1].id
+    ]
+
+    # Search narrows within the status filter; it does not widen it.
+    assert _search_ledger(client, admin, "adaeze", status="confirmed")["total"] == 0
+    assert _search_ledger(client, admin, "adaeze", status="draft")["total"] == 1
+
+    # LIKE wildcards typed by an officer are literal characters, not
+    # match-everything.
+    assert _search_ledger(client, admin, "%")["total"] == 0
+
+
+def test_worklist_search_narrows_rows_but_keeps_the_month_wide_counts(client, db_session):
+    """The segment counts and the money beside the queue answer "what is
+    left of the month", so a search that shows one member must not make
+    them look like a one-member month."""
+    admin = make_admin_user(db_session, username="ded_wl_search", super_admin=True)
+    contribution = {
+        "monthly_contribution_amount": Decimal("2000.00"),
+        "contribution_effective_from": date(2026, 1, 1),
+    }
+    amina = make_member(
+        db_session, psn="PSN-WL-1", name="Amina Bello", email="amina@example.com", **contribution
+    )
+    bashir = make_member(
+        db_session, psn="PSN-WL-2", name="Bashir Sani", email="bashir@example.com", **contribution
+    )
+    chinwe = make_member(
+        db_session, psn="PSN-WL-3", name="Chinwe Obi", email="chinwe@example.com", **contribution
+    )
+
+    def worklist(term):
+        res = client.get(
+            "/api/payroll-deductions/worklist",
+            headers=auth_headers(admin),
+            params={"month": "2026-11", "entry_state": "all", "search": term},
+        )
+        assert res.status_code == 200, res.text
+        return res.json()
+
+    body = worklist("bash")
+    assert body["total"] == 1
+    assert [item["member_id"] for item in body["items"]] == [str(bashir.id)]
+    assert body["due_count"] == 3
+    assert body["pending_count"] == 3
+    assert body["entered_count"] == 0
+    assert Decimal(body["expected_total"]) == Decimal("6000.00")
+
+    assert [item["member_id"] for item in worklist("WL-3")["items"]] == [str(chinwe.id)]
+
+    empty = worklist("nobody-by-that-name")
+    assert empty["total"] == 0
+    assert empty["items"] == []
+    # Still the whole month behind the empty result.
+    assert empty["due_count"] == 3
+    assert empty["pending_count"] == 3
+
+
+def test_a_sixty_month_instalment_that_rounds_to_0_30_more_is_absorbed_by_the_last_payment(
+    client, db_session
+):
+    """Concrete arithmetic behind a visible 0.30 difference: 100000.50 / 60
+    is 1666.675, stored as 1666.68, so 60 instalments would collect
+    100000.80 -- 0.30 more than the loan. The engine must cap the final
+    instalment at the remaining balance rather than add that 0.30 to it."""
+    admin = make_admin_user(db_session, username="ded_rounding", super_admin=True)
+    member = make_member(
+        db_session,
+        psn="PSN-DED-ROUND",
+        email="dedround@example.com",
+        monthly_contribution_amount=Decimal("2000.00"),
+        contribution_effective_from=date(2026, 1, 1),
+    )
+    loan_type = make_loan_type(db_session, "Sixty Month Loan")
+    loan = models.Loan(
+        member_id=member.id,
+        loan_type_id=loan_type.id,
+        principal=Decimal("100000.50"),
+        interest_amount=Decimal("0.00"),
+        net_disbursed=Decimal("100000.50"),
+        total_repayable=Decimal("100000.50"),
+        monthly_installment=Decimal("1666.68"),
+        disbursement_date=date(2022, 1, 1),
+        expected_end_date=date(2027, 1, 1),
+        amount_repaid=Decimal("98334.12"),  # 59 instalments collected
+        status=models.LoanStatus.ACTIVE,
+    )
+    db_session.add(loan)
+    db_session.commit()
+    db_session.refresh(loan)
+
+    assert loan.monthly_installment * 60 - loan.total_repayable == Decimal("0.30")
+
+    # The 60th and final instalment (2027-01) is 1666.38, not 1666.68.
+    res = client.get(
+        "/api/payroll-deductions/worklist",
+        headers=auth_headers(admin),
+        params={"month": "2027-01", "entry_state": "all", "search": "PSN-DED-ROUND"},
+    )
+    assert res.status_code == 200, res.text
+    item = res.json()["items"][0]
+    repayment = next(line for line in item["lines"] if line["category"] == "loan_repayment")
+    assert Decimal(repayment["amount"]) == Decimal("1666.38")
+    # The drift is absorbed, not reported as arrears.
+    assert all(line["category"] != "loan_arrears" for line in item["lines"])

@@ -8,11 +8,13 @@ const STATUS_OPTIONS = Object.entries(STATUS_LABELS) as [string, string][];
 export default function DeductionFilters({
   filters,
   totals,
+  resultCount,
   onCreate,
   onPrint,
 }: {
   filters: DeductionsPageModel["filters"];
   totals: DeductionsPageModel["totals"];
+  resultCount: number;
   onCreate: () => void;
   onPrint: () => void;
 }) {
@@ -45,6 +47,22 @@ export default function DeductionFilters({
           </select>
         </label>
 
+        <label>
+          <span style={{ display: "block", fontSize: 12, color: "#555" }}>Search ledger</span>
+          <input
+            type="search"
+            value={filters.search}
+            onChange={(e) => filters.setSearch(e.target.value)}
+            aria-label="Search ledger by name, PSN, payroll reference or note"
+            placeholder="Name, PSN, reference or note"
+          />
+        </label>
+        {filters.search && (
+          <button type="button" onClick={() => filters.setSearch("")}>
+            Clear search
+          </button>
+        )}
+
         <button onClick={onCreate}>New deduction</button>
         <button onClick={onPrint}>Print schedule</button>
 
@@ -56,6 +74,13 @@ export default function DeductionFilters({
           </span>
         )}
       </div>
+
+      {filters.search.trim() && (
+        <p role="status" style={{ margin: "8px 0 0", fontSize: 14 }}>
+          {resultCount} record{resultCount === 1 ? "" : "s"} match “{filters.search.trim()}”. The month
+          totals above include every record; the list below is filtered.
+        </p>
+      )}
     </section>
   );
 }

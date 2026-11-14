@@ -23,7 +23,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from .. import audit_service, deduction_expectations, models, schemas, validation
@@ -59,6 +59,21 @@ def _month_start(value: str) -> date:
         return validation.month_start_from_label(value)
     except ValueError:
         raise HTTPException(status_code=422, detail="month must be in YYYY-MM format")
+
+
+def _like_pattern(value: str) -> str:
+    """A case-insensitive contains-pattern with the user's % and _ kept
+    literal, so typing them searches for those characters instead of
+    widening the match."""
+    escaped = value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _matches_term(term: str, *fields: Optional[str]) -> bool:
+    """Python-side equivalent for the worklist, which is priced in memory
+    rather than queried page by page."""
+    folded = term.casefold()
+    return any(field and folded in field.casefold() for field in fields)
 
 
 def _fetch(db: Session, deduction_id: uuid.UUID) -> Optional[models.PayrollDeduction]:
@@ -503,6 +518,7 @@ def list_deductions(
     month: Optional[str] = Query(default=None),
     status: Optional[models.PayrollDeductionStatus] = Query(default=None),
     member_id: Optional[uuid.UUID] = Query(default=None),
+    search: Optional[str] = Query(default=None, max_length=100),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     current_user: models.User = Depends(require_permission("deduction.view")),
@@ -515,6 +531,19 @@ def list_deductions(
         query = query.filter(models.PayrollDeduction.status == status)
     if member_id is not None:
         query = query.filter(models.PayrollDeduction.member_id == member_id)
+    if search and search.strip():
+        # The ledger is the searchable record of the month, so the officer
+        # can find a line by the member (name or PSN) as well as by the two
+        # fields payroll actually quotes back: its reference and the note.
+        pattern = _like_pattern(search)
+        query = query.filter(
+            or_(
+                models.Member.name.ilike(pattern, escape="\\"),
+                models.Member.psn.ilike(pattern, escape="\\"),
+                models.PayrollDeduction.payroll_reference.ilike(pattern, escape="\\"),
+                models.PayrollDeduction.note.ilike(pattern, escape="\\"),
+            )
+        )
 
     # Count before slicing so `total` describes the whole filtered set,
     # which is what the page controls and "submit all drafts" both need.
@@ -604,6 +633,7 @@ def get_worklist(
         default=schemas.DeductionWorklistEntryState.PENDING,
         description="pending = still to enter, entered = already entered, all = both",
     ),
+    search: Optional[str] = Query(default=None, max_length=100),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     current_user: models.User = Depends(require_permission("deduction.view")),
@@ -620,8 +650,14 @@ def get_worklist(
     the page -- an officer three pages in still needs to know how much of it
     is left. Paging pays for itself in the response size, and for_month
     batches the pricing lookups so the work stays a fixed handful of queries
-    instead of one per member."""
+    instead of one per member.
+
+    `search` narrows the rows (and therefore `total`) to members whose name
+    or PSN contains the term, but the three counts and `expected_total` stay
+    month-wide: the queue's "how much is left of the month" question cannot
+    be answered by what one search happens to match."""
     month_start = _month_start(month)
+    term = (search or "").strip()
 
     entered = {
         record.member_id: record
@@ -652,6 +688,8 @@ def get_worklist(
         if entry_state == schemas.DeductionWorklistEntryState.PENDING and record is not None:
             continue
         if entry_state == schemas.DeductionWorklistEntryState.ENTERED and record is None:
+            continue
+        if term and not _matches_term(term, expectation.member_name, expectation.member_psn):
             continue
         rows.append(_worklist_item(expectation, record))
 

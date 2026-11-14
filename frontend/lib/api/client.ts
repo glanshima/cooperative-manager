@@ -26,10 +26,14 @@ export function clearToken() {
  */
 export class ApiError extends Error {
   detail: unknown;
-  constructor(message: string, detail?: unknown) {
+  // True when fetch itself rejected, so there is no status or body to
+  // inspect: the request may still have reached the server.
+  transport: boolean;
+  constructor(message: string, detail?: unknown, transport = false) {
     super(message);
     this.name = "ApiError";
     this.detail = detail;
+    this.transport = transport;
   }
 }
 
@@ -73,11 +77,24 @@ export async function apiFetch<T>(
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
 
-  const res = await fetch(url.toString(), {
-    method: options.method || "GET",
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    cache: "no-store",
-  });
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      method: options.method || "GET",
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      cache: "no-store",
+    });
+  } catch {
+    // A rejected fetch (offline, TLS failure, or a serverless error response
+    // that CORS never exposed) has no status or body to relay. The browser
+    // text "Failed to fetch" tells an officer nothing and reads as if the
+    // save definitely failed, so say what can actually be checked.
+    throw new ApiError(
+      "Could not reach the server. Check your connection and reload the page — if you were saving, reload before retrying so you do not create a duplicate.",
+      undefined,
+      true
+    );
+  }
   return handle<T>(res);
 }
