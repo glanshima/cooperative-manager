@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Member } from "@/lib/api";
@@ -27,12 +28,7 @@ const conflictedMember = {
 function renderTable(members: Member[]) {
   const handlers = {
     onPageChange: vi.fn(),
-    onEdit: vi.fn(),
-    onDelete: vi.fn(),
-    onCreateLogin: vi.fn(),
-    onDeactivateLogin: vi.fn(),
-    onReactivateLogin: vi.fn(),
-    onWithdraw: vi.fn(),
+    onOpenDetails: vi.fn(),
   };
   render(
     <MemberTable
@@ -49,25 +45,28 @@ function renderTable(members: Member[]) {
 }
 
 describe("MemberTable", () => {
-  it("renders the usual actions for an ordinary member", () => {
-    renderTable([ada]);
-    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create login" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record exit" })).toBeInTheDocument();
+  it("lists each member by PSN and name with a way into their details", async () => {
+    const handlers = renderTable([ada]);
+
+    expect(screen.getByRole("columnheader", { name: "PSN" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Name" })).toBeInTheDocument();
+    expect(screen.getByText("0001")).toBeInTheDocument();
+    expect(screen.getByText("Ada Obi")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    expect(handlers.onOpenDetails).toHaveBeenCalledWith(ada);
   });
 
-  it("keeps a conflicted member on the list but offers no way to change them", () => {
-    const handlers = renderTable([ada, conflictedMember]);
+  it("keeps a conflicted member on the list and labelled as such", () => {
+    renderTable([ada, conflictedMember]);
 
-    // Visible, and labelled as such -- hiding it broke search and totals.
+    // Visible, and labelled -- hiding it broke search and totals.
     expect(screen.getByText("Abur Dooshima")).toBeInTheDocument();
     expect(screen.getByText("⚠ conflict")).toBeInTheDocument();
 
-    // Every action belongs to the unconflicted row only.
-    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Record exit" })).toHaveLength(1);
-    expect(screen.getByText("Another officer must handle this member")).toBeInTheDocument();
-    expect(handlers.onEdit).not.toHaveBeenCalled();
+    // Details stays available so the officer can still read the record;
+    // the modal withholds the actions that would change it.
+    expect(screen.getAllByRole("button", { name: "Details" })).toHaveLength(2);
   });
 });

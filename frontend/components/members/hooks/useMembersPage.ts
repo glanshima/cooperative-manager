@@ -29,6 +29,14 @@ import { describeError } from "../utils";
 
 export const PAGE_SIZE = 25;
 
+type PendingConfirmation = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  /** True once the action landed, so the dialog only closes on success. */
+  run: () => Promise<boolean>;
+};
+
 const EMPTY_FORM: MemberInput = {
   psn: "",
   first_name: "",
@@ -68,6 +76,17 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     banks: [],
     departments: [],
   });
+
+  // Which member's details modal is open, by id. Deriving the record from
+  // the current list means the modal shows refreshed data after an action
+  // and disappears on its own once the member is no longer listed.
+  const [detailsId, setDetailsId] = useState<string | null>(null);
+  const detailsMember = detailsId ? members.find((m) => m.id === detailsId) ?? null : null;
+
+  // Actions that change or remove a record ask once more before running.
+  const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
+  const [confirmationBusy, setConfirmationBusy] = useState(false);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
 
   const [form, setForm] = useState<MemberInput>(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -247,6 +266,38 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     setFormOpen(true);
   }
 
+  function openDetails(m: Member) {
+    setError(null);
+    setDetailsId(m.id);
+  }
+
+  function closeDetails() {
+    setDetailsId(null);
+  }
+
+  function askConfirmation(next: PendingConfirmation) {
+    setError(null);
+    setConfirmationError(null);
+    setConfirmation(next);
+  }
+
+  function cancelConfirmation() {
+    if (confirmationBusy) return;
+    setConfirmation(null);
+    setConfirmationError(null);
+  }
+
+  async function runConfirmation() {
+    if (!confirmation) return;
+    setConfirmationBusy(true);
+    setConfirmationError(null);
+    try {
+      if (await confirmation.run()) setConfirmation(null);
+    } finally {
+      setConfirmationBusy(false);
+    }
+  }
+
   function closeForm() {
     resetForm();
     setFormOpen(false);
@@ -345,15 +396,26 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Delete this member?")) return;
-    setError(null);
-    try {
-      await deleteMember(id);
-      await refresh();
-    } catch (e: any) {
-      setError(describeError(e));
-    }
+  function handleDelete(id: string) {
+    const member = members.find((m) => m.id === id);
+    const label = member
+      ? `${member.name} (PSN ${member.psn?.replace("MCT-", "") ?? ""})`
+      : "this member";
+    askConfirmation({
+      title: "Delete member?",
+      message: `This permanently removes ${label} and their record from the cooperative. It cannot be undone.`,
+      confirmLabel: "Delete member",
+      run: async () => {
+        try {
+          await deleteMember(id);
+          await refresh();
+          return true;
+        } catch (e: any) {
+          setConfirmationError(describeError(e));
+          return false;
+        }
+      },
+    });
   }
 
   async function handleCreateLogin(member: Member) {
@@ -376,29 +438,44 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
   // or reactivates an EXISTING login -- never creates a new one. Which of
   // Create/Deactivate/Reactivate renders for a row is decided entirely by
   // member.login_account_status, not by any frontend-side assumption.
-  async function handleDeactivateLogin(member: Member) {
-    if (!confirm(`Deactivate ${member.name}'s login? They will be signed out and unable to log in until reactivated.`)) return;
-    setError(null);
-    setSuccess(null);
-    try {
-      await updateMemberLoginStatus(member.id, "deactivated");
-      setSuccess(`Login deactivated for ${member.name}.`);
-      await refresh();
-    } catch (e: any) {
-      setError(describeError(e));
-    }
+  function handleDeactivateLogin(member: Member) {
+    askConfirmation({
+      title: "Deactivate login?",
+      message: `${member.name}'s login will be signed out, and they will not be able to sign in until an officer reactivates it.`,
+      confirmLabel: "Deactivate login",
+      run: async () => {
+        setSuccess(null);
+        try {
+          await updateMemberLoginStatus(member.id, "deactivated");
+          setSuccess(`Login deactivated for ${member.name}.`);
+          await refresh();
+          return true;
+        } catch (e: any) {
+          setConfirmationError(describeError(e));
+          return false;
+        }
+      },
+    });
   }
 
-  async function handleReactivateLogin(member: Member) {
-    setError(null);
-    setSuccess(null);
-    try {
-      await updateMemberLoginStatus(member.id, "active");
-      setSuccess(`Login reactivated for ${member.name}.`);
-      await refresh();
-    } catch (e: any) {
-      setError(describeError(e));
-    }
+  function handleReactivateLogin(member: Member) {
+    askConfirmation({
+      title: "Reactivate login?",
+      message: `${member.name}'s login will be able to sign in again with their existing password.`,
+      confirmLabel: "Reactivate login",
+      run: async () => {
+        setSuccess(null);
+        try {
+          await updateMemberLoginStatus(member.id, "active");
+          setSuccess(`Login reactivated for ${member.name}.`);
+          await refresh();
+          return true;
+        } catch (e: any) {
+          setConfirmationError(describeError(e));
+          return false;
+        }
+      },
+    });
   }
 
   // Recording an exit is not the same as flipping status to
@@ -460,7 +537,9 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
     }
   }
 
-  async function approveContribution(id: string, reason: string) {
+  // True on success, so the panel's confirmation dialog only closes once the
+  // decision actually landed; a failed call stays open with the reason.
+  async function approveContribution(id: string, reason: string): Promise<boolean> {
     setError(null);
     setSuccess(null);
     try {
@@ -468,20 +547,24 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
       setSuccess("Contribution change approved. The new amount applies from next month.");
       await refreshContributionRequests();
       await refresh();
+      return true;
     } catch (e: any) {
       setError(describeError(e));
+      return false;
     }
   }
 
-  async function rejectContribution(id: string, reason: string) {
+  async function rejectContribution(id: string, reason: string): Promise<boolean> {
     setError(null);
     setSuccess(null);
     try {
       await rejectContributionChangeRequest(id, { reason: reason.trim() });
       setSuccess("Contribution change rejected.");
       await refreshContributionRequests();
+      return true;
     } catch (e: any) {
       setError(describeError(e));
+      return false;
     }
   }
 
@@ -543,6 +626,18 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
       onDeactivateLogin: handleDeactivateLogin,
       onReactivateLogin: handleReactivateLogin,
       onWithdraw: handleWithdraw,
+    },
+    details: {
+      member: detailsMember,
+      open: openDetails,
+      close: closeDetails,
+    },
+    confirmation: {
+      current: confirmation,
+      busy: confirmationBusy,
+      error: confirmationError,
+      confirm: runConfirmation,
+      cancel: cancelConfirmation,
     },
     contributions: {
       requests: contribRequests,

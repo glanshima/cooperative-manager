@@ -385,3 +385,36 @@ The member form's page hook gained `isOpen`/`busy`/`openCreate`/`close`, with `s
 - Vitest: **28 files / 184 tests passed** (3 new member-modal tests: labelled dialog for create/edit, close by button and Escape, busy lock).
 - `npm run build` compiled successfully (20/20 static pages).
 - Browser-checked on the local sandbox with the app in a **375px-wide frame**: members header wraps under the title; search and filters stack; the member table renders as labelled cards with intact values; the Add member dialog fits with single-column fields; the deductions ledger stacks into cards with no horizontal page scroll (`scrollWidth` 356 under a 371px viewport); the Enter-deduction dialog stacks its fields. Desktop (1200px) still renders normal tables (`display: table-cell`), confirming the media-query switch.
+
+## 14. Member list details modal and confirmation steps (2026-11-15)
+
+### 14.1 Compact member list
+
+The wide members table (PSN, name, department, status, restricted, phone, next of kin, login, actions) is now a three-column list: **PSN**, **Name** (with the conflict marker where applicable) and a **Details** text link. Everything else moved into a dialog, so the list stays readable on phones and the page no longer competes with dense action rows.
+
+### 14.2 Member details modal
+
+`components/members/MemberDetailsModal` (built on the shared modal) shows the full record — PSN, status and exit date, department, gender, phone, email, bank, account number, monthly contribution and its effective date, restriction flag/reason, login state, and the complete next-of-kin block. The actions (**Edit member**, **Delete member**, **Create/Deactivate/Reactivate login**, **Record exit**) render as underlined text links in a `.link-list`, not buttons, and derive from the same state as before (login action from `login_account_status`, no exit link once dated). Conflicted members are fully readable but show the conflict notice instead of actions. Edit replaces the details dialog with the form rather than stacking two dialogs.
+
+The selected member is tracked by id in `useMembersPage` and derived from the current list, so the dialog always shows fresh data after an action and disappears on its own when the member is deleted or filtered out.
+
+### 14.3 Page order
+
+The contribution change request panel now sits directly under the page feedback, above everything member-related. A **Member records** section (heading, Add member, search, filters, count, list) follows it. The contribution panel's own layout is unchanged, as requested: inline review reason plus Approve/Reject.
+
+### 14.4 Confirmation before risky actions
+
+New shared `components/ui/ConfirmDialog` (modal-based; Cancel holds initial focus so Enter does not confirm) now asks once more before:
+
+- deleting a member;
+- deactivating or reactivating a login;
+- approving or rejecting a contribution change request.
+
+The confirmation names the member and states the consequence (e.g. the amount and the next-month effective rule). The action runs only on confirm; a backend refusal keeps the dialog open with the reason shown inside it. Member confirmations live in the page hook (`confirmation` state); the contribution panel keeps its own so the typed review reason survives until the decision lands. Create login and Record exit keep their existing reason/password prompts, which already require deliberate input.
+
+### 14.5 Verification
+
+- `npx tsc --noEmit` exit 0.
+- Vitest: **30 files / 196 tests passed**, including new tests for the details modal (fields, state-driven login action, conflicted read-only), the compact list, the details hook state, and confirmation-gated delete/login/contribution decisions.
+- `npm run build` compiled successfully (20/20 static pages).
+- Browser-checked on the local sandbox: details → Edit swaps in the pre-filled form; Details → Delete member opens the confirmation with Cancel focused; Approve on a pending contribution opens the amount confirmation; cancelling sends nothing. At 375px the list renders as labelled cards with the Details link, and the details dialog is a single column with the action links wrapped under a rule; at 1200px the list is a normal table, the details dialog is 640px wide with a three-column field grid, and there is no horizontal overflow.

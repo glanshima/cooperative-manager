@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createMember,
+  deleteMember,
   getMemberFilterOptions,
   listMembers,
   updateMember,
+  updateMemberLoginStatus,
   withdrawMember,
 } from "@/lib/api";
 import type { Member, MemberListResult, MemberWithdrawal } from "@/lib/api";
@@ -44,6 +46,8 @@ const filterMock = vi.mocked(getMemberFilterOptions);
 const withdrawMock = vi.mocked(withdrawMember);
 const updateMock = vi.mocked(updateMember);
 const createMock = vi.mocked(createMember);
+const deleteMock = vi.mocked(deleteMember);
+const loginStatusMock = vi.mocked(updateMemberLoginStatus);
 const contribListMock = vi.mocked(listContributionChangeRequests);
 const contribApproveMock = vi.mocked(approveContributionChangeRequest);
 const contribRejectMock = vi.mocked(rejectContributionChangeRequest);
@@ -268,6 +272,114 @@ describe("useMembersPage contributions", () => {
 
     expect(updateMock).toHaveBeenCalledTimes(1);
     expect(updateMock.mock.calls[0][1]).toHaveProperty("monthly_contribution_amount", 6000);
+  });
+});
+
+describe("useMembersPage details dialog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listMock.mockResolvedValue({
+      items: [activeMember, exitedMember],
+      total: 2,
+      skip: 0,
+      limit: 25,
+    } as MemberListResult);
+    filterMock.mockResolvedValue({ banks: [], departments: [] });
+    contribListMock.mockResolvedValue([]);
+  });
+
+  it("opens on a member and closes on request", async () => {
+    const rendered = await renderLoadedHook();
+
+    act(() => rendered.result.current.details.open(activeMember));
+    expect(rendered.result.current.details.member?.name).toBe("Ada Obi");
+
+    act(() => rendered.result.current.details.close());
+    expect(rendered.result.current.details.member).toBeNull();
+  });
+
+  it("drops the dialog once the member is no longer in the refreshed list", async () => {
+    const rendered = await renderLoadedHook();
+    act(() => rendered.result.current.details.open(activeMember));
+
+    listMock.mockResolvedValue({
+      items: [exitedMember],
+      total: 1,
+      skip: 0,
+      limit: 25,
+    } as MemberListResult);
+    await act(async () => {
+      await rendered.result.current.table.onPageChange(0);
+    });
+
+    expect(rendered.result.current.details.member).toBeNull();
+  });
+});
+
+describe("useMembersPage confirmations", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listMock.mockResolvedValue({
+      items: [activeMember, exitedMember],
+      total: 2,
+      skip: 0,
+      limit: 25,
+    } as MemberListResult);
+    filterMock.mockResolvedValue({ banks: [], departments: [] });
+    contribListMock.mockResolvedValue([]);
+  });
+
+  it("asks before deleting and only sends the request on confirm", async () => {
+    deleteMock.mockResolvedValue(undefined);
+    const rendered = await renderLoadedHook();
+
+    act(() => rendered.result.current.table.onDelete("member-1"));
+    expect(rendered.result.current.confirmation.current?.title).toBe("Delete member?");
+    expect(deleteMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await rendered.result.current.confirmation.confirm();
+    });
+
+    expect(deleteMock).toHaveBeenCalledWith("member-1");
+    expect(rendered.result.current.confirmation.current).toBeNull();
+  });
+
+  it("sends nothing when the confirmation is cancelled", async () => {
+    const rendered = await renderLoadedHook();
+
+    act(() => rendered.result.current.table.onDelete("member-1"));
+    act(() => rendered.result.current.confirmation.cancel());
+
+    expect(deleteMock).not.toHaveBeenCalled();
+    expect(rendered.result.current.confirmation.current).toBeNull();
+  });
+
+  it("keeps the confirmation open with the refusal when the action fails", async () => {
+    deleteMock.mockRejectedValue(new Error("This member still has an active loan"));
+    const rendered = await renderLoadedHook();
+
+    act(() => rendered.result.current.table.onDelete("member-1"));
+    await act(async () => {
+      await rendered.result.current.confirmation.confirm();
+    });
+
+    expect(rendered.result.current.confirmation.current).not.toBeNull();
+    expect(rendered.result.current.confirmation.error).toContain("active loan");
+  });
+
+  it("confirms before deactivating a login", async () => {
+    loginStatusMock.mockResolvedValue(activeMember);
+    const rendered = await renderLoadedHook();
+
+    act(() => rendered.result.current.table.onDeactivateLogin(activeMember));
+    expect(loginStatusMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await rendered.result.current.confirmation.confirm();
+    });
+
+    expect(loginStatusMock).toHaveBeenCalledWith("member-1", "deactivated");
   });
 });
 
