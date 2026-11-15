@@ -176,7 +176,7 @@ describe("AdminNav", () => {
     );
   });
 
-  it("shows and hides a submenu from its labelled button", async () => {
+  it("opens a submenu from its labelled button", async () => {
     const user = userEvent.setup();
     render(<AdminNav />);
 
@@ -186,8 +186,19 @@ describe("AdminNav", () => {
 
     await user.click(button);
     expect(button).toHaveAttribute("aria-expanded", "true");
+  });
 
-    await user.click(button);
+  it("toggles a submenu from the keyboard", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    const button = await screen.findByRole("button", { name: "Settings" });
+    button.focus();
+
+    await user.keyboard("{Enter}");
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await user.keyboard("{Enter}");
     expect(button).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -213,6 +224,68 @@ describe("AdminNav", () => {
 
     await user.click(document.body);
     expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes one submenu when another opens", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    const loans = await screen.findByRole("button", { name: "Loan Management" });
+    const settings = screen.getByRole("button", { name: "Settings" });
+
+    await user.click(loans);
+    expect(loans).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(settings);
+    expect(settings).toHaveAttribute("aria-expanded", "true");
+    expect(loans).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("opens a submenu on hover and closes it when the pointer leaves", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    const button = await screen.findByRole("button", { name: "Loan Management" });
+
+    await user.hover(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await user.unhover(button);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("switches the open submenu as the pointer moves between menus", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    const loans = await screen.findByRole("button", { name: "Loan Management" });
+    const settings = screen.getByRole("button", { name: "Settings" });
+
+    await user.hover(loans);
+    expect(loans).toHaveAttribute("aria-expanded", "true");
+
+    await user.hover(settings);
+    expect(settings).toHaveAttribute("aria-expanded", "true");
+    expect(loans).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("stays closed after following one of its links", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<AdminNav />);
+
+    const settings = await screen.findByRole("button", { name: "Settings" });
+    await user.click(settings);
+    await user.click(screen.getByRole("link", { name: "Offices" }));
+
+    expect(settings).toHaveAttribute("aria-expanded", "false");
+
+    // The route change must not reopen the menu the click just dismissed.
+    pathnameMock.mockReturnValue("/admin/offices");
+    rerender(<AdminNav />);
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
   });
 
   it("opens and closes the mobile menu from a labelled button", async () => {

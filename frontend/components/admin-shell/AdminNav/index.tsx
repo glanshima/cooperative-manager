@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 import { useAdminNav } from "../hooks/useAdminNav";
 import styles from "./AdminNav.module.css";
@@ -18,9 +18,13 @@ export default function AdminNav() {
   const { items } = useAdminNav();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState<string[]>([]);
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  // A link was followed to this route: the menu was dismissed on purpose, so
+  // the auto-open below must not immediately reopen it.
+  const skipAutoOpenFor = useRef<string | null>(null);
+  const pointerType = useRef("mouse");
 
   const activeGroupLabel = items.find(
     (item) => item.kind === "group" && item.children.some((child) => pathname === child.href)
@@ -29,31 +33,41 @@ export default function AdminNav() {
   // Landing on a sub-page opens its menu, so the section the officer is in
   // is visible without an extra click.
   useEffect(() => {
-    if (!activeGroupLabel) return;
-    setOpenGroups((current) =>
-      current.includes(activeGroupLabel) ? current : [...current, activeGroupLabel]
-    );
-  }, [activeGroupLabel]);
+    if (skipAutoOpenFor.current === pathname) {
+      skipAutoOpenFor.current = null;
+      return;
+    }
+    setOpenGroup(activeGroupLabel ?? null);
+  }, [pathname, activeGroupLabel]);
 
   // Clicking outside the navigation dismisses an open dropdown.
   useEffect(() => {
-    if (openGroups.length === 0) return;
+    if (!openGroup) return;
     function handlePointerDown(event: MouseEvent) {
-      if (!navRef.current?.contains(event.target as Node)) setOpenGroups([]);
+      if (!navRef.current?.contains(event.target as Node)) setOpenGroup(null);
     }
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [openGroups.length]);
+  }, [openGroup]);
 
-  function toggleGroup(label: string) {
-    setOpenGroups((current) =>
-      current.includes(label) ? current.filter((l) => l !== label) : [...current, label]
-    );
+  function toggleGroup(label: string, event: ReactMouseEvent<HTMLButtonElement>) {
+    // With a mouse, hover owns the submenu: a click keeps it open and moving
+    // away closes it. Touch and keyboard clicks toggle.
+    if (event.detail !== 0 && pointerType.current === "mouse") {
+      setOpenGroup(label);
+      return;
+    }
+    setOpenGroup((current) => (current === label ? null : label));
   }
 
   function closeNav() {
     setOpen(false);
-    setOpenGroups([]);
+    setOpenGroup(null);
+  }
+
+  function handleNavClick(href: string) {
+    if (href !== pathname) skipAutoOpenFor.current = href;
+    closeNav();
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
@@ -64,7 +78,7 @@ export default function AdminNav() {
       menuButtonRef.current?.focus();
       return;
     }
-    if (openGroups.length > 0) setOpenGroups([]);
+    if (openGroup) setOpenGroup(null);
   }
 
   return (
@@ -101,7 +115,7 @@ export default function AdminNav() {
                       href={item.href}
                       className={active ? `${styles.link} ${styles.active}` : styles.link}
                       aria-current={active ? "page" : undefined}
-                      onClick={closeNav}
+                      onClick={() => handleNavClick(item.href)}
                     >
                       {item.label}
                     </Link>
@@ -110,13 +124,24 @@ export default function AdminNav() {
               }
 
               const id = submenuId(item.label);
-              const expanded = openGroups.includes(item.label);
+              const expanded = openGroup === item.label;
               const groupActive = item.children.some((child) => pathname === child.href);
               return (
                 <li
                   key={item.label}
                   className={styles.group}
                   data-open={expanded ? "true" : undefined}
+                  onPointerEnter={(event) => {
+                    // Touch taps also fire pointerenter; hover is for mice.
+                    pointerType.current = event.pointerType || "mouse";
+                    if (event.pointerType !== "touch") setOpenGroup(item.label);
+                  }}
+                  onPointerLeave={(event) => {
+                    pointerType.current = event.pointerType || "mouse";
+                    if (event.pointerType !== "touch") {
+                      setOpenGroup((current) => (current === item.label ? null : current));
+                    }
+                  }}
                 >
                   <button
                     type="button"
@@ -124,7 +149,7 @@ export default function AdminNav() {
                     data-active={groupActive ? "true" : undefined}
                     aria-expanded={expanded}
                     aria-controls={id}
-                    onClick={() => toggleGroup(item.label)}
+                    onClick={(event) => toggleGroup(item.label, event)}
                   >
                     {item.label}
                     <span className={styles.caret} aria-hidden="true">
@@ -140,7 +165,7 @@ export default function AdminNav() {
                             href={child.href}
                             className={active ? `${styles.link} ${styles.active}` : styles.link}
                             aria-current={active ? "page" : undefined}
-                            onClick={closeNav}
+                            onClick={() => handleNavClick(child.href)}
                           >
                             {child.label}
                           </Link>
