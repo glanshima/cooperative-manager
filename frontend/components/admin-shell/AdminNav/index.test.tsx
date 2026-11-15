@@ -84,6 +84,7 @@ const SETTINGS_CHILDREN: Array<[string, string]> = [
 beforeEach(() => {
   pathnameMock.mockReturnValue("/admin/dashboard");
   getSettingsMock.mockResolvedValue(allModulesOn);
+  window.sessionStorage.clear();
 });
 
 describe("AdminNav", () => {
@@ -271,7 +272,7 @@ describe("AdminNav", () => {
 
   it("stays closed after following one of its links", async () => {
     const user = userEvent.setup();
-    const { rerender } = render(<AdminNav />);
+    const { unmount } = render(<AdminNav />);
 
     const settings = await screen.findByRole("button", { name: "Settings" });
     await user.click(settings);
@@ -279,12 +280,41 @@ describe("AdminNav", () => {
 
     expect(settings).toHaveAttribute("aria-expanded", "false");
 
-    // The route change must not reopen the menu the click just dismissed.
+    // Navigation mounts a fresh nav on the new page; it must not reopen the
+    // menu the click just dismissed.
+    unmount();
     pathnameMock.mockReturnValue("/admin/offices");
-    rerender(<AdminNav />);
+    render(<AdminNav />);
+    // The Members link only appears once settings have loaded, which is when
+    // the auto-open decision is made.
+    await screen.findByRole("link", { name: "Members" });
     expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
       "aria-expanded",
       "false"
+    );
+  });
+
+  it("opens the menu again once the officer moves to another page", async () => {
+    const user = userEvent.setup();
+    const first = render(<AdminNav />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("link", { name: "Offices" }));
+    first.unmount();
+
+    pathnameMock.mockReturnValue("/admin/offices");
+    const second = render(<AdminNav />);
+    await screen.findByRole("link", { name: "Members" });
+    second.unmount();
+
+    // Moving within the section through another route starts afresh.
+    pathnameMock.mockReturnValue("/admin/roles");
+    render(<AdminNav />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
+        "aria-expanded",
+        "true"
+      )
     );
   });
 

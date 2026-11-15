@@ -9,9 +9,36 @@ import { useAdminNav } from "../hooks/useAdminNav";
 import styles from "./AdminNav.module.css";
 
 const NAV_ID = "admin-navigation";
+// Each page renders its own AdminShell, so the nav remounts on navigation and
+// component state cannot remember that a menu was dismissed on the way in.
+const DISMISSED_PATH_KEY = "admin-nav-dismissed-path";
 
 function submenuId(label: string) {
   return `admin-submenu-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function readDismissedPath(): string | null {
+  try {
+    return window.sessionStorage.getItem(DISMISSED_PATH_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberDismissal(path: string) {
+  try {
+    window.sessionStorage.setItem(DISMISSED_PATH_KEY, path);
+  } catch {
+    // Without storage the menu still closes for the current page.
+  }
+}
+
+function clearDismissal() {
+  try {
+    window.sessionStorage.removeItem(DISMISSED_PATH_KEY);
+  } catch {
+    // Nothing to clear.
+  }
 }
 
 export default function AdminNav() {
@@ -21,9 +48,6 @@ export default function AdminNav() {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
-  // A link was followed to this route: the menu was dismissed on purpose, so
-  // the auto-open below must not immediately reopen it.
-  const skipAutoOpenFor = useRef<string | null>(null);
   const pointerType = useRef("mouse");
 
   const activeGroupLabel = items.find(
@@ -31,12 +55,12 @@ export default function AdminNav() {
   )?.label;
 
   // Landing on a sub-page opens its menu, so the section the officer is in
-  // is visible without an extra click.
+  // is visible without an extra click. A page they just navigated to through
+  // the menu stays closed: following an item means they are done choosing.
   useEffect(() => {
-    if (skipAutoOpenFor.current === pathname) {
-      skipAutoOpenFor.current = null;
-      return;
-    }
+    const dismissed = readDismissedPath();
+    if (dismissed && dismissed !== pathname) clearDismissal();
+    if (dismissed === pathname) return;
     setOpenGroup(activeGroupLabel ?? null);
   }, [pathname, activeGroupLabel]);
 
@@ -66,7 +90,7 @@ export default function AdminNav() {
   }
 
   function handleNavClick(href: string) {
-    if (href !== pathname) skipAutoOpenFor.current = href;
+    if (href !== pathname) rememberDismissal(href);
     closeNav();
   }
 
