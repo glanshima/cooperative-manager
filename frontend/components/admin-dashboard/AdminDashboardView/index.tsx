@@ -72,9 +72,14 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
       {loansEnabled && (
         <section style={{ marginBottom: 32 }}>
           <h2 style={{ fontSize: 15, fontWeight: 600, color: "#444", marginBottom: 12 }}>
-            Loans
+            Loan Management
           </h2>
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(260px, 100%), 1fr))" }}>
+            <NavCard
+              href="/loans"
+              label="Loans"
+              description="Track approved loans, balances, and repayment schedules."
+            />
             <NavCard
               href="/admin/loan-applications"
               label="Loan applications"
@@ -113,7 +118,7 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
       {/* Administration */}
       <section style={{ marginBottom: 32 }}>
         <h2 style={{ fontSize: 15, fontWeight: 600, color: "#444", marginBottom: 12 }}>
-          Administration
+          Settings
         </h2>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(260px, 100%), 1fr))" }}>
           <NavCard
@@ -132,14 +137,23 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
             description="Define roles and configure which permissions they grant."
           />
           <NavCard
+            href="/admin/settings"
+            label="Cooperative settings"
+            description="Configure cooperative-wide settings and module toggles."
+          />
+        </div>
+      </section>
+
+      {/* Oversight */}
+      <section style={{ marginBottom: 32 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 600, color: "#444", marginBottom: 12 }}>
+          Audit
+        </h2>
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(260px, 100%), 1fr))" }}>
+          <NavCard
             href="/admin/audit"
             label="Audit log"
             description="Browse the full record of system events and changes."
-          />
-          <NavCard
-            href="/admin/settings"
-            label="Settings"
-            description="Configure cooperative-wide settings and module toggles."
           />
         </div>
       </section>

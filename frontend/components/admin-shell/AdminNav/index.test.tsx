@@ -65,13 +65,20 @@ const allModulesOff: Settings = {
   deductions_module_enabled: false,
 };
 
-const CORE_LABELS = [
-  "Dashboard",
-  "Staff / Admin users",
-  "Offices",
-  "Roles and permissions",
-  "Audit log",
-  "Settings",
+const CORE_LABELS = ["Dashboard", "Settings", "Audit log"];
+
+const LOAN_CHILDREN: Array<[string, string]> = [
+  ["Loans", "/loans"],
+  ["Loan applications", "/admin/loan-applications"],
+  ["Disbursements", "/admin/disbursements"],
+  ["Loan repayments", "/admin/loan-repayments"],
+];
+
+const SETTINGS_CHILDREN: Array<[string, string]> = [
+  ["Staff / Admin users", "/admin/users"],
+  ["Offices", "/admin/offices"],
+  ["Roles and permissions", "/admin/roles"],
+  ["Cooperative settings", "/admin/settings"],
 ];
 
 beforeEach(() => {
@@ -80,7 +87,7 @@ beforeEach(() => {
 });
 
 describe("AdminNav", () => {
-  it("offers a labelled navigation landmark with a link to every available area", async () => {
+  it("offers a labelled navigation landmark with every top-level area", async () => {
     render(<AdminNav />);
 
     const nav = screen.getByRole("navigation", { name: "Admin" });
@@ -89,21 +96,29 @@ describe("AdminNav", () => {
       "/members"
     );
 
-    const expected: Array<[string, string]> = [
-      ["Dashboard", "/admin/dashboard"],
-      ["Members", "/members"],
-      ["Loans", "/loans"],
-      ["Loan applications", "/admin/loan-applications"],
-      ["Disbursements", "/admin/disbursements"],
-      ["Loan repayments", "/admin/loan-repayments"],
-      ["Payroll deductions", "/admin/deductions"],
-      ["Staff / Admin users", "/admin/users"],
-      ["Offices", "/admin/offices"],
-      ["Roles and permissions", "/admin/roles"],
-      ["Audit log", "/admin/audit"],
-      ["Settings", "/admin/settings"],
-    ];
-    for (const [label, href] of expected) {
+    expect(within(nav).getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+      "href",
+      "/admin/dashboard"
+    );
+    expect(within(nav).getByRole("link", { name: "Payroll deductions" })).toHaveAttribute(
+      "href",
+      "/admin/deductions"
+    );
+    expect(within(nav).getByRole("link", { name: "Audit log" })).toHaveAttribute(
+      "href",
+      "/admin/audit"
+    );
+    expect(within(nav).getByRole("button", { name: "Loan Management" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("keeps the loan and settings screens inside their menus", async () => {
+    render(<AdminNav />);
+
+    const nav = screen.getByRole("navigation", { name: "Admin" });
+    await within(nav).findByRole("button", { name: "Loan Management" });
+
+    for (const [label, href] of [...LOAN_CHILDREN, ...SETTINGS_CHILDREN]) {
       expect(within(nav).getByRole("link", { name: label })).toHaveAttribute("href", href);
     }
   });
@@ -113,14 +128,23 @@ describe("AdminNav", () => {
     render(<AdminNav />);
 
     const nav = screen.getByRole("navigation", { name: "Admin" });
-    await waitFor(() =>
-      expect(within(nav).queryByRole("link", { name: "Members" })).not.toBeInTheDocument()
-    );
-    expect(within(nav).queryByRole("link", { name: "Loans" })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole("link", { name: "Loan applications" })).not.toBeInTheDocument();
+    // Wait for the settings fetch to settle before checking what is missing.
+    await within(nav).findByRole("button", { name: "Settings" });
+    expect(within(nav).queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: "Payroll deductions" })).not.toBeInTheDocument();
+    expect(
+      within(nav).queryByRole("button", { name: "Loan Management" })
+    ).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Loans" })).not.toBeInTheDocument();
+    expect(
+      within(nav).queryByRole("link", { name: "Loan applications" })
+    ).not.toBeInTheDocument();
 
-    for (const label of CORE_LABELS) {
+    // Core areas survive: top-level links stay and the settings menu stays.
+    expect(within(nav).getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    for (const [label] of SETTINGS_CHILDREN) {
       expect(within(nav).getByRole("link", { name: label })).toBeInTheDocument();
     }
   });
@@ -134,6 +158,61 @@ describe("AdminNav", () => {
       "page"
     );
     expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("opens the menu containing the current page", async () => {
+    pathnameMock.mockReturnValue("/admin/disbursements");
+    render(<AdminNav />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Loan Management" })).toHaveAttribute(
+        "aria-expanded",
+        "true"
+      )
+    );
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
+  });
+
+  it("shows and hides a submenu from its labelled button", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    const button = await screen.findByRole("button", { name: "Settings" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).toHaveAttribute("aria-controls", "admin-submenu-settings");
+
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes an open submenu with Escape", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    const button = await screen.findByRole("button", { name: "Loan Management" });
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await user.keyboard("{Escape}");
+    expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes an open submenu when clicking elsewhere on the page", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    const button = await screen.findByRole("button", { name: "Loan Management" });
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(document.body);
+    expect(button).toHaveAttribute("aria-expanded", "false");
   });
 
   it("opens and closes the mobile menu from a labelled button", async () => {
@@ -185,41 +264,73 @@ describe("AdminNav", () => {
       "false"
     );
   });
+
+  it("closes the mobile menu after following a submenu link", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    await user.click(screen.getByRole("button", { name: "Open admin navigation" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("link", { name: "Cooperative settings" }));
+
+    expect(screen.getByRole("button", { name: "Open admin navigation" })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
+  });
 });
 
 describe("useAdminNav", () => {
-  it("adds the module links once the enabled modules are known", async () => {
+  it("groups the loan screens and settings screens under their own menus", async () => {
     const { result } = renderHook(() => useAdminNav());
 
     await waitFor(() =>
-      expect(result.current.links.map((link) => link.label)).toEqual([
+      expect(result.current.items.map((item) => item.label)).toEqual([
         "Dashboard",
         "Members",
-        "Loans",
-        "Loan applications",
-        "Disbursements",
-        "Loan repayments",
+        "Loan Management",
         "Payroll deductions",
-        ...CORE_LABELS.slice(1),
+        "Settings",
+        "Audit log",
       ])
     );
+
+    const loans = result.current.items.find((item) => item.label === "Loan Management");
+    expect(loans?.kind === "group" && loans.children.map((child) => child.label)).toEqual([
+      "Loans",
+      "Loan applications",
+      "Disbursements",
+      "Loan repayments",
+    ]);
+
+    const settings = result.current.items.find((item) => item.label === "Settings");
+    expect(settings?.kind === "group" && settings.children.map((child) => child.label)).toEqual([
+      "Staff / Admin users",
+      "Offices",
+      "Roles and permissions",
+      "Cooperative settings",
+    ]);
   });
 
-  it("keeps only the core admin links when every module is off", async () => {
+  it("keeps only the core admin areas when every module is off", async () => {
     getSettingsMock.mockResolvedValue(allModulesOff);
     const { result } = renderHook(() => useAdminNav());
 
     await waitFor(() =>
-      expect(result.current.links.map((link) => link.label)).toEqual(CORE_LABELS)
+      expect(result.current.items.map((item) => item.label)).toEqual(CORE_LABELS)
     );
   });
 
-  it("keeps only the core admin links when module settings cannot be loaded", async () => {
+  it("keeps only the core admin areas when module settings cannot be loaded", async () => {
     getSettingsMock.mockRejectedValue(new Error("settings unavailable"));
     const { result } = renderHook(() => useAdminNav());
 
     await waitFor(() =>
-      expect(result.current.links.map((link) => link.label)).toEqual(CORE_LABELS)
+      expect(result.current.items.map((item) => item.label)).toEqual(CORE_LABELS)
     );
   });
 });

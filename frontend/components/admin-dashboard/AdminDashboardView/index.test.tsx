@@ -130,14 +130,24 @@ describe("AdminDashboardView", () => {
     expect(screen.getByRole("link", { name: /offices/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /roles and permissions/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /audit log/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /settings/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /cooperative settings/i })).toBeInTheDocument();
 
     // Module-gated links (enabled)
     expect(screen.getByRole("link", { name: /member records/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^loans /i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /loan applications/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /disbursements/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /loan repayments/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /payroll deductions/i })).toBeInTheDocument();
+  });
+
+  it("groups loan screens and settings screens under their own headings", () => {
+    render(<AdminDashboardView model={makeModel()} />);
+
+    expect(screen.getByRole("heading", { name: "Loan Management" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Audit" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Administration" })).not.toBeInTheDocument();
   });
 
   it("hides module-gated links when every module is disabled", () => {
@@ -151,6 +161,7 @@ describe("AdminDashboardView", () => {
     );
 
     expect(screen.queryByRole("link", { name: /member records/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^loans /i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /loan applications/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /disbursements/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /loan repayments/i })).not.toBeInTheDocument();
@@ -165,6 +176,7 @@ describe("AdminDashboardView", () => {
     render(<AdminDashboardView model={makeModel()} />);
 
     expect(screen.getByRole("link", { name: /member records/i })).toHaveAttribute("href", "/members");
+    expect(screen.getByRole("link", { name: /^loans /i })).toHaveAttribute("href", "/loans");
     expect(screen.getByRole("link", { name: /loan applications/i })).toHaveAttribute("href", "/admin/loan-applications");
     expect(screen.getByRole("link", { name: /disbursements/i })).toHaveAttribute("href", "/admin/disbursements");
     expect(screen.getByRole("link", { name: /loan repayments/i })).toHaveAttribute("href", "/admin/loan-repayments");
@@ -173,7 +185,7 @@ describe("AdminDashboardView", () => {
     expect(screen.getByRole("link", { name: /offices/i })).toHaveAttribute("href", "/admin/offices");
     expect(screen.getByRole("link", { name: /roles and permissions/i })).toHaveAttribute("href", "/admin/roles");
     expect(screen.getByRole("link", { name: /audit log/i })).toHaveAttribute("href", "/admin/audit");
-    expect(screen.getByRole("link", { name: /settings/i })).toHaveAttribute("href", "/admin/settings");
+    expect(screen.getByRole("link", { name: /cooperative settings/i })).toHaveAttribute("href", "/admin/settings");
   });
 
   it("shows the settings error banner when settings failed to load", () => {

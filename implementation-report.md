@@ -418,3 +418,31 @@ The confirmation names the member and states the consequence (e.g. the amount an
 - Vitest: **30 files / 196 tests passed**, including new tests for the details modal (fields, state-driven login action, conflicted read-only), the compact list, the details hook state, and confirmation-gated delete/login/contribution decisions.
 - `npm run build` compiled successfully (20/20 static pages).
 - Browser-checked on the local sandbox: details → Edit swaps in the pre-filled form; Details → Delete member opens the confirmation with Cancel focused; Approve on a pending contribution opens the amount confirmation; cancelling sends nothing. At 375px the list renders as labelled cards with the Details link, and the details dialog is a single column with the action links wrapped under a rule; at 1200px the list is a normal table, the details dialog is 640px wide with a three-column field grid, and there is no horizontal overflow.
+
+## 15. Admin navigation submenus (2026-11-15)
+
+### 15.1 Menu structure
+
+The flat admin menu is now grouped so related screens stay together as the application grows:
+
+- **Dashboard** — top-level link.
+- **Members** — top-level link, members module only.
+- **Loan Management** — menu (loans module only): Loans, Loan applications, Disbursements, Loan repayments. Future loan screens belong here.
+- **Payroll deductions** — top-level link, deductions module only.
+- **Settings** — menu: Staff / Admin users, Offices, Roles and permissions, Cooperative settings (the `/admin/settings` page). Future configuration screens belong here.
+- **Audit log** — top-level link.
+
+`useAdminNav` returns ordered `items` where each item is either a link or a group with children, so adding a screen to a section is a one-line change. Module gating is unchanged: a group appears only when its module is enabled, and the menu still falls back to the core areas if settings cannot be loaded.
+
+### 15.2 Behaviour
+
+Groups render as buttons with `aria-expanded` and `aria-controls`; the submenu is an absolutely positioned dropdown on desktop and an indented static list inside the mobile drawer. The group containing the current pathname opens automatically and shows its button as active. Links inside a submenu carry `aria-current="page"` like top-level links. Escape closes open dropdowns (after closing the mobile drawer, which still returns focus to the Menu button), clicking outside the navigation closes them, and following any link closes the mobile drawer.
+
+The admin dashboard mirrors the same grouping: **Members**, **Loan Management** (now including a **Loans** card for `/loans`), **Deductions**, **Settings** (Staff / Admin users, Offices, Roles and permissions, Cooperative settings) and **Audit**.
+
+### 15.3 Verification
+
+- `npx tsc --noEmit` exit 0.
+- Vitest: **30 files / 203 tests passed**, including rewritten navigation tests for the grouped items, module gating of the Loan Management menu, active-section auto-open, expand/collapse, Escape and outside-click closing, and mobile link handling, plus dashboard tests for the new headings, the Loans card and the renamed Cooperative settings link.
+- `npm run build` compiled successfully (20/20 static pages).
+- Browser-checked at 1200px: the Loan Management dropdown opens under its button with all four loan screens, and `/admin/disbursements` opens the group automatically with the button marked active. At 375px the Menu button opens the drawer; Settings expands inline with an indented, bordered list and no horizontal overflow (document width 360px inside a 375px viewport).

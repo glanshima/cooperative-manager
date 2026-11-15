@@ -79,6 +79,76 @@
   font-weight: 600;
 }
 
+/* Grouped menu: a toggle in the bar with its links in a dropdown on wide
+   screens and an indented list inside the mobile menu. */
+.group {
+  position: relative;
+}
+
+.groupButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #333;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.groupButton:hover {
+  background: #f1f1f1;
+}
+
+.groupButton:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+.groupButton[data-active="true"] {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.caret {
+  font-size: 10px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.group[data-open="true"] .caret {
+  transform: rotate(180deg);
+}
+
+.submenu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.group[data-open="true"] .submenu {
+  display: block;
+}
+
+.submenu .link {
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .menuButton {
     display: inline-flex;
@@ -102,5 +172,30 @@
 
   .link {
     padding: 10px 8px;
+  }
+
+  .group {
+    position: static;
+  }
+
+  .groupButton {
+    width: 100%;
+    padding: 10px 8px;
+  }
+
+  .submenu {
+    position: static;
+    min-width: 0;
+    margin: 0 0 4px 12px;
+    padding: 0 0 4px 8px;
+    border: none;
+    border-left: 2px solid #e5e5e5;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .submenu .link {
+    padding: 10px 8px;
+    white-space: normal;
   }
 }
