@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+<title id="title">Koperra app icon</title>
+<desc id="desc">White K with three members and a green cooperative sweep on a deep navy rounded square.</desc>
+<rect x="0" y="0" width="512" height="512" rx="112" fill="#061D3D"/>
+<g transform="translate(55 106) scale(1.20)"><g id="koperra-symbol">
+  <path d="M118 34 C118 25 125 18 134 18 H158 V104 L226 34
+           C232 28 242 28 248 34 L265 51 L202 116
+           L273 188 C280 195 280 205 273 212 L257 228
+           L181 151 L158 174 V222 H134 C125 222 118 215 118 206 Z"
+        fill="#FFFFFF"/>
+  <circle cx="142" cy="104" r="15" fill="#49A8F5"/>
+  <circle cx="184" cy="91" r="18" fill="#79E21A"/>
+  <circle cx="226" cy="104" r="15" fill="#49A8F5"/>
+  <path d="M117 151 C117 130 128 119 143 119 C158 119 168 131 168 151 V166 H117 Z" fill="#49A8F5"/>
+  <path d="M153 151 C153 126 166 113 184 113 C202 113 215 126 215 151 V171 H153 Z" fill="#79E21A"/>
+  <path d="M200 151 C200 131 210 119 225 119 C240 119 251 130 251 151 V166 H200 Z" fill="#49A8F5"/>
+  <path d="M49 153 C88 193 149 197 215 171 C245 159 269 140 289 117
+           C275 160 246 194 207 215 C143 250 76 226 49 184
+           C43 175 43 163 49 153 Z" fill="#16B84A"/>
+  <path d="M54 166 C103 202 166 192 225 161 C249 148 270 130 289 117
+           C266 157 231 181 191 197 C132 221 78 204 54 166 Z"
+        fill="#79E21A" opacity="0.92"/>
+</g></g>
+</svg>

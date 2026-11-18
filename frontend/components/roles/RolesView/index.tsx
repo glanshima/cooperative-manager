@@ -1,5 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
 import LogoutControl from "@/components/ui/LogoutControl";
+import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { RolesPageModel } from "../hooks/useRolesPage";
 import CreateRoleForm from "../CreateRoleForm";
 import RoleEditor from "../RoleEditor";
@@ -12,7 +13,7 @@ export default function RolesView({
   identity?: string | null;
 }) {
   if (model.loading) {
-    return <main className="page">Loading...</main>;
+    return <PageSkeleton />;
   }
 
   return (

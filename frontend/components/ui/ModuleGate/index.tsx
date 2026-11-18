@@ -7,6 +7,7 @@ import { getSettings, Settings } from "@/lib/api";
 import { isModuleEnabled } from "@/lib/modules";
 import type { ModuleKey } from "@/lib/modules";
 import ModuleDisabled from "../ModuleDisabled";
+import PageSkeleton from "../PageSkeleton";
 import StatusMessage from "../StatusMessage";
 
 export default function ModuleGate({
@@ -43,7 +44,7 @@ export default function ModuleGate({
     );
   }
 
-  if (!settings) return <main className="page">Loading...</main>;
+  if (!settings) return <PageSkeleton />;
 
   if (!isModuleEnabled(settings, module)) return <ModuleDisabled module={module} />;
 

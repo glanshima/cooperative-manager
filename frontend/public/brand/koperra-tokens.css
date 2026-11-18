@@ -1,0 +1,17 @@
+/* Koperra brand tokens — provisional until legal name clearance */
+:root {
+  --koperra-navy: #082B59;
+  --koperra-navy-dark: #061D3D;
+  --koperra-blue: #0876C9;
+  --koperra-green: #16B84A;
+  --koperra-lime: #79E21A;
+  --koperra-white: #FFFFFF;
+  --koperra-text: #102A4C;
+  --koperra-muted: #60748C;
+
+  --koperra-gradient: linear-gradient(115deg, #082B59 0%, #0876C9 48%, #16B84A 100%);
+  --koperra-gradient-green: linear-gradient(115deg, #16B84A 0%, #79E21A 100%);
+
+  --koperra-font-family: Inter, Manrope, ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+}

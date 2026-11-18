@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Koperra</title>
+  <desc id="desc">Koperra cooperative management brand mark: a stylised K, three members and a green cooperative sweep.</desc>
+  <defs>
+    <linearGradient id="greenSweep" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#79E21A"/>
+      <stop offset="1" stop-color="#16B84A"/>
+    </linearGradient>
+    
+  </defs>
+  
+  <rect width="64" height="64" rx="14" fill="#061D3D"/>
+  <path d="M16 11 H26 V27 L41 12 L49 20 L35 32 L50 48 L42 55 L26 39 V53 H16 Z" fill="#FFFFFF"/>
+  <path d="M10 39 C21 51 39 48 53 31 C49 45 37 55 24 55 C16 55 11 49 10 39 Z" fill="#79E21A"/>
+  <circle cx="30" cy="27" r="4" fill="#16B84A"/>
+
+</svg>

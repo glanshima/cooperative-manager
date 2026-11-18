@@ -1,5 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
 import LogoutControl from "@/components/ui/LogoutControl";
+import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { LoanRepaymentsPageModel } from "../hooks/useLoanRepaymentsPage";
 import RepaymentReviewPanel from "../RepaymentReviewPanel";
 import RepaymentsTable from "../RepaymentsTable";
@@ -12,7 +13,7 @@ export default function LoanRepaymentsView({
   identity?: string | null;
 }) {
   if (model.loading) {
-    return <main className="page">Loading...</main>;
+    return <PageSkeleton />;
   }
 
   return (

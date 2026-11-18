@@ -84,7 +84,6 @@ const SETTINGS_CHILDREN: Array<[string, string]> = [
 beforeEach(() => {
   pathnameMock.mockReturnValue("/admin/dashboard");
   getSettingsMock.mockResolvedValue(allModulesOn);
-  window.sessionStorage.clear();
 });
 
 describe("AdminNav", () => {
@@ -111,6 +110,16 @@ describe("AdminNav", () => {
     );
     expect(within(nav).getByRole("button", { name: "Loan Management" })).toBeInTheDocument();
     expect(within(nav).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("shows the cooperative brand and the platform credit in the shell", () => {
+    render(<AdminNav />);
+
+    // The cooperative is named first in the top bar and the sidebar; the
+    // platform credit stays secondary in the footer.
+    expect(screen.getAllByText("MACT Cooperative").length).toBeGreaterThan(0);
+    expect(screen.getByText("Powered by")).toBeInTheDocument();
+    expect(screen.getByText("Koperra")).toBeInTheDocument();
   });
 
   it("keeps the loan and settings screens inside their menus", async () => {
@@ -161,7 +170,7 @@ describe("AdminNav", () => {
     expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveAttribute("aria-current");
   });
 
-  it("opens the menu containing the current page", async () => {
+  it("opens the section containing the current page", async () => {
     pathnameMock.mockReturnValue("/admin/disbursements");
     render(<AdminNav />);
 
@@ -215,18 +224,6 @@ describe("AdminNav", () => {
     expect(button).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("closes an open submenu when clicking elsewhere on the page", async () => {
-    const user = userEvent.setup();
-    render(<AdminNav />);
-
-    const button = await screen.findByRole("button", { name: "Loan Management" });
-    await user.click(button);
-    expect(button).toHaveAttribute("aria-expanded", "true");
-
-    await user.click(document.body);
-    expect(button).toHaveAttribute("aria-expanded", "false");
-  });
-
   it("closes one submenu when another opens", async () => {
     const user = userEvent.setup();
     render(<AdminNav />);
@@ -242,108 +239,85 @@ describe("AdminNav", () => {
     expect(loans).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("opens a submenu on hover and closes it when the pointer leaves", async () => {
-    const user = userEvent.setup();
-    render(<AdminNav />);
-
-    const button = await screen.findByRole("button", { name: "Loan Management" });
-
-    await user.hover(button);
-    expect(button).toHaveAttribute("aria-expanded", "true");
-
-    await user.unhover(button);
-    expect(button).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("switches the open submenu as the pointer moves between menus", async () => {
-    const user = userEvent.setup();
-    render(<AdminNav />);
-
-    const loans = await screen.findByRole("button", { name: "Loan Management" });
-    const settings = screen.getByRole("button", { name: "Settings" });
-
-    await user.hover(loans);
-    expect(loans).toHaveAttribute("aria-expanded", "true");
-
-    await user.hover(settings);
-    expect(settings).toHaveAttribute("aria-expanded", "true");
-    expect(loans).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("stays closed after following one of its links", async () => {
-    const user = userEvent.setup();
-    const { unmount } = render(<AdminNav />);
-
-    const settings = await screen.findByRole("button", { name: "Settings" });
-    await user.click(settings);
-    await user.click(screen.getByRole("link", { name: "Offices" }));
-
-    expect(settings).toHaveAttribute("aria-expanded", "false");
-
-    // Navigation mounts a fresh nav on the new page; it must not reopen the
-    // menu the click just dismissed.
-    unmount();
-    pathnameMock.mockReturnValue("/admin/offices");
-    render(<AdminNav />);
-    // The Members link only appears once settings have loaded, which is when
-    // the auto-open decision is made.
-    await screen.findByRole("link", { name: "Members" });
-    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
-      "aria-expanded",
-      "false"
-    );
-  });
-
-  it("opens the menu again once the officer moves to another page", async () => {
-    const user = userEvent.setup();
+  it("keeps the section containing the current page open after navigating within it", async () => {
+    pathnameMock.mockReturnValue("/admin/settings");
     const first = render(<AdminNav />);
 
-    await user.click(await screen.findByRole("button", { name: "Settings" }));
-    await user.click(screen.getByRole("link", { name: "Offices" }));
-    first.unmount();
-
-    pathnameMock.mockReturnValue("/admin/offices");
-    const second = render(<AdminNav />);
-    await screen.findByRole("link", { name: "Members" });
-    second.unmount();
-
-    // Moving within the section through another route starts afresh.
-    pathnameMock.mockReturnValue("/admin/roles");
-    render(<AdminNav />);
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
         "aria-expanded",
         "true"
       )
     );
+    first.unmount();
+
+    // A persistent sidebar shows where the officer is, so the section stays
+    // expanded on the new page rather than collapsing after the click.
+    pathnameMock.mockReturnValue("/admin/offices");
+    render(<AdminNav />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
+        "aria-expanded",
+        "true"
+      )
+    );
+    expect(screen.getByRole("link", { name: "Offices" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
   });
 
-  it("opens and closes the mobile menu from a labelled button", async () => {
+  it("leaves a section closed once the officer closes it", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    const settings = await screen.findByRole("button", { name: "Settings" });
+    await user.click(settings);
+    await user.click(settings);
+
+    expect(settings).toHaveAttribute("aria-expanded", "false");
+    // Give the auto-open effect a chance to run again before asserting.
+    await Promise.resolve();
+    expect(settings).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("opens and closes the mobile drawer from a labelled button", async () => {
     const user = userEvent.setup();
     render(<AdminNav />);
 
     const button = screen.getByRole("button", { name: "Open admin navigation" });
-    const nav = screen.getByRole("navigation", { name: "Admin" });
+    const sidebar = screen.getByRole("complementary", { name: "Admin sidebar" });
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(button).toHaveAttribute("aria-controls", "admin-navigation");
-    expect(nav).not.toHaveAttribute("data-open");
+    expect(button).toHaveAttribute("aria-controls", "admin-sidebar");
+    expect(sidebar).not.toHaveAttribute("data-open");
 
     await user.click(button);
     expect(screen.getByRole("button", { name: "Close admin navigation" })).toHaveAttribute(
       "aria-expanded",
       "true"
     );
-    expect(nav).toHaveAttribute("data-open", "true");
+    expect(sidebar).toHaveAttribute("data-open", "true");
 
     await user.click(screen.getByRole("button", { name: "Close admin navigation" }));
     expect(screen.getByRole("button", { name: "Open admin navigation" })).toHaveAttribute(
       "aria-expanded",
       "false"
     );
-    expect(nav).not.toHaveAttribute("data-open");
+    expect(sidebar).not.toHaveAttribute("data-open");
   });
 
-  it("closes the mobile menu on Escape and returns focus to the menu button", async () => {
+  it("closes the mobile drawer with its close button", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    await user.click(screen.getByRole("button", { name: "Open admin navigation" }));
+    await user.click(screen.getByRole("button", { name: "Close menu" }));
+
+    expect(screen.getByRole("complementary", { name: "Admin sidebar" })).not.toHaveAttribute("data-open");
+  });
+
+  it("closes the mobile drawer on Escape and returns focus to the menu button", async () => {
     const user = userEvent.setup();
     render(<AdminNav />);
 
@@ -355,7 +329,7 @@ describe("AdminNav", () => {
     expect(button).toHaveFocus();
   });
 
-  it("closes the mobile menu after following a link", async () => {
+  it("closes the mobile drawer after following a link", async () => {
     const user = userEvent.setup();
     render(<AdminNav />);
 
@@ -368,7 +342,7 @@ describe("AdminNav", () => {
     );
   });
 
-  it("closes the mobile menu after following a submenu link", async () => {
+  it("closes the mobile drawer after following a submenu link", async () => {
     const user = userEvent.setup();
     render(<AdminNav />);
 
@@ -377,10 +351,6 @@ describe("AdminNav", () => {
     await user.click(screen.getByRole("link", { name: "Cooperative settings" }));
 
     expect(screen.getByRole("button", { name: "Open admin navigation" })).toHaveAttribute(
-      "aria-expanded",
-      "false"
-    );
-    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
       "aria-expanded",
       "false"
     );

@@ -446,3 +446,38 @@ The admin dashboard mirrors the same grouping: **Members**, **Loan Management** 
 - Vitest: **30 files / 209 tests passed**, including rewritten navigation tests for the grouped items, module gating of the Loan Management menu, hover open/close and pointer switching between menus, accordion behaviour, keyboard toggling, active-section auto-open, dismissal that survives the nav remounting after a link click, Escape and outside-click closing, and mobile link handling, plus dashboard tests for the new headings, the Loans card and the renamed Cooperative settings link.
 - `npm run build` compiled successfully (20/20 static pages).
 - Browser-checked at 1200px: hovering Loan Management opens its dropdown, moving to Settings swaps the open menu, and moving away closes it; `/admin/disbursements` opens the group automatically with the button marked active; following Offices from Settings navigates to `/admin/offices` with the menu closed and Offices marked current. At 375px the Menu button opens the drawer; Settings expands inline with an indented, bordered list and no horizontal overflow (document width 360px inside a 375px viewport).
+
+## 16. Brand foundation and shell (2026-11-18)
+
+### 16.1 Foundation
+
+Koperra's identity package is now part of the app without displacing the cooperative's own identity:
+
+- Brand files live under `frontend/public/brand` (horizontal, stacked, dark, symbol and wordmark logos, tokens reference) and `frontend/public/icons` (favicon SVG/PNG and app icon). The favicon and app icon are wired through the root metadata; the generated title is "MACT Cooperative Manager".
+- `frontend/lib/branding.ts` is the single source for the cooperative name, short name and monogram (placeholder "M" until a logo is uploaded) and for the platform name and credit ("Koperra", "Koperra by SIDGAKS Tech").
+- `components/branding/CooperativeBrand` renders the cooperative's mark and name, with an optional logo URL and an inverse tone for dark surfaces. `components/branding/PlatformAttribution` renders the discreet "Powered by Koperra" credit, with the same tone option.
+- Inter is loaded with `next/font` (self-hosted at build time, `display: swap`) and exposed as `--font-inter`; the body font stack falls back to Manrope and the system stack.
+- `app/globals.css` now opens with a token layer: the Koperra palette, semantic surface/border/text tokens, action and status colours, radii and shadows, the `--sidebar-width` and a single z-index scale (`--z-dropdown: 20`, `--z-sticky: 30`, `--z-drawer: 40`, `--z-modal: 100`, `--z-confirm: 110`). The dead `.modal-backdrop`/`.modal-card` classes were removed and the shared Modal now sits on `var(--z-modal)`.
+- Shared primitives were added for `.btn` with primary/secondary/ghost/danger variants, status `.badge` tones, `.num` tabular numerals, a reduced-motion-aware `.skeleton`, a global focus-visible ring, and base input/button styling built on the tokens.
+
+The self-hosted font was verified by a production build before any layout work continued, so the build does not depend on a network fetch at deploy time.
+
+### 16.2 Shell
+
+`app/admin`, `app/members` and `app/loans` moved into the `app/(admin)` route group behind one `app/(admin)/layout.tsx`, so `AdminShell` mounts once and survives navigation. URLs are unchanged. Pages no longer wrap themselves in the shell; they keep their own `useAuth` guard and return a shared `PageSkeleton` (title, action, cards and table blocks, announced as a busy status) while authentication or page data loads. The module gate and the admin views that previously printed "Loading..." use the same skeleton.
+
+`AdminNav` is rebuilt as the shell's navigation:
+
+- **Wide screens** get a fixed 264px navy sidebar with the cooperative brand at the top, the menu in the middle and the "Powered by Koperra" credit in the footer. The page content is offset by the sidebar width.
+- **≤900px** gets a sticky top bar with the cooperative brand and a Menu button, and the same sidebar as an off-canvas drawer with a scrim, a close button, Escape handling (focus returns to the Menu button) and a scroll lock while open.
+- Groups use `aria-expanded`/`aria-controls` and an accordion: one section open at a time, and the section containing the current page opens automatically. Links carry `aria-current="page"`, and the active row is marked with a lime inset bar.
+
+One deliberate change from the earlier top-bar dropdowns: in the persistent sidebar the section stays expanded after one of its links is followed, because collapsing it would hide the officer's own current location. Clicking the group button still closes it manually, and the mobile drawer closes on every link.
+
+### 16.3 Verification
+
+- `npx tsc --noEmit` exit 0.
+- Vitest: **30 files / 208 tests passed**, including rewritten navigation tests for the brand and platform credit, the sidebar landmarks, module gating, active-section auto-open and persistence, the accordion, keyboard toggling, Escape, and the mobile drawer (toggle, close button, Escape with focus return, closing on links).
+- `npm run build` compiled successfully (20/20 static pages, routes unchanged).
+- Browser-checked with a temporary shell preview at desktop and phone widths: at 1200px the 264px navy sidebar sits beside an offset content area with the brand at the top and the credit at the bottom; the sidebar rows align with the table content. At 375px the top bar shows the brand and Menu button, the page stacks without horizontal overflow, and Menu opens the navy drawer over a scrim with the close button, indented Settings list and the footer credit. The preview route was removed after the check.
+

@@ -1,55 +1,92 @@
-.header {
-  border-bottom: 1px solid #ddd;
-  background: #fff;
-}
+/* Admin navigation: a persistent sidebar on wide screens, a top bar with an
+   off-canvas drawer on phones. */
 
-.bar {
-  display: flex;
+.topbar {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky, 30);
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 8px 16px;
-}
-
-.brand {
-  color: #111;
-  font-size: 16px;
-  font-weight: 700;
-  padding: 6px 4px;
-  text-decoration: none;
-}
-
-.brand:focus-visible {
-  outline: 2px solid #1d4ed8;
-  outline-offset: 2px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .menuButton {
-  display: none;
-  margin-left: auto;
-  padding: 8px 12px;
-  border: 1px solid #bbb;
-  border-radius: 4px;
-  background: #fafafa;
-  color: #111;
-  font: inherit;
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
   cursor: pointer;
 }
 
-.menuButton:focus-visible {
-  outline: 2px solid #1d4ed8;
-  outline-offset: 2px;
+.menuButton:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.scrim {
+  display: none;
+}
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--z-drawer, 40);
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width, 264px);
+  overflow-y: auto;
+  background: var(--brand-navy);
+  color: #fff;
+  border-right: 1px solid var(--brand-navy-dark);
+}
+
+.brandRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.closeButton {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  width: 32px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.closeButton:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .nav {
   flex: 1 1 auto;
+  padding: 10px 8px;
 }
 
 .list {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 2px;
   margin: 0;
   padding: 0;
@@ -57,67 +94,60 @@
 }
 
 .link {
-  display: block;
-  padding: 8px 10px;
-  border-radius: 4px;
-  color: #333;
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 14px;
   text-decoration: none;
 }
 
 .link:hover {
-  background: #f1f1f1;
-}
-
-.link:focus-visible {
-  outline: 2px solid #1d4ed8;
-  outline-offset: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 .active {
-  background: #e8efff;
-  color: #1d4ed8;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
   font-weight: 600;
-}
-
-/* Grouped menu: a toggle in the bar with its links in a dropdown on wide
-   screens and an indented list inside the mobile menu. */
-.group {
-  position: relative;
+  box-shadow: inset 3px 0 0 var(--brand-lime);
 }
 
 .groupButton {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 36px;
-  padding: 8px 10px;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
   border: none;
-  border-radius: 4px;
-  background: none;
-  color: #333;
-  font: inherit;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 14px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
 
-.groupButton:hover {
-  background: #f1f1f1;
-}
-
-.groupButton:focus-visible {
-  outline: 2px solid #1d4ed8;
-  outline-offset: 2px;
+.groupButton:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 .groupButton[data-active="true"] {
-  color: #1d4ed8;
+  color: #fff;
   font-weight: 600;
 }
 
 .caret {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
-  transition: transform 0.15s ease;
+  transition: transform 0.2s ease;
 }
 
 .group[data-open="true"] .caret {
@@ -126,18 +156,10 @@
 
 .submenu {
   display: none;
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 20;
-  min-width: 220px;
-  margin: 4px 0 0;
-  padding: 4px;
+  margin: 2px 0 6px;
+  padding: 0 0 0 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
   list-style: none;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
 }
 
 .group[data-open="true"] .submenu {
@@ -145,57 +167,62 @@
 }
 
 .submenu .link {
-  padding: 8px 10px;
-  white-space: nowrap;
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 13.5px;
+}
+
+.footer {
+  flex: 0 0 auto;
+  padding: 14px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sidebar :focus-visible {
+  outline-color: var(--brand-lime);
 }
 
 @media (max-width: 900px) {
-  .menuButton {
+  .topbar {
+    display: flex;
+  }
+
+  .sidebar {
+    width: min(var(--sidebar-width, 264px), 86vw);
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: var(--shadow-md);
+  }
+
+  .sidebar[data-open="true"] {
+    transform: translateX(0);
+  }
+
+  .closeButton {
     display: inline-flex;
   }
 
-  .nav {
-    display: none;
-    flex-basis: 100%;
-  }
-
-  .nav[data-open="true"] {
+  .scrim {
     display: block;
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-drawer, 40) - 1);
+    background: rgba(6, 20, 40, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
   }
 
-  .list {
-    flex-direction: column;
-    gap: 0;
-    border-top: 1px solid #eee;
-    padding-top: 4px;
+  .scrim[data-open="true"] {
+    opacity: 1;
+    pointer-events: auto;
   }
+}
 
-  .link {
-    padding: 10px 8px;
-  }
-
-  .group {
-    position: static;
-  }
-
-  .groupButton {
-    width: 100%;
-    padding: 10px 8px;
-  }
-
-  .submenu {
-    position: static;
-    min-width: 0;
-    margin: 0 0 4px 12px;
-    padding: 0 0 4px 8px;
-    border: none;
-    border-left: 2px solid #e5e5e5;
-    border-radius: 0;
-    box-shadow: none;
-  }
-
-  .submenu .link {
-    padding: 10px 8px;
-    white-space: normal;
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .scrim,
+  .caret {
+    transition: none;
   }
 }

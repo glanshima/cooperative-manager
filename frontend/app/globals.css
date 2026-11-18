@@ -2,6 +2,62 @@
    live here (with component CSS modules where a component owns its markup);
    components keep only content-specific inline styles. */
 
+:root {
+  color-scheme: light;
+
+  /* Brand palette (cooperative identity first, Koperra accent). */
+  --brand-navy: #082b59;
+  --brand-navy-dark: #061d3d;
+  --brand-blue: #0876c9;
+  --brand-blue-dark: #0665ac;
+  --brand-green: #16b84a;
+  --brand-lime: #79e21a;
+  --brand-text: #102a4c;
+  --brand-muted: #60748c;
+  --brand-gradient: linear-gradient(115deg, #082b59 0%, #0876c9 48%, #16b84a 100%);
+  --brand-gradient-green: linear-gradient(115deg, #16b84a 0%, #79e21a 100%);
+
+  /* Semantic surfaces, borders and text. */
+  --surface: #ffffff;
+  --surface-muted: #f6f8fb;
+  --surface-sunken: #eef2f7;
+  --border: #d8e0ea;
+  --border-strong: #b9c5d4;
+  --text: var(--brand-text);
+  --text-muted: var(--brand-muted);
+  --text-subtle: #7d8fa5;
+
+  /* Actions and status. */
+  --primary: var(--brand-blue);
+  --primary-hover: var(--brand-blue-dark);
+  --primary-soft: #e6f1fb;
+  --success: #128a3a;
+  --success-soft: #e5f7ec;
+  --warning: #b45309;
+  --warning-soft: #fdf1e0;
+  --danger: #b3261e;
+  --danger-soft: #fdecea;
+  --danger-hover: #931f19;
+
+  /* Shape, depth and layout. */
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgba(16, 42, 76, 0.08);
+  --shadow-md: 0 8px 20px rgba(16, 42, 76, 0.14);
+  --sidebar-width: 264px;
+
+  /* Layering: one scale for menus, sticky bars, dialogs and confirmations. */
+  --z-dropdown: 20;
+  --z-sticky: 30;
+  --z-drawer: 40;
+  --z-modal: 100;
+  --z-confirm: 110;
+
+  --font-sans: var(--font-inter), Inter, Manrope, ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
 *,
 *::before,
 *::after {
@@ -14,10 +70,26 @@ html {
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   line-height: 1.45;
-  color: #111;
-  background: #fff;
+  color: var(--text);
+  background: var(--surface);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--text);
+  line-height: 1.25;
+}
+
+a {
+  color: var(--primary);
+}
+
+a:hover {
+  color: var(--primary-hover);
 }
 
 img,
@@ -25,6 +97,11 @@ svg,
 video {
   max-width: 100%;
   height: auto;
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 input,
@@ -39,15 +116,166 @@ input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea {
   min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
 }
 
 button {
   min-height: 36px;
-  padding: 4px 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 textarea {
   resize: vertical;
+}
+
+/* Button variants for new markup. Existing inline-styled buttons keep their
+   own look until they are migrated. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  color: #fff;
+}
+
+.btn-secondary {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--primary);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--primary-soft);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+  color: #fff;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.badge--success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.badge--warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.badge--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.badge--info {
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+}
+
+.badge--neutral {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+/* Money and quantities align in columns. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.skeleton {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-sunken) 25%,
+    var(--surface-muted) 37%,
+    var(--surface-sunken) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shift 1.4s ease infinite;
+}
+
+@keyframes skeleton-shift {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
 }
 
 /* Page shells: fluid padding grows with the viewport; the modifier caps the
@@ -86,8 +314,10 @@ textarea {
   max-width: 420px;
   margin: clamp(24px, 8vh, 80px) auto;
   padding: clamp(16px, 5vw, 24px);
-  border: 1px solid #ddd;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .page-header {
@@ -157,7 +387,7 @@ textarea {
   padding: 0;
   border: none;
   background: none;
-  color: #0645ad;
+  color: var(--primary);
   font: inherit;
   text-decoration: underline;
   text-align: left;
@@ -165,11 +395,11 @@ textarea {
 }
 
 .link-button:hover {
-  color: #032f6e;
+  color: var(--primary-hover);
 }
 
 .link-button:disabled {
-  color: #999;
+  color: var(--text-subtle);
   text-decoration: none;
   cursor: not-allowed;
 }
@@ -180,7 +410,7 @@ textarea {
   gap: 8px 16px;
   margin: 16px 0 0;
   padding: 16px 0 0;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--border);
   list-style: none;
   font-size: 14px;
 }
@@ -198,7 +428,7 @@ textarea {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #666;
+  color: var(--text-muted);
 }
 
 .detail-grid dd {
@@ -222,27 +452,16 @@ textarea {
   border-collapse: collapse;
 }
 
-/* Shared dialog shell used by the modal-styled components. */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(0, 0, 0, 0.45);
-  overflow-y: auto;
+.data-table th {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
 }
 
-.modal-card {
-  width: 100%;
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
-  overflow-y: auto;
-  background: #fff;
-  border-radius: 8px;
-  padding: 20px;
+.data-table th,
+.data-table td {
+  border-bottom: 1px solid var(--border);
 }
 
 @media (max-width: 640px) {
@@ -282,9 +501,9 @@ textarea {
   .data-table tr {
     margin-bottom: 10px;
     padding: 8px 12px;
-    border: 1px solid #ddd !important;
-    border-radius: 8px;
-    background: #fff;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius);
+    background: var(--surface);
   }
 
   .data-table td {
@@ -303,17 +522,13 @@ textarea {
     flex: 0 0 42%;
     text-align: left;
     font-weight: 600;
-    color: #555;
+    color: var(--text-muted);
   }
 
   .data-table td:last-child {
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 8px;
-  }
-
-  .modal-card {
-    padding: 16px;
   }
 }
 

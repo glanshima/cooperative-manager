@@ -1,0 +1,52 @@
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.title {
+  display: block;
+  width: 220px;
+  max-width: 60%;
+  height: 28px;
+}
+
+.action {
+  display: block;
+  flex: 0 0 auto;
+  width: 120px;
+  height: 38px;
+}
+
+.cards {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  margin-top: 20px;
+}
+
+.card {
+  display: block;
+  height: 96px;
+  border-radius: var(--radius);
+}
+
+.table {
+  display: block;
+  height: 260px;
+  margin-top: 20px;
+  border-radius: var(--radius);
+}

@@ -1,0 +1,27 @@
+.attribution {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.inverse {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.symbol {
+  width: 16px;
+  height: 16px;
+}
+
+.name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.inverse .name {
+  color: #fff;
+}

@@ -1,5 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
 import LogoutControl from "@/components/ui/LogoutControl";
+import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { SettingsPageModel } from "../hooks/useSettingsPage";
 import LoanApplicationSettingsSection from "../LoanApplicationSettingsSection";
 import ModulesSection from "../ModulesSection";
@@ -12,7 +13,7 @@ export default function SettingsView({
   identity?: string | null;
 }) {
   if (model.loading || !model.settings) {
-    return <main className="page">Loading...</main>;
+    return <PageSkeleton />;
   }
 
   const settings = model.settings;

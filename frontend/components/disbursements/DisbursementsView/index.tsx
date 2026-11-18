@@ -1,5 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
 import LogoutControl from "@/components/ui/LogoutControl";
+import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { DisbursementsPageModel } from "../hooks/useDisbursementsPage";
 import DisburseDialog from "../DisburseDialog";
 import DisbursementFilters from "../DisbursementFilters";
@@ -13,7 +14,7 @@ export default function DisbursementsView({
   identity?: string | null;
 }) {
   if (model.loading) {
-    return <main className="page">Loading...</main>;
+    return <PageSkeleton />;
   }
 
   return (

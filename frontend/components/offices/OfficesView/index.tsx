@@ -1,5 +1,6 @@
 import StatusMessage from "@/components/ui/StatusMessage";
 import LogoutControl from "@/components/ui/LogoutControl";
+import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { OfficesPageModel } from "../hooks/useOfficesPage";
 import CreateOfficeForm from "../CreateOfficeForm";
 import OfficesTable from "../OfficesTable";
@@ -12,7 +13,7 @@ export default function OfficesView({
   identity?: string | null;
 }) {
   if (model.loading) {
-    return <main className="page">Loading...</main>;
+    return <PageSkeleton />;
   }
 
   return (

@@ -1,0 +1,14 @@
+.shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.content {
+  min-width: 0;
+}
+
+@media (min-width: 901px) {
+  .content {
+    margin-left: var(--sidebar-width, 264px);
+  }
+}
