@@ -3,6 +3,9 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+
+import AuthShell from "@/components/branding/AuthShell";
+
 import { resetPassword, verifyResetToken } from "../../lib/api";
 
 function ResetPasswordForm() {
@@ -74,7 +77,7 @@ function ResetPasswordForm() {
 
   if (verifying) {
     return (
-      <div style={{ textAlign: "center", padding: "40px 0", color: "#666" }}>
+      <div style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
         <p>Verifying password reset link...</p>
       </div>
     );
@@ -83,35 +86,16 @@ function ResetPasswordForm() {
   if (success) {
     return (
       <div>
-        <div
-          style={{
-            padding: 16,
-            background: "#f0fdf4",
-            border: "1px solid #bbf7d0",
-            borderRadius: 6,
-            color: "#166534",
-            fontSize: 14,
-            lineHeight: 1.5,
-          }}
-        >
+        <div className="notice notice--success">
           <strong>Password Reset Successful!</strong>
-          <p style={{ margin: "8px 0 0" }}>
+          <p style={{ margin: 0 }}>
             Your password has been updated. You can now log in with your new credentials.
           </p>
         </div>
         <div style={{ marginTop: 24, textAlign: "center" }}>
           <button
             onClick={() => router.push("/login")}
-            style={{
-              padding: "10px 20px",
-              fontSize: 14,
-              fontWeight: 600,
-              background: "#0066cc",
-              color: "#fff",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-            }}
+            className="btn btn-primary"
           >
             Go to Login
           </button>
@@ -123,22 +107,12 @@ function ResetPasswordForm() {
   if (!tokenValid) {
     return (
       <div>
-        <div
-          style={{
-            padding: 16,
-            background: "#fef2f2",
-            border: "1px solid #fecaca",
-            borderRadius: 6,
-            color: "#991b1b",
-            fontSize: 14,
-            lineHeight: 1.5,
-          }}
-        >
+        <div className="notice notice--error">
           <strong>Link Invalid or Expired</strong>
-          <p style={{ margin: "8px 0 0" }}>{error}</p>
+          <p style={{ margin: 0 }}>{error}</p>
         </div>
         <p style={{ marginTop: 20, textAlign: "center" }}>
-          <Link href="/forgot-password" style={{ color: "#0066cc", textDecoration: "none", fontWeight: 500 }}>
+          <Link href="/forgot-password" style={{ fontSize: 13, fontWeight: 500 }}>
             Request a new password reset link →
           </Link>
         </p>
@@ -148,21 +122,7 @@ function ResetPasswordForm() {
 
   return (
     <form onSubmit={handleSubmit} style={{ display: "grid", gap: 14 }}>
-      {error && (
-        <div
-          style={{
-            padding: 12,
-            background: "#fef2f2",
-            border: "1px solid #fecaca",
-            borderRadius: 4,
-            color: "crimson",
-            fontSize: 13,
-            fontWeight: 500,
-          }}
-        >
-          {error}
-        </div>
-      )}
+      {error && <div className="notice notice--error">{error}</div>}
 
       <label style={{ display: "grid", gap: 6, fontSize: 14, fontWeight: 500 }}>
         New Password
@@ -173,7 +133,6 @@ function ResetPasswordForm() {
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           disabled={loading}
-          style={{ padding: 10, fontSize: 14, border: "1px solid #ccc", borderRadius: 4 }}
         />
       </label>
 
@@ -186,29 +145,14 @@ function ResetPasswordForm() {
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
           disabled={loading}
-          style={{ padding: 10, fontSize: 14, border: "1px solid #ccc", borderRadius: 4 }}
         />
       </label>
 
-      <p style={{ fontSize: 12, color: "#666", margin: "0" }}>
+      <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0" }}>
         Password policy: Minimum 8 characters with at least one letter and one number.
       </p>
 
-      <button
-        type="submit"
-        disabled={loading}
-        style={{
-          marginTop: 8,
-          padding: 10,
-          fontSize: 14,
-          fontWeight: 600,
-          background: "#0066cc",
-          color: "#fff",
-          border: "none",
-          borderRadius: 4,
-          cursor: loading ? "not-allowed" : "pointer",
-        }}
-      >
+      <button type="submit" className="btn btn-primary" disabled={loading}>
         {loading ? "Updating password..." : "Set New Password"}
       </button>
     </form>
@@ -217,15 +161,15 @@ function ResetPasswordForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <main className="auth-card">
-      <h1>Reset Password</h1>
-      <p style={{ color: "#666", fontSize: 14, marginBottom: 20 }}>
+    <AuthShell>
+      <h1>Set a new password</h1>
+      <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 20 }}>
         Create a new password for your account.
       </p>
 
-      <Suspense fallback={<p style={{ color: "#666" }}>Loading...</p>}>
+      <Suspense fallback={<p style={{ color: "var(--text-muted)" }}>Checking your reset link...</p>}>
         <ResetPasswordForm />
       </Suspense>
-    </main>
+    </AuthShell>
   );
 }

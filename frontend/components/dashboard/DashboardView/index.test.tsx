@@ -46,6 +46,8 @@ describe("DashboardView header", () => {
     expect(screen.getByText("Obi, Ada Ngozi")).toBeInTheDocument();
     expect(screen.getByText("PSN 0001")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+    expect(screen.getByText("MACT Cooperative")).toBeInTheDocument();
+    expect(screen.getByText("Koperra")).toBeInTheDocument();
   });
 
   it("falls back to the plain heading until the member record loads", () => {

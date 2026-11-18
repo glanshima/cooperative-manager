@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+
+import AuthShell from "@/components/branding/AuthShell";
+
 import { login } from "../../lib/api";
 
 export default function LoginPage() {
@@ -32,13 +35,13 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="auth-card">
-      <h1>MACT Cooperative Manager</h1>
-      <p style={{ color: "#666" }}>
+    <AuthShell>
+      <h1>Log in</h1>
+      <p style={{ color: "var(--text-muted)" }}>
         Members: log in with your PSN. Admins: use your admin username.
       </p>
 
-      {error && <p style={{ color: "crimson", fontWeight: 600 }}>{error}</p>}
+      {error && <p className="notice notice--error">{error}</p>}
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
         <input
@@ -46,7 +49,6 @@ export default function LoginPage() {
           placeholder="PSN or username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
-          style={{ padding: 10 }}
         />
         <input
           required
@@ -54,17 +56,16 @@ export default function LoginPage() {
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          style={{ padding: 10 }}
         />
-        <button type="submit" disabled={loading} style={{ padding: 10, cursor: loading ? "not-allowed" : "pointer" }}>
+        <button type="submit" className="btn btn-primary" disabled={loading}>
           {loading ? "Logging in..." : "Log in"}
         </button>
         <div style={{ textAlign: "center", marginTop: 8 }}>
-          <a href="/forgot-password" style={{ color: "#0066cc", fontSize: 13, textDecoration: "none" }}>
+          <a href="/forgot-password" style={{ fontSize: 13 }}>
             Forgot your password?
           </a>
         </div>
       </form>
-    </main>
+    </AuthShell>
   );
 }

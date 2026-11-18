@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
+
+import AuthShell from "@/components/branding/AuthShell";
+
 import { forgotPassword } from "../../lib/api";
 
 export default function ForgotPasswordPage() {
@@ -31,33 +34,23 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <main className="auth-card">
-      <h1>Password Recovery</h1>
-      <p style={{ color: "#666", fontSize: 14 }}>
+    <AuthShell>
+      <h1>Forgot password</h1>
+      <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
         Enter your PSN (Members), Username, or registered Email address. If an account matches,
         we will send you a password reset link.
       </p>
 
-      {error && <p style={{ color: "crimson", fontWeight: 600 }}>{error}</p>}
+      {error && <p className="notice notice--error">{error}</p>}
 
       {submitted ? (
         <div style={{ marginTop: 16 }}>
-          <div
-            style={{
-              padding: 16,
-              background: "#f0fdf4",
-              border: "1px solid #bbf7d0",
-              borderRadius: 6,
-              color: "#166534",
-              fontSize: 14,
-              lineHeight: 1.5,
-            }}
-          >
+          <div className="notice notice--success">
             <strong>Request Received</strong>
-            <p style={{ margin: "8px 0 0" }}>{successMessage}</p>
+            <p style={{ margin: 0 }}>{successMessage}</p>
           </div>
           <p style={{ marginTop: 24, textAlign: "center" }}>
-            <Link href="/login" style={{ color: "#0066cc", textDecoration: "none" }}>
+            <Link href="/login" style={{ fontSize: 13 }}>
               ← Return to Login
             </Link>
           </p>
@@ -73,34 +66,24 @@ export default function ForgotPasswordPage() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               disabled={loading}
-              style={{ padding: 10, fontSize: 14, border: "1px solid #ccc", borderRadius: 4 }}
             />
           </label>
 
           <button
             type="submit"
+            className="btn btn-primary"
             disabled={loading || !identifier.trim()}
-            style={{
-              padding: 10,
-              fontSize: 14,
-              fontWeight: 600,
-              background: "#0066cc",
-              color: "#fff",
-              border: "none",
-              borderRadius: 4,
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
           >
             {loading ? "Sending instructions..." : "Send Reset Link"}
           </button>
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 13 }}>
-            <Link href="/login" style={{ color: "#666", textDecoration: "none" }}>
+            <Link href="/login" style={{ color: "var(--text-muted)", textDecoration: "none" }}>
               ← Back to Login
             </Link>
           </div>
         </form>
       )}
-    </main>
+    </AuthShell>
   );
 }

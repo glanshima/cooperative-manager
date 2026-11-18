@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+
+import AuthShell from "@/components/branding/AuthShell";
+import PageSkeleton from "@/components/ui/PageSkeleton";
+
 import { useAuth } from "../../lib/useAuth";
 import { changePassword } from "../../lib/api";
 
@@ -39,18 +43,18 @@ export default function ChangePasswordPage() {
     }
   }
 
-  if (authLoading) return <main className="page">Loading...</main>;
+  if (authLoading) return <PageSkeleton />;
 
   return (
-    <main className="auth-card">
+    <AuthShell>
       <h1>Change your password</h1>
-      <p style={{ color: "#666" }}>
+      <p style={{ color: "var(--text-muted)" }}>
         {user?.must_change_password
           ? "You're using a temporary password. Please set a new one to continue."
           : "Set a new password."}
       </p>
 
-      {error && <p style={{ color: "crimson", fontWeight: 600 }}>{error}</p>}
+      {error && <p className="notice notice--error">{error}</p>}
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
         <input
@@ -59,7 +63,6 @@ export default function ChangePasswordPage() {
           placeholder="Current (temporary) password"
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
-          style={{ padding: 10 }}
         />
         <input
           required
@@ -67,7 +70,6 @@ export default function ChangePasswordPage() {
           placeholder="New password (min. 8 characters)"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
-          style={{ padding: 10 }}
         />
         <input
           required
@@ -75,12 +77,11 @@ export default function ChangePasswordPage() {
           placeholder="Confirm new password"
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
-          style={{ padding: 10 }}
         />
-        <button type="submit" disabled={submitting} style={{ padding: 10 }}>
+        <button type="submit" className="btn btn-primary" disabled={submitting}>
           {submitting ? "Saving..." : "Change password"}
         </button>
       </form>
-    </main>
+    </AuthShell>
   );
 }

@@ -481,3 +481,35 @@ One deliberate change from the earlier top-bar dropdowns: in the persistent side
 - `npm run build` compiled successfully (20/20 static pages, routes unchanged).
 - Browser-checked with a temporary shell preview at desktop and phone widths: at 1200px the 264px navy sidebar sits beside an offset content area with the brand at the top and the credit at the bottom; the sidebar rows align with the table content. At 375px the top bar shows the brand and Menu button, the page stacks without horizontal overflow, and Menu opens the navy drawer over a scrim with the close button, indented Settings list and the footer credit. The preview route was removed after the check.
 
+
+## 17. Branded auth screens and member dashboard (2026-11-18)
+
+### 17.1 Auth screens
+
+The four standalone auth screens now share a `components/branding/AuthShell`:
+
+- The cooperative mark and name sit in a bordered header row inside the card, so a login looks like it belongs to MACT before it says anything else.
+- The card is centred in the viewport and the "Powered by Koperra" credit is pinned below it with `margin-top: auto`, so the platform mark is visible without competing with the cooperative.
+- `login`, `forgot-password`, `reset-password` and `change-password` all render through the shell; page headings were aligned to sentence case ("Log in", "Forgot password", "Set a new password", "Change your password").
+
+Alongside the shell, the inline styles on those pages were brought back onto the token layer:
+
+- Submit buttons use `.btn btn-primary`; inputs drop their per-page padding/font/border overrides and inherit the global token styles.
+- Status boxes (login errors, the forgot-password confirmation, the reset-link invalid/success states and the in-form error) now use new `.notice`, `.notice--error` and `.notice--success` utilities backed by `--danger-border`, `--success-border`, `--danger-soft` and `--success-soft` tokens, replacing four copies of hardcoded hex boxes.
+- Muted copy uses `var(--text-muted)` instead of `#666`, and the change-password loading state uses the shared `PageSkeleton`.
+
+### 17.2 Member dashboard
+
+`DashboardView` keeps its layout but gains the brand marks:
+
+- A full-width brand row sits above the greeting header (`DashboardView.module.css` `.brandBar`, closed with a hairline border), and the "Powered by Koperra" credit closes the page in a bordered footer beneath the loan sections.
+- The disabled-loans notice uses `var(--border)` instead of the stray `#ddd`.
+
+The greeting, PSN and log-out controls are unchanged; the dashboard's cooperative identity is now present at the top and the platform credit at the bottom, matching the shell and auth screens.
+
+### 17.3 Verification
+
+- `npx tsc --noEmit` via `next build` exit 0.
+- Vitest: **31 files / 210 tests passed**. New assertions: the login page renders the "Log in" heading plus "MACT Cooperative" and "Koperra"; `DashboardView` renders both brand marks next to the existing greeting assertions; a dedicated `AuthShell` test covers child rendering and the brand/credit pairing.
+- `npm run build` compiled successfully (20/20 static pages, routes unchanged after the temporary preview routes were removed).
+- Browser-checked at phone width (429px) and 1200px through a temporary preview route and a scaled iframe harness (both removed afterwards): login, forgot-password and the invalid reset-link state all show the brand row inside the card, the credit below it around the fold, and the branded error notice; the member dashboard shows the brand row above "My Dashboard", the content sections and the credit under the last section at both widths, with no horizontal overflow.

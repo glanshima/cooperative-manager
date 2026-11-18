@@ -33,10 +33,12 @@
   --primary-soft: #e6f1fb;
   --success: #128a3a;
   --success-soft: #e5f7ec;
+  --success-border: #a7dfba;
   --warning: #b45309;
   --warning-soft: #fdf1e0;
   --danger: #b3261e;
   --danger-soft: #fdecea;
+  --danger-border: #f0b4af;
   --danger-hover: #931f19;
 
   /* Shape, depth and layout. */
@@ -244,6 +246,36 @@ textarea {
 .badge--neutral {
   background: var(--surface-sunken);
   color: var(--text-muted);
+}
+
+/* Callouts for form feedback and auth screens. */
+.notice {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.notice--error {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.notice--success {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.notice strong {
+  display: block;
+  margin-bottom: 4px;
 }
 
 /* Money and quantities align in columns. */

@@ -18,16 +18,23 @@ vi.mock("../../lib/api", () => ({
 describe("LoginPage", () => {
   it("renders login form", () => {
     render(<LoginPage />);
-    
-    expect(screen.getByRole("heading", { name: "MACT Cooperative Manager" })).toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: "Log in" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("PSN or username")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log in" })).toBeInTheDocument();
   });
-  
+
   it("shows login link when not signed in", () => {
     render(<LoginPage />);
-    
+
     expect(screen.getByRole("link", { name: "Forgot your password?" })).toBeInTheDocument();
+  });
+
+  it("carries the cooperative identity and platform credit", () => {
+    render(<LoginPage />);
+
+    expect(screen.getByText("MACT Cooperative")).toBeInTheDocument();
+    expect(screen.getByText("Koperra")).toBeInTheDocument();
   });
 });
