@@ -119,12 +119,22 @@ and add:
 | `SECRET_KEY` | any long random string (e.g. run `openssl rand -hex 32` locally) |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` for now — you'll update this in Part E |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob read/write token (see below) |
+| `RESEND_API_KEY` | Resend API key from https://resend.com/api-keys (backend only) |
+| `FROM_EMAIL` | verified sender on your Resend domain, e.g. `notifications@mail.yourdomain.example` |
 
 `BLOB_READ_WRITE_TOKEN` is what lets Settings store the cooperative logo.
 Create a Blob store in the Vercel project (**Storage → Create → Blob**)
 and copy its read/write token into this variable. Without it the app still
 runs and the cooperative name/monogram still save — logo upload returns a
 503 telling the officer storage is not configured for this deployment.
+
+`RESEND_API_KEY` and `FROM_EMAIL` power transactional email (password
+recovery, loan and repayment notices). If either is missing, sends are
+skipped and logged; the business operation still succeeds. `FROM_EMAIL`
+must be on the domain verified in Resend — a bare address takes the
+cooperative's configured name as its display name, while
+`"Name <address>"` overrides it. Verify delivery once with
+`scripts/send_test_email.py <recipient>` before relying on email.
 
 Apply these to all three environments (Production, Preview, Development)
 unless you have a reason to split them.

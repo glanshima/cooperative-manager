@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import date, datetime
 from typing import List, Optional
@@ -29,6 +30,7 @@ from ..loan_rules import (
     commit_or_conflict,
     flush_or_conflict,
 )
+from ..cooperative_branding import current_brand
 from ..email_utils import (
     send_email,
     loan_disbursed_email_html,
@@ -36,6 +38,8 @@ from ..email_utils import (
     payment_rejected_email_html,
 )
 from .settings import _get_or_create_settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/loan-applications",
@@ -313,16 +317,6 @@ def verify_payment(
         application.status = models.LoanApplicationStatus.REJECTED
         application.admin_notes = f"Payment not verified: {payload.rejection_reason}"
 
-        send_email(
-            to=application.member.email,
-            subject="Your loan form payment could not be verified",
-            html=payment_rejected_email_html(
-                member_name=application.member.name,
-                loan_type_name=application.loan_type.name,
-                reason=payload.rejection_reason,
-            ),
-        )
-
     db.commit()
     db.refresh(application)
 
@@ -338,6 +332,26 @@ def verify_payment(
         reason=payload.rejection_reason,
         request=request,
     )
+
+    # After the commit: a mail outage must never undo a reviewed payment.
+    if not payload.approved:
+        brand = current_brand(db)
+        result = send_email(
+            to=application.member.email,
+            subject="Your loan form payment could not be verified",
+            html=payment_rejected_email_html(
+                member_name=application.member.name,
+                loan_type_name=application.loan_type.name,
+                reason=payload.rejection_reason,
+                brand=brand,
+            ),
+            sender_name=brand.name,
+            idempotency_key=f"loan-payment-rejected:{application.id}",
+        )
+        if not result.ok:
+            logger.warning(
+                "Loan form payment rejection email not delivered (status=%s)", result.status
+            )
     return _to_detail_schema(application)
 
 
@@ -456,7 +470,8 @@ def decide_application(
             request=request,
         )
 
-        send_email(
+        brand = current_brand(db)
+        result = send_email(
             to=application.member.email,
             subject="Update on your loan application",
             html=loan_rejected_email_html(
@@ -464,8 +479,15 @@ def decide_application(
                 loan_type_name=application.loan_type.name,
                 requested_amount=application.requested_amount,
                 admin_notes=payload.admin_notes or "",
+                brand=brand,
             ),
+            sender_name=brand.name,
+            idempotency_key=f"loan-rejected:{application.id}",
         )
+        if not result.ok:
+            logger.warning(
+                "Loan rejection email not delivered (status=%s)", result.status
+            )
 
     return _to_detail_schema(application)
 
@@ -644,7 +666,8 @@ def disburse_application(
     commit_or_conflict(db)
     db.refresh(application)
 
-    send_email(
+    brand = current_brand(db)
+    result = send_email(
         to=application.member.email,
         subject="Your loan has been disbursed",
         html=loan_disbursed_email_html(
@@ -662,8 +685,13 @@ def disburse_application(
             disbursement_account_name=disbursement_account_name,
             disbursement_account_number=disbursement_account_number,
             deducted_amount=total_deducted if total_deducted else None,
+            brand=brand,
         ),
+        sender_name=brand.name,
+        idempotency_key=f"loan-disbursed:{loan.id}",
     )
+    if not result.ok:
+        logger.warning("Loan disbursement email not delivered (status=%s)", result.status)
 
     audit_service.log_event(
         db,
