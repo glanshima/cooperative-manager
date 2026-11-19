@@ -539,3 +539,56 @@ The greeting, PSN and log-out controls are unchanged; the dashboard's cooperativ
 - Backend: `pytest` on the sandbox test database **320 passed** (15 new branding tests: public defaults without creating a row, branding-only exposure, whitespace/blank/over-length validation and audit, permission 403, upload path/extension/audit, declared-type mismatch, non-image bytes, SVG rejection, missing token 503, replacement deletes the old blob, removal audits, removal failure keeps the URL). The branding migration was re-applied to prove idempotence.
 - Frontend: `npx tsc --noEmit` exit 0; Vitest **35 files / 228 tests passed** (new coverage for the provider's defaults/fetch/failure/update path, `CooperativeBrand` overrides and logo rendering, the branding section's fields, 1 MB and type rejection, base64 upload payload, failure message and removal, plus the API method/body mappings). `npm run build` compiled successfully (20/20 static pages).
 - Browser-checked through a temporary preview route (removed afterwards) at 1200px and at the 429px browser width: the identity section renders first with the three fields, the monogram placeholder, the file picker and a disabled Upload button; with a logo URL it shows the image capped at 48px, a "Current logo" caption and the Remove button; the page stacks without horizontal overflow. The live logo upload round-trip was not exercised in the browser because the sandbox has no Blob token — the 503 path is covered by the backend tests, and the upload/delete wire format by the frontend API tests.
+
+
+## 19. Resend activation and email workflow verification (2026-11-19)
+
+### 19.1 Delivery foundation
+
+- `backend/app/email_utils.py` was rewritten around an explicit result contract. `send_email()` never raises and never retries; it returns an `EmailResult(ok, status, message_id, retryable, detail)` whose status separates `skipped` (missing key/sender/recipient, invalid recipient), `rejected` (4xx validation), `unauthorized` (401/403), `rate_limited` (429), `provider_error` (5xx), `network_error` and `timeout`. Callers log non-delivery with the status only.
+- Configuration is read at call time from `RESEND_API_KEY` and `FROM_EMAIL`. A bare `FROM_EMAIL` takes the cooperative name (from Settings, via `backend/app/cooperative_branding.py`) as the display name; an explicit `"Name <address>"` wins. Timeouts are 5 s connect / 10 s read. An optional `idempotency_key` becomes the Resend `Idempotency-Key` header; there are no automatic retries, so duplicate-send risk is unchanged.
+- The provider response body is never copied into results or logs; only the short machine-readable error name (charset-checked) is used. Recipient addresses, subjects and credentials are not logged.
+- Templates now render the cooperative identity, escape every interpolated value (member names, loan types, reasons, bank details), use the brand colours, and always include a generated plain-text alternative.
+- `backend/app/cooperative_branding.py` is the single source of identity fallbacks, shared by `GET /api/branding` and the email templates.
+
+### 19.2 Configuration and real delivery gate
+
+- `RESEND_API_KEY` and `FROM_EMAIL=noreply@mail.sidgakstech.me` are set in `backend/.env` (gitignored, never committed). `.env.example`, `DEPLOYMENT.md` and `README.md` document the variables with placeholders only.
+- A first send to the owner-approved recipient with `.net` was refused 403 (`This API key is not authorized to send emails from mail.sidgakstech.net`): the verified domain is `.me`, not `.net`. The `.me` attempt was accepted by Resend on 2026-11-19 (message id `01a1f461-51e2-79cf-a1bf-aa19ca63a6b3`, sender `MACT Cooperative <noreply@mail.sidgakstech.me>`), and the owner confirmed arrival in the destination inbox. Resend is therefore operational.
+- `scripts/send_test_email.py <recipient>` performs that gate on demand and prints the status and message id, never the key.
+
+### 19.3 Workflow verification
+
+All six existing workflows send after the business commit; the loan-form payment rejection was previously the exception (sent before `db.commit()`) and now sends afterwards, so a mail failure cannot follow a rolled-back decision. Recipients are resolved from stored member records (`Member.email`), never from request payloads.
+
+| Workflow | Trigger | Recipient | Subject | Idempotency key |
+|---|---|---|---|---|
+| Password recovery | `POST /api/auth/forgot-password` (after token commit) | User's linked email | `Password Reset Request - <cooperative>` | none (each request is a new token) |
+| Loan disbursed | `POST /api/loan-applications/{id}/disburse` (after commit) | Member | Your loan has been disbursed | `loan-disbursed:<loan_id>` |
+| Loan application rejected | `POST /api/loan-applications/{id}/decide` rejected (after commit) | Member | Update on your loan application | `loan-rejected:<application_id>` |
+| Loan form payment rejected | `POST /api/loan-applications/{id}/verify-payment` rejected | Member | Your loan form payment could not be verified | `loan-payment-rejected:<application_id>` |
+| Repayment verified | `POST /api/loan-repayments/{id}/verify` approved (after commit) | Member | Repayment received | `repayment-verified:<repayment_id>` |
+| Repayment rejected | `POST /api/loan-repayments/{id}/verify` rejected (after commit) | Member | Your repayment could not be verified | `repayment-rejected:<repayment_id>` |
+
+Approval of a loan application still sends no email, preserving the existing product decision (the disbursement email is the single detailed notice).
+
+### 19.4 Verification
+
+- Backend: `pytest` on the sandbox test database **341 passed** (21 new: 16 provider-contract tests covering success, missing key, missing/invalid sender, invalid recipient, 400/401/429/500, connection error, timeout, secret-free logs, idempotency forwarding, commit isolation and template escaping, plus 5 endpoint-level workflow tests for disbursement, payment-rejection ordering, repayment verification/rejection and password recovery).
+- Real delivery: provider accepted and the owner confirmed inbox receipt (19.2).
+- Not yet done (later phases of the plan): in-app notification centre, web push, Novu (parked by decision).
+
+## 20. Sidebar account control and the production branding migration (2026-11-19)
+
+### 20.1 Production schema drift
+
+- `fad8500` deployed the branding settings columns before the migration reached production. Public `GET /api/branding` answered 500 while `/api/health` was 200; the authenticated `GET /api/settings` 500 reached the browser as "Could not reach the server" (serverless error responses carry no CORS headers), and the admin sidebar lost Members / Loan Management / Payroll deductions because `useAdminNav` only adds module links after settings load.
+- `scripts/apply_manual_migrations.py` did not list `manual_migration_2026_11_cooperative_branding.sql`; it is now the last entry in `ORDERED_MIGRATIONS`, so a migration cannot ship without the runner knowing it.
+- Applied to production (branch `br-rough-flower-aycl78im`) on 2026-11-19 with explicit owner approval: 17 files applied, 1 already applied, server-default parity re-checked. Verified afterwards: `/api/branding` 200 with the deployment defaults, `/api/settings` 401 without a token. No rows were created or changed.
+
+### 20.2 Sidebar account control
+
+- `LogoutControl` gained a `sidebar` variant: username on the left (ellipsis when long) and "Log out" as a text link on the right, sitting above "Powered by Koperra" in the sidebar footer. The existing confirmation dialog is unchanged.
+- `AdminNav` reads the session with the existing `useAuth()`, so every admin screen offers log out — previously only the two dashboards rendered the control.
+- `DashboardHeader`'s log-out control is now optional: the admin dashboard passes only the greeting, while the member dashboard keeps identity above Log out because it has no sidebar.
+- Verification: `npx tsc --noEmit` clean; Vitest **35 files / 230 tests passed** (sidebar account tests added; admin dashboard tests updated for the moved control); `npm run build` 20/20 static pages. A browser screenshot was not taken because the local sign-in flow was blocked by the credential guard; layout and behaviour were verified through the component tests only.

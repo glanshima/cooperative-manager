@@ -100,15 +100,15 @@ function makeModel(overrides: Partial<AdminDashboardPageModel> = {}): AdminDashb
 // AdminDashboardView rendering tests
 // ---------------------------------------------------------------------------
 describe("AdminDashboardView", () => {
-  it("welcomes the admin by username and shows it above the log out control", () => {
+  it("welcomes the admin by username", () => {
     render(<AdminDashboardView model={makeModel()} />);
 
     expect(screen.getByRole("heading", { name: "Welcome, localadmin" })).toBeInTheDocument();
-    // The identity line above Log out.
-    expect(screen.getByText("localadmin")).toBeInTheDocument();
+    // The account control lives in the sidebar, not in this header.
+    expect(screen.queryByRole("button", { name: "Log out" })).not.toBeInTheDocument();
   });
 
-  it("greets the linked member's name but keeps the login above log out", () => {
+  it("greets the linked member's name instead of the login", () => {
     render(
       <AdminDashboardView
         model={makeModel({
@@ -121,9 +121,7 @@ describe("AdminDashboardView", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Welcome, Obi, Ada" })).toBeInTheDocument();
-    // Admins are identified by the login they actually use.
-    expect(screen.getByText("localadmin")).toBeInTheDocument();
-    expect(screen.queryByText("Obi, Ada")).not.toBeInTheDocument();
+    expect(screen.queryByText("localadmin")).not.toBeInTheDocument();
   });
 
   it("shows all navigation links when every module is enabled", () => {

@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from "react";
 
 import CooperativeBrand from "@/components/branding/CooperativeBrand";
 import PlatformAttribution from "@/components/branding/PlatformAttribution";
+import LogoutControl from "@/components/ui/LogoutControl";
+import { useAuth } from "@/lib/useAuth";
 
 import { useAdminNav } from "../hooks/useAdminNav";
 import styles from "./AdminNav.module.css";
@@ -18,6 +20,7 @@ function submenuId(label: string) {
 
 export default function AdminNav() {
   const { items } = useAdminNav();
+  const { user, logout } = useAuth();
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -172,6 +175,11 @@ export default function AdminNav() {
           </ul>
         </nav>
         <footer className={styles.footer}>
+          <LogoutControl
+            variant="sidebar"
+            identity={user?.username ?? null}
+            onLogout={logout}
+          />
           <PlatformAttribution tone="inverse" />
         </footer>
       </aside>
