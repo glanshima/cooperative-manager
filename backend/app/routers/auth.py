@@ -314,10 +314,14 @@ def reset_member_password(
 # ---------------------------------------------------------------------------
 
 import hashlib
+import logging
 import os
 import secrets
 from datetime import timedelta
+from ..cooperative_branding import current_brand
 from ..email_utils import password_reset_email_html, send_email
+
+logger = logging.getLogger(__name__)
 
 PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_EXPIRE_MINUTES", "15"))
 APP_URL = os.getenv("APP_URL", "http://localhost:3000")
@@ -455,13 +459,22 @@ def forgot_password(
     db.commit()
 
     # Send reset link (raw token is only passed in the email URL, never stored in DB or logs)
+    brand = current_brand(db)
     reset_url = f"{APP_URL.rstrip('/')}/reset-password?token={raw_token}"
     email_html = password_reset_email_html(
         recipient_name=name,
         reset_url=reset_url,
         expires_minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES,
+        brand=brand,
     )
-    send_email(to=email, subject="Password Reset Request - MACT Cooperative", html=email_html)
+    result = send_email(
+        to=email,
+        subject=f"Password Reset Request - {brand.name}",
+        html=email_html,
+        sender_name=brand.name,
+    )
+    if not result.ok:
+        logger.warning("Password reset email not delivered (status=%s)", result.status)
 
     audit_service.log_event(
         db,

@@ -279,10 +279,19 @@ python create_admin.py <username> <password>
 ### Email (Resend)
 
 Set `RESEND_API_KEY` and `FROM_EMAIL` in the backend's environment
-variables (see `.env.example`). If either is missing, `email_utils.py`
-logs a warning and skips sending rather than crashing a successful loan
-decision — so it's safe to leave unset while you're still testing other
-parts of the flow.
+variables (see `.env.example`). `FROM_EMAIL` is either a bare verified
+address — the cooperative name from Settings becomes the display name —
+or an explicit `"Name <address>"`. `send_email()` in `email_utils.py`
+never raises and never retries: it returns an `EmailResult` whose status
+distinguishes missing configuration, provider rejection, authentication
+failure, rate limiting, server errors, timeouts and network failures.
+Business operations log a failed send and continue, so email can be left
+unconfigured while testing other flows.
+
+Verify actual delivery once with
+`backend/.venv/Scripts/python.exe scripts/send_test_email.py <your-address>`
+and confirm the message arrives (check the junk folder too) — an accepted
+API response alone does not prove delivery.
 
 ### Cooperative branding and logo storage
 
