@@ -284,6 +284,21 @@ logs a warning and skips sending rather than crashing a successful loan
 decision — so it's safe to leave unset while you're still testing other
 parts of the flow.
 
+### Cooperative branding and logo storage
+
+The cooperative name, short name and monogram are editable under
+**Settings → Cooperative identity** and feed the sign-in screens, admin
+sidebar and member dashboard through the public `/api/branding` endpoint.
+The logo upload uses Vercel Blob: set `BLOB_READ_WRITE_TOKEN` in the
+backend environment (see `.env.example`). Without the token everything else
+still works — uploading a logo returns a 503 explaining that storage is not
+configured.
+
+**Limitation:** the browser tab title and favicon come from the static
+`metadata` export in `frontend/app/layout.tsx`; changing the cooperative
+name updates the app UI immediately but not those, which still need a
+frontend deploy.
+
 ### bcrypt/passlib compatibility (already fixed, noted for reference)
 
 `backend/requirements.txt` pins `bcrypt==4.0.1` explicitly alongside

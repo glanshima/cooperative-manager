@@ -2,6 +2,7 @@ import StatusMessage from "@/components/ui/StatusMessage";
 import LogoutControl from "@/components/ui/LogoutControl";
 import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { SettingsPageModel } from "../hooks/useSettingsPage";
+import BrandingSection from "../BrandingSection";
 import LoanApplicationSettingsSection from "../LoanApplicationSettingsSection";
 import ModulesSection from "../ModulesSection";
 
@@ -33,6 +34,7 @@ export default function SettingsView({
       )}
 
       <form onSubmit={model.save} style={{ display: "grid", gap: 16 }}>
+        <BrandingSection settings={settings} setField={model.setField} />
         <LoanApplicationSettingsSection settings={settings} setField={model.setField} />
         <ModulesSection settings={settings} setField={model.setField} />
         <button type="submit">Save settings</button>

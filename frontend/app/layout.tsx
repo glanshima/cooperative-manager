@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
+import BrandingProvider from "@/components/branding/BrandingProvider";
 import { COOPERATIVE_NAME } from "@/lib/branding";
 import "./globals.css";
 
@@ -36,7 +37,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={inter.variable}>
-      <body>{children}</body>
+      <body>
+        <BrandingProvider>{children}</BrandingProvider>
+      </body>
     </html>
   );
 }

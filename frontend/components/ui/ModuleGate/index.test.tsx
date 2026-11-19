@@ -21,6 +21,10 @@ const settings: Settings = {
   deductions_module_enabled: true,
   cashbook_module_enabled: true,
   dividends_module_enabled: true,
+  cooperative_name: "MACT Cooperative",
+  cooperative_short_name: "MACT",
+  cooperative_monogram: "M",
+  logo_url: null,
 };
 
 describe("ModuleGate", () => {

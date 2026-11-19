@@ -513,3 +513,29 @@ The greeting, PSN and log-out controls are unchanged; the dashboard's cooperativ
 - Vitest: **31 files / 210 tests passed**. New assertions: the login page renders the "Log in" heading plus "MACT Cooperative" and "Koperra"; `DashboardView` renders both brand marks next to the existing greeting assertions; a dedicated `AuthShell` test covers child rendering and the brand/credit pairing.
 - `npm run build` compiled successfully (20/20 static pages, routes unchanged after the temporary preview routes were removed).
 - Browser-checked at phone width (429px) and 1200px through a temporary preview route and a scaled iframe harness (both removed afterwards): login, forgot-password and the invalid reset-link state all show the brand row inside the card, the credit below it around the fold, and the branded error notice; the member dashboard shows the brand row above "My Dashboard", the content sections and the credit under the last section at both widths, with no horizontal overflow.
+
+
+## 18. Editable cooperative branding (2026-11-19)
+
+### 18.1 Data and API
+
+- `backend/app/models.py` / manual migration `scripts/manual_migration_2026_11_cooperative_branding.sql` add four settings columns: `cooperative_name` (120), `cooperative_short_name` (32), `cooperative_monogram` (8), all NOT NULL with MACT defaults, and nullable `logo_url` (500). The migration is idempotent (`ADD COLUMN IF NOT EXISTS`), and was re-applied to the sandbox test database to confirm it.
+- `GET /api/branding` is public and returns only the branding slice (name, short name, monogram, logo URL). It never creates a settings row; when none exists it answers with the deployment defaults, so signed-out screens always have an identity.
+- `PUT /api/settings` accepts the three text fields, collapses internal whitespace and rejects blank values. Changes are audited with previous/new values like the other settings.
+- `POST /api/settings/logo` takes `{content_type, image_base64}` (matching the existing base64 receipt convention, so no multipart dependency), decodes the bytes, sniffs the magic number and rejects a mismatch with the declared type (SVG and other formats are refused), enforces 1 MB, and stores the file in Vercel Blob under `branding/cooperative-logo-*.{png,jpg,webp}`. Missing `BLOB_READ_WRITE_TOKEN` answers 503; a storage failure answers 502. The replaced blob is deleted best-effort after the new URL is committed.
+- `DELETE /api/settings/logo` is idempotent when no logo exists, keeps the stored URL if Blob deletion fails (so settings never point at a deleted file), and clears + audits on success.
+- `backend/app/blob_storage.py` is a small REST client (`PUT /api/blob`, `POST /api/blob/delete`, `x-api-version: 11`); logos are raster-only to keep stored SVG out of a public URL.
+
+### 18.2 Frontend
+
+- `lib/api/branding.ts` (`getBranding`) and `lib/api/settings.ts` (`uploadLogo`, `deleteLogo`, branding fields on `Settings`) mirror the endpoints; `lib/api/index.ts` exports them.
+- `components/branding/BrandingProvider` is mounted once in the root layout and fetches `/api/branding` after paint. It starts from the `lib/branding.ts` constants and keeps them on failure, so no screen waits on branding. `useBranding` also exposes `setBranding`, which the settings hook and logo controls call after a save/upload so the sidebar and brand update without a reload.
+- `CooperativeBrand` now defaults its name, monogram and logo from the provider; explicit props still win (used to force a preview or the monogram).
+- `SettingsView` opens with `components/admin-settings/BrandingSection`: name/short name/monogram fields, a live logo preview (monogram placeholder when none), a file picker restricted to PNG/JPEG/WebP with a 1 MB client-side check, Upload and Remove buttons, and a dismissible success/error message that clears after 10 seconds. A chosen file previews before upload; uploads send base64 JSON and only the returned `logo_url` is copied into the form, so unsaved text edits are not discarded. Below 480px the preview and its caption stack.
+- `README.md`, `DEPLOYMENT.md` and `backend/.env.example` document `BLOB_READ_WRITE_TOKEN`, the 503 behaviour without it, and that the tab title/favicon still come from the static `metadata` export (they need a deploy to change).
+
+### 18.3 Verification
+
+- Backend: `pytest` on the sandbox test database **320 passed** (15 new branding tests: public defaults without creating a row, branding-only exposure, whitespace/blank/over-length validation and audit, permission 403, upload path/extension/audit, declared-type mismatch, non-image bytes, SVG rejection, missing token 503, replacement deletes the old blob, removal audits, removal failure keeps the URL). The branding migration was re-applied to prove idempotence.
+- Frontend: `npx tsc --noEmit` exit 0; Vitest **35 files / 228 tests passed** (new coverage for the provider's defaults/fetch/failure/update path, `CooperativeBrand` overrides and logo rendering, the branding section's fields, 1 MB and type rejection, base64 upload payload, failure message and removal, plus the API method/body mappings). `npm run build` compiled successfully (20/20 static pages).
+- Browser-checked through a temporary preview route (removed afterwards) at 1200px and at the 429px browser width: the identity section renders first with the three fields, the monogram placeholder, the file picker and a disabled Upload button; with a logo URL it shows the image capped at 48px, a "Current logo" caption and the Remove button; the page stacks without horizontal overflow. The live logo upload round-trip was not exercised in the browser because the sandbox has no Blob token — the 503 path is covered by the backend tests, and the upload/delete wire format by the frontend API tests.

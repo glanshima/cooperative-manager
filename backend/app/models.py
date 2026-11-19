@@ -1463,6 +1463,13 @@ class LoanRestrictionBehavior(str, enum.Enum):
     WARN = "warn"
 
 
+# Branding defaults, used both as column defaults and as the public
+# branding fallback when no settings row exists yet.
+DEFAULT_COOPERATIVE_NAME = "MACT Cooperative"
+DEFAULT_COOPERATIVE_SHORT_NAME = "MACT"
+DEFAULT_COOPERATIVE_MONOGRAM = "M"
+
+
 class Settings(Base):
     """
     Single-row table of admin-configurable toggles. Read on every relevant
@@ -1496,6 +1503,22 @@ class Settings(Base):
     # than as a roadmap. Flip them here when the modules land.
     cashbook_module_enabled = Column(Boolean, nullable=False, default=False)
     dividends_module_enabled = Column(Boolean, nullable=False, default=False)
+
+    # The cooperative's own identity, editable from the Settings screen.
+    # Defaults mirror the values the frontend shipped with, so a fresh row
+    # looks like the product did before branding became configurable.
+    cooperative_name = Column(
+        String(120), nullable=False, default=DEFAULT_COOPERATIVE_NAME
+    )
+    cooperative_short_name = Column(
+        String(32), nullable=False, default=DEFAULT_COOPERATIVE_SHORT_NAME
+    )
+    cooperative_monogram = Column(
+        String(8), nullable=False, default=DEFAULT_COOPERATIVE_MONOGRAM
+    )
+    # Uploaded logo (Vercel Blob). The public URL is all we need: replacing
+    # or removing it deletes the blob by that same URL.
+    logo_url = Column(String(500), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

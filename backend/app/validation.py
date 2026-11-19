@@ -8,6 +8,7 @@ email domain match the cooperative's employer". Business-rule validation
 belongs in the router layer, close to the data it needs to check against.
 """
 import base64
+import binascii
 import re
 from datetime import date
 from decimal import Decimal
@@ -23,6 +24,14 @@ PHONE_RE = re.compile(r"^[0-9+\-() ]{6,20}$")
 
 MAX_RECEIPT_BASE64_CHARS = 7_000_000  # ~5MB decoded, generous for a phone photo
 ALLOWED_RECEIPT_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "application/pdf"}
+
+# Cooperative logo uploads. Rasters only: an uploaded SVG is script-capable
+# and would be served from the storage CDN under our own deployment, which
+# is the classic stored-XSS vector. 1MB is far below the 4.5MB serverless
+# request-body limit and still allows a high-resolution mark.
+MAX_LOGO_BYTES = 1_000_000
+MAX_LOGO_BASE64_CHARS = 1_400_000
+ALLOWED_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
 # Cooperative policy: the floor for a member's monthly contribution. Kept
 # here rather than duplicated as a SQL CHECK so there is one place to
@@ -151,3 +160,37 @@ def validate_receipt_base64(value: str) -> str:
     except Exception:
         raise ValueError("Receipt file is not valid base64-encoded data")
     return value
+
+
+def validate_logo_content_type(value: str) -> str:
+    if value not in ALLOWED_LOGO_CONTENT_TYPES:
+        raise ValueError(
+            f"Unsupported logo file type {value!r}. Allowed: {', '.join(sorted(ALLOWED_LOGO_CONTENT_TYPES))}"
+        )
+    return value
+
+
+def validate_logo_base64(value: str) -> str:
+    if len(value) > MAX_LOGO_BASE64_CHARS:
+        raise ValueError("Logo file is too large (maximum 1 MB)")
+    try:
+        base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("Logo file is not valid base64-encoded data")
+    return value
+
+
+def detect_image_content_type(data: bytes) -> Optional[str]:
+    """Sniff the magic bytes of an allowed raster image.
+
+    The declared content type is convenience on the wire; what actually gets
+    stored and served is decided here, so a renamed file cannot smuggle a
+    different format (or an SVG) past the upload endpoint.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None

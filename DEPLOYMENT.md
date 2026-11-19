@@ -118,6 +118,13 @@ and add:
 | `DATABASE_URL` | the pooled Neon connection string from A2 |
 | `SECRET_KEY` | any long random string (e.g. run `openssl rand -hex 32` locally) |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` for now — you'll update this in Part E |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob read/write token (see below) |
+
+`BLOB_READ_WRITE_TOKEN` is what lets Settings store the cooperative logo.
+Create a Blob store in the Vercel project (**Storage → Create → Blob**)
+and copy its read/write token into this variable. Without it the app still
+runs and the cooperative name/monogram still save — logo upload returns a
+503 telling the officer storage is not configured for this deployment.
 
 Apply these to all three environments (Production, Preview, Development)
 unless you have a reason to split them.

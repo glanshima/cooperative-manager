@@ -1176,6 +1176,10 @@ class SettingsOut(BaseModel):
     deductions_module_enabled: bool
     cashbook_module_enabled: bool
     dividends_module_enabled: bool
+    cooperative_name: str
+    cooperative_short_name: str
+    cooperative_monogram: str
+    logo_url: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -1186,3 +1190,37 @@ class SettingsUpdate(BaseModel):
     deductions_module_enabled: Optional[bool] = None
     cashbook_module_enabled: Optional[bool] = None
     dividends_module_enabled: Optional[bool] = None
+    cooperative_name: Optional[str] = Field(default=None, max_length=120)
+    cooperative_short_name: Optional[str] = Field(default=None, max_length=32)
+    cooperative_monogram: Optional[str] = Field(default=None, max_length=8)
+
+    @field_validator("cooperative_name", "cooperative_short_name", "cooperative_monogram")
+    @classmethod
+    def _validate_branding_text(cls, value: Optional[str]) -> Optional[str]:
+        # The fields are nullable in the update model only so untouched
+        # fields can be omitted; a present value must be real text.
+        if value is None:
+            return value
+        collapsed = " ".join(value.split())
+        if not collapsed:
+            raise ValueError("must not be blank")
+        return collapsed
+
+
+class BrandingOut(BaseModel):
+    """The public slice of settings: what a signed-out screen may render."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    cooperative_name: str
+    cooperative_short_name: str
+    cooperative_monogram: str
+    logo_url: Optional[str] = None
+
+
+class LogoUploadIn(BaseModel):
+    content_type: str
+    image_base64: str
+
+    _validate_logo_type = field_validator("content_type")(validation.validate_logo_content_type)
+    _validate_logo_b64 = field_validator("image_base64")(validation.validate_logo_base64)
