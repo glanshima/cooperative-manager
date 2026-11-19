@@ -9,8 +9,9 @@ import { getSettings } from "@/lib/api";
 import { useAdminNav } from "../hooks/useAdminNav";
 import AdminNav from ".";
 
-const { pathnameMock } = vi.hoisted(() => ({
+const { pathnameMock, logoutMock } = vi.hoisted(() => ({
   pathnameMock: vi.fn(() => "/admin/dashboard"),
+  logoutMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -43,6 +44,14 @@ vi.mock("next/link", () => ({
 
 vi.mock("@/lib/api", () => ({
   getSettings: vi.fn(),
+}));
+
+vi.mock("@/lib/useAuth", () => ({
+  useAuth: () => ({
+    user: { username: "localadmin" },
+    loading: false,
+    logout: logoutMock,
+  }),
 }));
 
 const getSettingsMock = vi.mocked(getSettings);
@@ -114,6 +123,30 @@ describe("AdminNav", () => {
     );
     expect(within(nav).getByRole("button", { name: "Loan Management" })).toBeInTheDocument();
     expect(within(nav).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("keeps the signed-in account in the sidebar footer", () => {
+    render(<AdminNav />);
+
+    const sidebar = screen.getByRole("complementary", { name: "Admin sidebar" });
+    const footer = within(sidebar).getByText("localadmin");
+    const logout = within(sidebar).getByRole("button", { name: "Log out" });
+    expect(
+      footer.compareDocumentPosition(logout) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(within(sidebar).getByText("Powered by")).toBeInTheDocument();
+  });
+
+  it("asks before logging out from the sidebar", async () => {
+    const user = userEvent.setup();
+    render(<AdminNav />);
+
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+    const dialog = screen.getByRole("dialog", { name: "Log out?" });
+    expect(logoutMock).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole("button", { name: "Log out" }));
+    expect(logoutMock).toHaveBeenCalledTimes(1);
   });
 
   it("shows the cooperative brand and the platform credit in the shell", () => {

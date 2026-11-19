@@ -17,7 +17,8 @@ export default function DashboardHeader({
   name?: string | null;
   fallbackTitle: string;
   identity?: string | null;
-  onLogout: () => void;
+  /** Omitted where the surrounding shell already offers the account control. */
+  onLogout?: (() => void) | null;
 }) {
   // The session opens with a plain welcome, then settles into a greeting for
   // the time of day the officer is actually working. It keeps following the
@@ -42,7 +43,7 @@ export default function DashboardHeader({
   return (
     <div className="page-header" style={{ alignItems: "flex-start", marginBottom: 16 }}>
       <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>{title}</h1>
-      <LogoutControl identity={identity} onLogout={onLogout} />
+      {onLogout ? <LogoutControl identity={identity} onLogout={onLogout} /> : null}
     </div>
   );
 }

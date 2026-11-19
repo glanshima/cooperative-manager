@@ -30,21 +30,16 @@ function NavCard({ href, label, description }: NavCardProps) {
 }
 
 export default function AdminDashboardView({ model }: { model: AdminDashboardPageModel }) {
-  const { user, logout } = model.auth;
+  const { user } = model.auth;
   const { membersEnabled, loansEnabled, deductionsEnabled } = model.modules;
   // Admin accounts have no name of their own; a linked member record supplies
   // one for the greeting, otherwise the login is what there is to greet. The
-  // identity line above Log out stays the login an admin actually uses.
+  // account itself (login + log out) lives in the sidebar footer.
   const headingName = user ? lastNameFirst(user.member_name) ?? user.username : null;
 
   return (
     <main className="page page--900">
-      <DashboardHeader
-        name={headingName}
-        fallbackTitle="Admin Dashboard"
-        identity={user?.username ?? null}
-        onLogout={logout}
-      />
+      <DashboardHeader name={headingName} fallbackTitle="Admin Dashboard" />
 
       {model.settingsError && (
         <StatusMessage tone="error">
