@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import styles from "./Modal.module.css";
 
@@ -27,11 +28,18 @@ export default function Modal({
 }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
+
+  // Rendered into <body>: a dialog opened from inside the sidebar would
+  // otherwise be sized against the drawer, because its transform makes the
+  // drawer the containing block for position: fixed.
+  useEffect(() => setMounted(true), []);
 
   // Moving focus into the dialog on open and back to whatever opened it on
   // close is what makes this a dialog rather than an inline form that
   // happens to sit on top of the page.
   useEffect(() => {
+    if (!mounted) return;
     const opener = document.activeElement as HTMLElement | null;
     const preferred =
       dialogRef.current?.querySelector<HTMLElement>("[data-initial-focus]:not([disabled])") ??
@@ -40,7 +48,7 @@ export default function Modal({
       );
     (preferred ?? dialogRef.current)?.focus();
     return () => opener?.focus?.();
-  }, []);
+  }, [mounted]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
@@ -65,7 +73,9 @@ export default function Modal({
     }
   }
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
       className={styles.backdrop}
       data-testid={testId}
@@ -96,6 +106,7 @@ export default function Modal({
         {hint && <p className={styles.hint}>{hint}</p>}
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

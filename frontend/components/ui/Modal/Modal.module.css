@@ -3,7 +3,6 @@
   inset: 0;
   z-index: var(--z-modal, 100);
   display: flex;
-  align-items: flex-start;
   justify-content: center;
   padding: 16px;
   overflow-y: auto;
@@ -11,6 +10,9 @@
 }
 
 .dialog {
+  /* Auto margins centre the dialog vertically and fall back to the top edge
+     when it is taller than the viewport, keeping its start reachable. */
+  margin: auto;
   width: 100%;
   max-height: calc(100vh - 32px);
   max-height: calc(100dvh - 32px);

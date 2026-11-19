@@ -174,12 +174,14 @@ export default function AdminNav() {
             })}
           </ul>
         </nav>
-        <footer className={styles.footer}>
+        <div className={styles.account}>
           <LogoutControl
             variant="sidebar"
             identity={user?.username ?? null}
             onLogout={logout}
           />
+        </div>
+        <footer className={styles.footer}>
           <PlatformAttribution tone="inverse" />
         </footer>
       </aside>

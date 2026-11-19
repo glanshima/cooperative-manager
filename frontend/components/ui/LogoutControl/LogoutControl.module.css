@@ -3,7 +3,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
 }
 
 .identity {
@@ -18,18 +17,19 @@
 
 .logout {
   flex: 0 0 auto;
-  padding: 0;
+  margin-right: -8px;
+  padding: 4px 8px;
   border: none;
+  border-radius: var(--radius-sm);
   background: none;
   color: rgba(255, 255, 255, 0.88);
   font-size: 13px;
   font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  text-decoration: none;
   cursor: pointer;
-  transition: color 0.2s ease;
+  transition: background-color 0.2s ease;
 }
 
 .logout:hover {
-  color: var(--brand-lime);
+  background: rgba(255, 255, 255, 0.1);
 }

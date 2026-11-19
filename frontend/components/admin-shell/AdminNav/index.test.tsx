@@ -125,16 +125,19 @@ describe("AdminNav", () => {
     expect(within(nav).getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
-  it("keeps the signed-in account in the sidebar footer", () => {
+  it("keeps the signed-in account above the platform credit", () => {
     render(<AdminNav />);
 
     const sidebar = screen.getByRole("complementary", { name: "Admin sidebar" });
-    const footer = within(sidebar).getByText("localadmin");
+    const identity = within(sidebar).getByText("localadmin");
     const logout = within(sidebar).getByRole("button", { name: "Log out" });
+    const credit = within(sidebar).getByText("Powered by");
     expect(
-      footer.compareDocumentPosition(logout) & Node.DOCUMENT_POSITION_FOLLOWING
+      identity.compareDocumentPosition(logout) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
-    expect(within(sidebar).getByText("Powered by")).toBeInTheDocument();
+    expect(
+      logout.compareDocumentPosition(credit) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it("asks before logging out from the sidebar", async () => {
@@ -143,6 +146,8 @@ describe("AdminNav", () => {
 
     await user.click(screen.getByRole("button", { name: "Log out" }));
     const dialog = screen.getByRole("dialog", { name: "Log out?" });
+    // Portalled to <body>, so the drawer's transform cannot size or clip it.
+    expect(dialog.closest("aside")).toBeNull();
     expect(logoutMock).not.toHaveBeenCalled();
 
     await user.click(within(dialog).getByRole("button", { name: "Log out" }));
