@@ -20,6 +20,7 @@ function makeModel(overrides: Record<string, unknown> = {}): DashboardPageModel 
         is_active: true,
         account_status: "active",
         is_super_admin: false,
+        permissions: [],
         created_at: "2026-11-01T00:00:00Z",
       },
       logout: vi.fn(),

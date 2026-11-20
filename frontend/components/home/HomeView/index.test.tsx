@@ -21,6 +21,19 @@ const settings: Settings = {
   logo_url: null,
 };
 
+const ALL_PERMISSIONS = [
+  "audit.view",
+  "disbursement.prepare",
+  "deduction.view",
+  "admin.office_manage",
+  "admin.role_manage",
+  "admin.settings_manage",
+  "admin.user_manage",
+  "loan.view",
+  "member.view",
+  "repayment.view",
+];
+
 const admin: CurrentUser = {
   id: "user-1",
   username: "localadmin",
@@ -30,6 +43,7 @@ const admin: CurrentUser = {
   is_active: true,
   account_status: "active",
   is_super_admin: true,
+  permissions: ALL_PERMISSIONS,
   last_login_at: null,
   created_at: "2026-11-01T00:00:00Z",
 };
@@ -40,6 +54,7 @@ const member: CurrentUser = {
   username: "MCT-0001",
   role: "member",
   is_super_admin: false,
+  permissions: [],
 };
 
 function makeModel({
@@ -114,21 +129,45 @@ describe("HomeView", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a member only their dashboard and enabled modules", () => {
+  it("shows a member only their dashboard", () => {
     render(
       <HomeView
         model={makeModel({
           user: member,
           currentSettings: settings,
-          membersEnabled: false,
+          membersEnabled: true,
           loansEnabled: true,
         })}
       />
     );
 
     expect(screen.getByRole("link", { name: "Member Dashboard" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Loans" })).toBeInTheDocument();
+    // The Loans page is admin-only, so a member must not be offered it.
+    expect(screen.queryByRole("link", { name: "Loans" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Staff / Admin Users" })).not.toBeInTheDocument();
+  });
+
+  it("offers an admin only the areas their permissions cover", () => {
+    render(
+      <HomeView
+        model={makeModel({
+          user: { ...admin, permissions: ["member.view"] },
+          currentSettings: settings,
+          membersEnabled: true,
+          loansEnabled: true,
+          deductionsEnabled: true,
+        })}
+      />
+    );
+
+    expect(screen.getByRole("link", { name: "Members" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Loans" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Payroll Deductions (admin)" })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Staff / Admin Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Settings (admin)" })).not.toBeInTheDocument();
   });
 });

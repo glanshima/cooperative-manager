@@ -22,6 +22,9 @@ export interface CurrentUser {
   is_active: boolean;
   account_status: AccountStatus;
   is_super_admin: boolean;
+  // Permission codes the account effectively holds, resolved server-side
+  // (super admins get the whole catalogue, members none).
+  permissions: string[];
   last_login_at?: string | null;
   created_at: string;
 }

@@ -10,9 +10,9 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
-def _admin_with_settings_permission(db_session, username="brand_admin"):
+def _admin_with_branding_permission(db_session, username="brand_admin"):
     admin = make_admin_user(db_session, username=username)
-    grant_permission(db_session, admin, "admin.settings_manage")
+    grant_permission(db_session, admin, "branding.manage")
     return admin
 
 
@@ -48,7 +48,7 @@ def test_public_branding_exposes_only_the_branding_slice(client, db_session):
 def test_update_branding_fields_through_settings_put(client, db_session, seed_permissions):
     from app import models
 
-    admin = _admin_with_settings_permission(db_session, "brand_put_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_put_admin")
 
     res = client.put(
         "/api/settings",
@@ -77,7 +77,7 @@ def test_update_branding_fields_through_settings_put(client, db_session, seed_pe
 
 
 def test_branding_name_cannot_be_blank(client, db_session, seed_permissions):
-    admin = _admin_with_settings_permission(db_session, "brand_blank_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_blank_admin")
 
     res = client.put(
         "/api/settings",
@@ -89,7 +89,7 @@ def test_branding_name_cannot_be_blank(client, db_session, seed_permissions):
 
 
 def test_branding_name_cannot_exceed_the_column_width(client, db_session, seed_permissions):
-    admin = _admin_with_settings_permission(db_session, "brand_long_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_long_admin")
 
     res = client.put(
         "/api/settings",
@@ -100,7 +100,7 @@ def test_branding_name_cannot_exceed_the_column_width(client, db_session, seed_p
     assert res.status_code == 422
 
 
-def test_branding_update_requires_settings_permission(client, db_session, seed_permissions):
+def test_branding_update_requires_branding_permission(client, db_session, seed_permissions):
     admin = make_admin_user(db_session, username="brand_noperm_admin")
 
     res = client.put(
@@ -110,6 +110,48 @@ def test_branding_update_requires_settings_permission(client, db_session, seed_p
     )
 
     assert res.status_code == 403
+
+
+def test_settings_permission_alone_cannot_rename_the_cooperative(client, db_session, seed_permissions):
+    """Settings authority is routine configuration; the cooperative's
+    identity is a branding decision and needs branding.manage."""
+    admin = make_admin_user(db_session, username="brand_settingsonly_admin")
+    grant_permission(db_session, admin, "admin.settings_manage")
+
+    res = client.put(
+        "/api/settings",
+        json={"cooperative_name": "Renamed Cooperative"},
+        headers=auth_headers(admin),
+    )
+
+    assert res.status_code == 403
+    assert "branding.manage" in res.json()["detail"]
+
+
+def test_branding_permission_alone_cannot_change_module_toggles(client, db_session, seed_permissions):
+    admin = _admin_with_branding_permission(db_session, "brand_brandingonly_admin")
+
+    res = client.put(
+        "/api/settings",
+        json={"loans_module_enabled": False},
+        headers=auth_headers(admin),
+    )
+
+    assert res.status_code == 403
+    assert "admin.settings_manage" in res.json()["detail"]
+
+
+def test_branding_permission_alone_still_updates_branding_fields(client, db_session, seed_permissions):
+    admin = _admin_with_branding_permission(db_session, "brand_brandingonly_ok_admin")
+
+    res = client.put(
+        "/api/settings",
+        json={"cooperative_name": "Branding Only Cooperative"},
+        headers=auth_headers(admin),
+    )
+
+    assert res.status_code == 200
+    assert res.json()["cooperative_name"] == "Branding Only Cooperative"
 
 
 def _stub_blob(monkeypatch, url="https://blob.example.test/logo.png", uploads=None, deletes=None):
@@ -131,7 +173,7 @@ def _stub_blob(monkeypatch, url="https://blob.example.test/logo.png", uploads=No
 def test_logo_upload_stores_blob_and_audits(client, db_session, seed_permissions, monkeypatch):
     from app import models
 
-    admin = _admin_with_settings_permission(db_session, "brand_logo_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_logo_admin")
     uploads = []
     _stub_blob(monkeypatch, url="https://blob.example.test/branding/logo.png", uploads=uploads)
 
@@ -159,7 +201,7 @@ def test_logo_upload_stores_blob_and_audits(client, db_session, seed_permissions
 def test_logo_upload_rejects_a_declared_type_that_does_not_match_the_bytes(
     client, db_session, seed_permissions, monkeypatch
 ):
-    admin = _admin_with_settings_permission(db_session, "brand_mismatch_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_mismatch_admin")
     _stub_blob(monkeypatch)
 
     res = client.post(
@@ -172,7 +214,7 @@ def test_logo_upload_rejects_a_declared_type_that_does_not_match_the_bytes(
 
 
 def test_logo_upload_rejects_non_image_bytes(client, db_session, seed_permissions, monkeypatch):
-    admin = _admin_with_settings_permission(db_session, "brand_garbage_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_garbage_admin")
     _stub_blob(monkeypatch)
 
     res = client.post(
@@ -185,7 +227,7 @@ def test_logo_upload_rejects_non_image_bytes(client, db_session, seed_permission
 
 
 def test_logo_upload_rejects_svg(client, db_session, seed_permissions):
-    admin = _admin_with_settings_permission(db_session, "brand_svg_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_svg_admin")
 
     res = client.post(
         "/api/settings/logo",
@@ -196,7 +238,21 @@ def test_logo_upload_rejects_svg(client, db_session, seed_permissions):
     assert res.status_code == 422
 
 
-def test_logo_upload_requires_settings_permission(client, db_session, seed_permissions, monkeypatch):
+def test_logo_upload_requires_branding_permission(client, db_session, seed_permissions, monkeypatch):
+    settings_admin = make_admin_user(db_session, username="brand_logo_settingsonly")
+    grant_permission(db_session, settings_admin, "admin.settings_manage")
+    _stub_blob(monkeypatch)
+
+    res = client.post(
+        "/api/settings/logo",
+        json={"content_type": "image/png", "image_base64": _b64(PNG_BYTES)},
+        headers=auth_headers(settings_admin),
+    )
+
+    assert res.status_code == 403
+
+
+def test_logo_upload_rejects_members(client, db_session, seed_permissions, monkeypatch):
     member = make_member(db_session, psn="BRAND-MEMBER", email="brand_member@example.com")
     member_user = make_member_user(db_session, member)
     _stub_blob(monkeypatch)
@@ -213,7 +269,7 @@ def test_logo_upload_requires_settings_permission(client, db_session, seed_permi
 def test_logo_upload_reports_missing_storage_configuration(client, db_session, seed_permissions, monkeypatch):
     from app import blob_storage
 
-    admin = _admin_with_settings_permission(db_session, "brand_nostore_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_nostore_admin")
 
     def not_configured(**kwargs):
         raise blob_storage.BlobNotConfigured("no token")
@@ -232,7 +288,7 @@ def test_logo_upload_reports_missing_storage_configuration(client, db_session, s
 def test_replacing_a_logo_deletes_the_previous_blob(client, db_session, seed_permissions, monkeypatch):
     from app import blob_storage, models
 
-    admin = _admin_with_settings_permission(db_session, "brand_replace_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_replace_admin")
     deletes = []
     urls = iter(["https://blob.example.test/first.png", "https://blob.example.test/second.png"])
 
@@ -266,7 +322,7 @@ def test_replacing_a_logo_deletes_the_previous_blob(client, db_session, seed_per
 def test_logo_removal_clears_the_stored_url_and_audits(client, db_session, seed_permissions, monkeypatch):
     from app import blob_storage, models
 
-    admin = _admin_with_settings_permission(db_session, "brand_remove_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_remove_admin")
     db_session.add(models.Settings(logo_url="https://blob.example.test/old.png"))
     db_session.commit()
     deletes = []
@@ -292,7 +348,7 @@ def test_logo_removal_failure_keeps_the_record_pointing_at_the_blob(
 ):
     from app import blob_storage, models
 
-    admin = _admin_with_settings_permission(db_session, "brand_removefail_admin")
+    admin = _admin_with_branding_permission(db_session, "brand_removefail_admin")
     db_session.add(models.Settings(logo_url="https://blob.example.test/stuck.png"))
     db_session.commit()
 

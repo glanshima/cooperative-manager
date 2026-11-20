@@ -60,6 +60,9 @@ PERMISSION_CATALOGUE = [
     ("admin.permission_manage", "Administration", "View permissions and manage role-permission grants"),
     ("admin.office_manage", "Administration", "Create and update offices/positions"),
     ("admin.settings_manage", "Administration", "Edit cooperative-wide settings"),
+    # Branding
+    ("branding.view", "Branding", "View the cooperative branding settings"),
+    ("branding.manage", "Branding", "Edit the cooperative name, monogram and logo"),
     # Audit
     ("audit.view", "Audit", "View the audit trail"),
     ("audit.export", "Audit", "Export audit events"),

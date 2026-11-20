@@ -9,9 +9,11 @@ import { getSettings } from "@/lib/api";
 import { useAdminNav } from "../hooks/useAdminNav";
 import AdminNav from ".";
 
-const { pathnameMock, logoutMock } = vi.hoisted(() => ({
+const { pathnameMock, logoutMock, authState } = vi.hoisted(() => ({
   pathnameMock: vi.fn(() => "/admin/dashboard"),
   logoutMock: vi.fn(),
+  // Mutable so a test can model "still resolving" (user: null).
+  authState: { user: null as Record<string, unknown> | null },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -54,11 +56,27 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("@/lib/useAuth", () => ({
   useAuth: () => ({
-    user: { username: "localadmin" },
-    loading: false,
+    user: authState.user,
+    loading: authState.user === null,
     logout: logoutMock,
   }),
 }));
+
+const ALL_PERMISSIONS = [
+  "admin.office_manage",
+  "admin.role_manage",
+  "admin.settings_manage",
+  "admin.user_manage",
+  "audit.view",
+  "disbursement.prepare",
+  "disbursement.submit",
+  "deduction.view",
+  "loan.view",
+  "member.view",
+  "repayment.view",
+];
+
+const adminUser = { username: "localadmin", permissions: ALL_PERMISSIONS };
 
 const getSettingsMock = vi.mocked(getSettings);
 
@@ -118,6 +136,7 @@ function stubDrawerBreakpoint(matchesDrawer: boolean) {
 beforeEach(() => {
   pathnameMock.mockReturnValue("/admin/dashboard");
   getSettingsMock.mockResolvedValue(allModulesOn);
+  authState.user = adminUser;
   stubDrawerBreakpoint(false);
 });
 
@@ -445,11 +464,48 @@ describe("AdminNav", () => {
       "false"
     );
   });
+
+  it("renders no admin chrome until the signed-in account resolves", () => {
+    authState.user = null;
+    render(<AdminNav />);
+
+    expect(screen.queryByRole("navigation", { name: "Admin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Admin sidebar" })).not.toBeInTheDocument();
+  });
+
+  it("offers each officer only the areas their permissions cover", async () => {
+    authState.user = { username: "officer", permissions: ["member.view"] };
+    render(<AdminNav />);
+
+    const nav = screen.getByRole("navigation", { name: "Admin" });
+    expect(await within(nav).findByRole("link", { name: "Members" })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+    expect(
+      within(nav).queryByRole("button", { name: "Loan Management" })
+    ).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Payroll deductions" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a menu when only some of its screens are permitted", async () => {
+    authState.user = { username: "loan_officer", permissions: ["loan.view", "repayment.view"] };
+    render(<AdminNav />);
+
+    const nav = screen.getByRole("navigation", { name: "Admin" });
+    await within(nav).findByRole("button", { name: "Loan Management" });
+
+    expect(within(nav).getByRole("link", { name: "Loans" })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Loan applications" })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Loan repayments" })).toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Disbursements" })).not.toBeInTheDocument();
+  });
 });
 
 describe("useAdminNav", () => {
   it("groups the loan screens and settings screens under their own menus", async () => {
-    const { result } = renderHook(() => useAdminNav());
+    const { result } = renderHook(() => useAdminNav(ALL_PERMISSIONS));
 
     await waitFor(() =>
       expect(result.current.items.map((item) => item.label)).toEqual([
@@ -481,7 +537,7 @@ describe("useAdminNav", () => {
 
   it("keeps only the core admin areas when every module is off", async () => {
     getSettingsMock.mockResolvedValue(allModulesOff);
-    const { result } = renderHook(() => useAdminNav());
+    const { result } = renderHook(() => useAdminNav(ALL_PERMISSIONS));
 
     await waitFor(() =>
       expect(result.current.items.map((item) => item.label)).toEqual(CORE_LABELS)
@@ -490,10 +546,42 @@ describe("useAdminNav", () => {
 
   it("keeps only the core admin areas when module settings cannot be loaded", async () => {
     getSettingsMock.mockRejectedValue(new Error("settings unavailable"));
-    const { result } = renderHook(() => useAdminNav());
+    const { result } = renderHook(() => useAdminNav(ALL_PERMISSIONS));
 
     await waitFor(() =>
       expect(result.current.items.map((item) => item.label)).toEqual(CORE_LABELS)
     );
+  });
+
+  it("drops every area the account has no permission for", async () => {
+    const { result } = renderHook(() => useAdminNav([]));
+
+    // Dashboard has no permission gate; nothing else is reached.
+    expect(result.current.items.map((item) => item.label)).toEqual(["Dashboard"]);
+  });
+
+  it("shows only the permitted settings screens", async () => {
+    const { result } = renderHook(() =>
+      useAdminNav(["admin.role_manage", "branding.view"])
+    );
+
+    await waitFor(() =>
+      expect(result.current.items.map((item) => item.label)).toEqual(["Dashboard", "Settings"])
+    );
+
+    const settings = result.current.items.find((item) => item.label === "Settings");
+    expect(
+      settings?.kind === "group" && settings.children.map((child) => child.label)
+    ).toEqual(["Roles and permissions", "Cooperative settings"]);
+  });
+
+  it("opens the settings page for branding-only accounts without the rest", async () => {
+    const { result } = renderHook(() => useAdminNav(["branding.manage"]));
+
+    const settings = result.current.items.find((item) => item.label === "Settings");
+    expect(
+      settings?.kind === "group" && settings.children.map((child) => child.href)
+    ).toEqual(["/admin/settings"]);
+    expect(result.current.items.map((item) => item.label)).not.toContain("Audit log");
   });
 });

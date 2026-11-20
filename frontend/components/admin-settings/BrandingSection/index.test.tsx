@@ -70,6 +70,17 @@ describe("BrandingSection", () => {
     expect(screen.getByLabelText("Monogram")).toHaveValue("R");
   });
 
+  it("shows the branding read-only without the manage permission", () => {
+    render(<BrandingSection settings={settings} setField={vi.fn()} readOnly />);
+
+    expect(screen.getByLabelText("Cooperative name")).toBeDisabled();
+    expect(screen.getByLabelText("Short name")).toBeDisabled();
+    expect(screen.getByLabelText("Monogram")).toBeDisabled();
+    expect(screen.getByText(/view-only access to branding/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload logo" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Choose a logo image")).not.toBeInTheDocument();
+  });
+
   it("shows the monogram until a logo is stored", () => {
     render(<BrandingSection settings={settings} setField={vi.fn()} />);
 

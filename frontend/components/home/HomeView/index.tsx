@@ -1,5 +1,11 @@
 import LogoutControl from "@/components/ui/LogoutControl";
 import { userDisplayName } from "@/lib/names";
+import {
+  DISBURSEMENT_PERMISSIONS,
+  SETTINGS_PAGE_PERMISSIONS,
+  hasAnyPermission,
+  hasPermission,
+} from "@/lib/permissions";
 import type { HomePageModel } from "../hooks/useHomePage";
 
 export default function HomeView({ model }: { model: HomePageModel }) {
@@ -19,6 +25,9 @@ export default function HomeView({ model }: { model: HomePageModel }) {
   }
 
   const { membersEnabled, loansEnabled, deductionsEnabled } = model.modules;
+  const permissions = user.permissions ?? [];
+  const can = (code: string) => hasPermission(permissions, code);
+  const canAny = (codes: readonly string[]) => hasAnyPermission(permissions, codes);
 
   return (
     <main className="page">
@@ -43,52 +52,60 @@ export default function HomeView({ model }: { model: HomePageModel }) {
               <a href="/dashboard">Member Dashboard</a>
             </li>
           )}
-          {membersEnabled && (
+          {membersEnabled && can("member.view") && (
             <li>
               <a href="/members">Members</a>
             </li>
           )}
-          {loansEnabled && (
+          {loansEnabled && can("loan.view") && (
             <li>
               <a href="/loans">Loans</a>
             </li>
           )}
-          {user.role === "admin" && loansEnabled && (
-            <>
-              <li>
-                <a href="/admin/loan-applications">Loan Applications (admin review)</a>
-              </li>
-              <li>
-                <a href="/admin/disbursements">Disbursements (admin)</a>
-              </li>
-              <li>
-                <a href="/admin/loan-repayments">Loan Repayments (admin review)</a>
-              </li>
-            </>
+          {loansEnabled && user.role === "admin" && can("loan.view") && (
+            <li>
+              <a href="/admin/loan-applications">Loan Applications (admin review)</a>
+            </li>
           )}
-          {user.role === "admin" && deductionsEnabled && (
+          {loansEnabled && user.role === "admin" && canAny(DISBURSEMENT_PERMISSIONS) && (
+            <li>
+              <a href="/admin/disbursements">Disbursements (admin)</a>
+            </li>
+          )}
+          {loansEnabled && user.role === "admin" && can("repayment.view") && (
+            <li>
+              <a href="/admin/loan-repayments">Loan Repayments (admin review)</a>
+            </li>
+          )}
+          {user.role === "admin" && deductionsEnabled && can("deduction.view") && (
             <li>
               <a href="/admin/deductions">Payroll Deductions (admin)</a>
             </li>
           )}
-          {user.role === "admin" && (
-            <>
-              <li>
-                <a href="/admin/users">Staff / Admin Users</a>
-              </li>
-              <li>
-                <a href="/admin/offices">Offices</a>
-              </li>
-              <li>
-                <a href="/admin/roles">Roles</a>
-              </li>
-              <li>
-                <a href="/admin/audit">Audit log</a>
-              </li>
-              <li>
-                <a href="/admin/settings">Settings (admin)</a>
-              </li>
-            </>
+          {user.role === "admin" && can("admin.user_manage") && (
+            <li>
+              <a href="/admin/users">Staff / Admin Users</a>
+            </li>
+          )}
+          {user.role === "admin" && can("admin.office_manage") && (
+            <li>
+              <a href="/admin/offices">Offices</a>
+            </li>
+          )}
+          {user.role === "admin" && can("admin.role_manage") && (
+            <li>
+              <a href="/admin/roles">Roles</a>
+            </li>
+          )}
+          {user.role === "admin" && can("audit.view") && (
+            <li>
+              <a href="/admin/audit">Audit log</a>
+            </li>
+          )}
+          {user.role === "admin" && canAny(SETTINGS_PAGE_PERMISSIONS) && (
+            <li>
+              <a href="/admin/settings">Settings (admin)</a>
+            </li>
           )}
         </ul>
       )}

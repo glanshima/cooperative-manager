@@ -13,7 +13,7 @@ from ..account_lifecycle import (
 )
 from ..auth import hash_password, verify_password, create_access_token
 from ..database import get_db
-from ..deps import get_current_user, require_admin
+from ..deps import get_current_user, require_admin, require_permission, user_permission_codes
 from ..self_conflict import require_no_member_conflict
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -182,21 +182,21 @@ def get_me(
     db: Session = Depends(get_db),
 ):
     out = schemas.UserOut.model_validate(current_user)
+    update: dict = {"permissions": user_permission_codes(db, current_user)}
     if current_user.member_id:
-        member_name = (
+        update["member_name"] = (
             db.query(models.Member.name)
             .filter(models.Member.id == current_user.member_id)
             .scalar()
         )
-        out = out.model_copy(update={"member_name": member_name})
-    return out
+    return out.model_copy(update=update)
 
 
 @router.post("/create-member-login", response_model=schemas.UserOut, status_code=201)
 def create_member_login(
     payload: schemas.CreateMemberLoginRequest,
     request: Request,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_permission("member.update")),
     db: Session = Depends(get_db),
 ):
     member = db.query(models.Member).filter(models.Member.id == payload.member_id).first()
@@ -263,7 +263,7 @@ def create_member_login(
 def reset_member_password(
     payload: schemas.CreateMemberLoginRequest,
     request: Request,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_permission("member.update")),
     db: Session = Depends(get_db),
 ):
     """Admin resets an existing member's password (e.g. they forgot it),

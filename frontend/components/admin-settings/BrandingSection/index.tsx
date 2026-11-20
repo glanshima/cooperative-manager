@@ -38,9 +38,11 @@ function readAsBase64(file: File): Promise<string> {
 export default function BrandingSection({
   settings,
   setField,
+  readOnly = false,
 }: {
   settings: Settings;
   setField: SettingsPageModel["setField"];
+  readOnly?: boolean;
 }) {
   const { setBranding } = useBranding();
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -135,12 +137,19 @@ export default function BrandingSection({
         Shown on the sign-in screens, the admin sidebar and the member dashboard. Save changes to
         apply the name and monogram everywhere.
       </p>
+      {readOnly && (
+        <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
+          You have view-only access to branding. The branding.manage permission is required to
+          change it.
+        </p>
+      )}
 
       <div className="form-grid" style={{ marginBottom: 16 }}>
         <label>
           Cooperative name
           <input
             required
+            disabled={readOnly}
             maxLength={120}
             value={settings.cooperative_name}
             onChange={(e) => setField("cooperative_name", e.target.value)}
@@ -151,6 +160,7 @@ export default function BrandingSection({
           Short name
           <input
             required
+            disabled={readOnly}
             maxLength={32}
             value={settings.cooperative_short_name}
             onChange={(e) => setField("cooperative_short_name", e.target.value)}
@@ -161,6 +171,7 @@ export default function BrandingSection({
           Monogram
           <input
             required
+            disabled={readOnly}
             maxLength={8}
             value={settings.cooperative_monogram}
             onChange={(e) => setField("cooperative_monogram", e.target.value)}
@@ -185,33 +196,35 @@ export default function BrandingSection({
         </div>
       </div>
 
-      <div className={styles.actions}>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={ALLOWED_LOGO_TYPES.join(",")}
-          onChange={handleFileChange}
-          aria-label="Choose a logo image"
-        />
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={handleUpload}
-          disabled={!pendingFile || busy}
-        >
-          {busy ? "Uploading..." : "Upload logo"}
-        </button>
-        {settings.logo_url && (
+      {!readOnly && (
+        <div className={styles.actions}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ALLOWED_LOGO_TYPES.join(",")}
+            onChange={handleFileChange}
+            aria-label="Choose a logo image"
+          />
           <button
             type="button"
-            className="btn btn-secondary"
-            onClick={handleRemove}
-            disabled={busy}
+            className="btn btn-primary"
+            onClick={handleUpload}
+            disabled={!pendingFile || busy}
           >
-            Remove logo
+            {busy ? "Uploading..." : "Upload logo"}
           </button>
-        )}
-      </div>
+          {settings.logo_url && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handleRemove}
+              disabled={busy}
+            >
+              Remove logo
+            </button>
+          )}
+        </div>
+      )}
 
       {feedback && (
         <StatusMessage

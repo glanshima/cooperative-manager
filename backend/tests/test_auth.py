@@ -1,4 +1,10 @@
-from tests.conftest import make_admin_user, make_member, make_member_user
+from tests.conftest import (
+    auth_headers,
+    grant_permission,
+    make_admin_user,
+    make_member,
+    make_member_user,
+)
 from app import models
 
 
@@ -120,3 +126,46 @@ def test_me_only_names_an_admin_through_a_linked_member(client, db_session):
     assert unlinked.member_id is None
     assert me("admin_unlinked")["member_name"] is None
     assert me("admin_linked")["member_name"] == "Bola Ade"
+
+
+def test_me_reports_only_the_permissions_the_account_holds(client, db_session, seed_permissions):
+    admin = make_admin_user(db_session, username="admin_me_scoped")
+    grant_permission(db_session, admin, "member.view", "loan.view")
+
+    body = client.get("/api/auth/me", headers=auth_headers(admin)).json()
+
+    assert body["permissions"] == ["loan.view", "member.view"]
+
+
+def test_me_reports_the_whole_catalogue_for_a_super_admin(client, db_session, seed_permissions):
+    from app.permissions_catalogue import PERMISSION_CODES
+
+    admin = make_admin_user(db_session, username="admin_me_super", super_admin=True)
+
+    body = client.get("/api/auth/me", headers=auth_headers(admin)).json()
+
+    assert body["permissions"] == sorted(PERMISSION_CODES)
+    assert "branding.manage" in body["permissions"]
+
+
+def test_me_reports_no_permissions_for_a_member(client, db_session):
+    member = make_member(db_session, psn="PSN-ME-PERMS", name="Ada Obi")
+    member_user = make_member_user(db_session, member)
+
+    body = client.get("/api/auth/me", headers=auth_headers(member_user)).json()
+
+    assert body["permissions"] == []
+
+
+def test_create_member_login_requires_member_update_permission(client, db_session, seed_permissions):
+    member = make_member(db_session, psn="PSN-CREATE-NOPERM", email="create-noperm@example.com")
+    admin = make_admin_user(db_session, username="admin_create_noperm")
+    grant_permission(db_session, admin, "admin.user_manage")
+
+    res = client.post(
+        "/api/auth/create-member-login",
+        json={"member_id": str(member.id), "temporary_password": "ValidPassw0rd!"},
+        headers=auth_headers(admin),
+    )
+
+    assert res.status_code == 403

@@ -21,8 +21,15 @@ function submenuId(label: string) {
 }
 
 export default function AdminNav() {
-  const { items } = useAdminNav();
-  const { user, logout } = useAuth();
+  // The shell owns the auth gate: until /me resolves, nothing is rendered,
+  // so a member or signed-out visitor never sees a flash of admin chrome
+  // before the redirect lands.
+  const { user, logout } = useAuth({
+    requireAuth: true,
+    requirePasswordChanged: true,
+    requireRole: "admin",
+  });
+  const { items } = useAdminNav(user?.permissions ?? []);
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -76,6 +83,8 @@ export default function AdminNav() {
   function handleNavClick() {
     setDrawerOpen(false);
   }
+
+  if (!user) return null;
 
   return (
     <>

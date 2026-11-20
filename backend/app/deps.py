@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from . import models
 from .auth import decode_access_token
 from .database import get_db
+from .permissions_catalogue import PERMISSION_CODES
 
 # tokenUrl is just for the OpenAPI docs UI; the actual login endpoint is
 # POST /api/auth/login as defined in routers/auth.py
@@ -115,6 +116,37 @@ def user_has_permission(db: Session, user: models.User, code: str) -> bool:
         .first()
         is not None
     )
+
+
+def user_permission_codes(db: Session, user: models.User) -> list[str]:
+    """Every permission code the user effectively holds, for the client to
+    filter navigation with. Mirrors user_has_permission exactly: super
+    admins hold the whole catalogue, other admins only what their active
+    role assignments grant, members hold nothing."""
+    if user.role != models.UserRole.ADMIN:
+        return []
+    if user.is_super_admin:
+        # The catalogue, not the permissions table: a deployment whose
+        # catalogue gained codes that the seed script has not inserted yet
+        # must not make a super admin look narrower than they are.
+        return sorted(PERMISSION_CODES)
+    rows = (
+        db.query(models.Permission.code)
+        .join(models.RolePermission, models.RolePermission.permission_id == models.Permission.id)
+        .join(models.Role, models.RolePermission.role_id == models.Role.id)
+        .join(
+            models.UserRoleAssignment,
+            models.UserRoleAssignment.role_id == models.Role.id,
+        )
+        .filter(
+            models.UserRoleAssignment.user_id == user.id,
+            models.UserRoleAssignment.is_active.is_(True),
+            models.Role.is_active.is_(True),
+        )
+        .distinct()
+        .all()
+    )
+    return sorted(code for (code,) in rows)
 
 
 def require_any_permission(*codes: str):

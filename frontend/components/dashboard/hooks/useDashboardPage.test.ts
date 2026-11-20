@@ -45,6 +45,7 @@ const user: CurrentUser = {
   is_active: true,
   account_status: "active",
   is_super_admin: false,
+  permissions: [],
   last_login_at: null,
   created_at: "2026-11-01T00:00:00Z",
 };

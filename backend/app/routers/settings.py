@@ -7,13 +7,22 @@ from sqlalchemy.orm import Session
 
 from .. import audit_service, blob_storage, models, schemas, validation
 from ..database import get_db
-from ..deps import get_current_user, require_permission
+from ..deps import (
+    get_current_user,
+    require_admin,
+    require_permission,
+    user_has_permission,
+)
 
 logger = logging.getLogger("mact.settings")
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 LOGO_EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+# Owned by branding.manage rather than admin.settings_manage: editing the
+# cooperative's identity is a branding decision, not routine configuration.
+BRANDING_FIELDS = {"cooperative_name", "cooperative_short_name", "cooperative_monogram"}
 
 
 def _get_or_create_settings(db: Session) -> models.Settings:
@@ -41,11 +50,31 @@ def get_settings(
 def update_settings(
     payload: schemas.SettingsUpdate,
     request: Request,
-    current_user: models.User = Depends(require_permission("admin.settings_manage")),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    settings = _get_or_create_settings(db)
+    """Split by field: branding fields need branding.manage, everything
+    else needs admin.settings_manage. Requiring both up front would force
+    every branding editor to hold settings authority too, and checking
+    only the payload's fields keeps a branding.manage holder from
+    slipping a module toggle through the same request."""
     changes = payload.model_dump(exclude_unset=True)
+    if set(changes) - BRANDING_FIELDS and not user_has_permission(
+        db, current_user, "admin.settings_manage"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have the 'admin.settings_manage' permission for this action.",
+        )
+    if BRANDING_FIELDS & changes.keys() and not user_has_permission(
+        db, current_user, "branding.manage"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have the 'branding.manage' permission for this action.",
+        )
+
+    settings = _get_or_create_settings(db)
     previous = {field: getattr(settings, field) for field in changes}
     for field, value in changes.items():
         setattr(settings, field, value)
@@ -70,7 +99,7 @@ def update_settings(
 def upload_logo(
     payload: schemas.LogoUploadIn,
     request: Request,
-    current_user: models.User = Depends(require_permission("admin.settings_manage")),
+    current_user: models.User = Depends(require_permission("branding.manage")),
     db: Session = Depends(get_db),
 ):
     """Replace the cooperative logo. The declared content type is checked
@@ -131,7 +160,7 @@ def upload_logo(
 @router.delete("/logo", response_model=schemas.SettingsOut)
 def remove_logo(
     request: Request,
-    current_user: models.User = Depends(require_permission("admin.settings_manage")),
+    current_user: models.User = Depends(require_permission("branding.manage")),
     db: Session = Depends(get_db),
 ):
     settings = _get_or_create_settings(db)

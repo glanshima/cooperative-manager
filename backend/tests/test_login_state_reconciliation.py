@@ -127,7 +127,7 @@ def test_create_login_rejected_when_member_login_already_exists(client, db_sessi
     member = make_member(db_session, psn="LSR-DUP", email="lsr-dup@example.com")
     make_member_user(db_session, member)
     admin = make_admin_user(db_session, username="lsr_dup_admin")
-    grant_permission(db_session, admin, "admin.user_manage")
+    grant_permission(db_session, admin, "member.update")
 
     res = client.post(
         "/api/auth/create-member-login",
@@ -156,7 +156,7 @@ def test_create_login_allowed_when_only_an_admin_account_is_linked(client, db_se
     make_admin_user(db_session, username="lsr_adminonly_exco", member_id=member.id)
 
     admin = make_admin_user(db_session, username="lsr_adminonly_creator")
-    grant_permission(db_session, admin, "admin.user_manage")
+    grant_permission(db_session, admin, "member.update")
 
     res = client.post(
         "/api/auth/create-member-login",

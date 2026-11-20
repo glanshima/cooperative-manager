@@ -535,6 +535,9 @@ class UserOut(BaseModel):
     is_active: bool
     account_status: AccountStatus
     is_super_admin: bool
+    # Only populated by GET /api/auth/me: the codes the caller actually
+    # holds, so the client can hide areas the backend would 403 anyway.
+    permissions: list[str] = []
     last_login_at: Optional[datetime] = None
     created_at: datetime
 

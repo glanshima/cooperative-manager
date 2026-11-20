@@ -16,5 +16,11 @@ export default function AdminSettingsPage() {
 
   if (authLoading) return <PageSkeleton />;
 
-  return <SettingsView model={model} identity={userDisplayName(user)} />;
+  return (
+    <SettingsView
+      model={model}
+      identity={userDisplayName(user)}
+      permissions={user?.permissions ?? []}
+    />
+  );
 }

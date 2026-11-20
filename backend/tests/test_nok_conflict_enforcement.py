@@ -428,7 +428,7 @@ def test_admin_cannot_change_next_of_kins_login_status_or_delete_them(client, db
 
 def test_admin_cannot_create_or_reset_next_of_kins_login(client, db_session, seed_permissions):
     own_member, admin = _admin_with_member(
-        db_session, "nok_login_admin", "NOK-LOGIN-1A", "noklogin1a@example.com"
+        db_session, "nok_login_admin", "NOK-LOGIN-1A", "noklogin1a@example.com", "member.update"
     )
     target = make_member(db_session, psn="NOK-LOGIN-1B", email="noklogin1b@example.com")
     _link_nok(db_session, own_member, target)  # reverse direction

@@ -55,6 +55,15 @@ const adminUser: CurrentUser = {
   is_active: true,
   account_status: "active",
   is_super_admin: true,
+  permissions: [
+    "admin.office_manage",
+    "admin.role_manage",
+    "admin.settings_manage",
+    "admin.user_manage",
+    "audit.view",
+    "loan.view",
+    "member.view",
+  ],
   last_login_at: null,
   created_at: "2026-11-01T00:00:00Z",
 };
