@@ -118,6 +118,7 @@ and add:
 | `DATABASE_URL` | the pooled Neon connection string from A2 |
 | `SECRET_KEY` | any long random string (e.g. run `openssl rand -hex 32` locally) |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` for now — you'll update this in Part E |
+| `APP_URL` | public frontend origin used in emailed links, e.g. `https://koperra.sidgakstech.me` |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob read/write token (see below) |
 | `RESEND_API_KEY` | Resend API key from https://resend.com/api-keys (backend only) |
 | `FROM_EMAIL` | verified sender on your Resend domain, e.g. `notifications@mail.yourdomain.example` |
@@ -202,7 +203,15 @@ it to also allow the live frontend:
    ```
    (Add `http://localhost:3000` too, comma-separated, if you still want to
    test locally against the live backend: `http://localhost:3000,https://sidgaks-cooperative-manager.vercel.app`)
-3. Go to **Deployments** → find the latest deployment → click the **⋯**
+
+   Every origin the frontend is served from must be listed, comma-separated
+   with no spaces (`main.py` splits the value on `","` verbatim). A custom
+   domain attached later — e.g. `https://koperra.sidgakstech.me` — has to be
+   added here too, or the browser blocks every API call and the app reports
+   "Could not reach the server".
+3. Set `APP_URL` to the same public frontend origin. Password-reset links
+   are built from it, and it defaults to `http://localhost:3000`.
+4. Go to **Deployments** → find the latest deployment → click the **⋯**
    menu → **Redeploy**. Environment variable changes don't take effect
    until redeploy.
 
@@ -262,7 +271,7 @@ Refresh the live `/members` page — the migrated rows should now appear.
 |---|---|---|
 | Build fails: `Error: Function Runtimes must have a valid version, for example now-php@1.0.0` | `vercel.json` has an invalid `runtime` field (e.g. `"python3.12"`) | Remove the `runtime` key entirely — FastAPI at `app/main.py` is zero-config auto-detected. Keep only `functions`/`maxDuration` if needed |
 | `/api/health` returns 500 | Bad `DATABASE_URL` | Confirm pooled connection string, `?sslmode=require` present |
-| Frontend loads but member list never appears, browser console shows a CORS error | `ALLOWED_ORIGINS` doesn't include the frontend URL | Update env var in backend project, redeploy |
+| Frontend shows "Could not reach the server" (console shows a CORS error) | `ALLOWED_ORIGINS` doesn't include the origin the frontend is served from | Add that origin to the backend env var, redeploy |
 | Frontend shows `Failed to fetch` | `NEXT_PUBLIC_API_URL` wrong or backend not deployed yet | Confirm backend URL, redeploy frontend after fixing |
 | Migration script errors on `gen_random_uuid()` | `pgcrypto` extension not enabled | Run the `CREATE EXTENSION` statement from A3 |
 | First request after idle is slow | Neon autosuspend + cold start | Expected on free tier; not an error |
