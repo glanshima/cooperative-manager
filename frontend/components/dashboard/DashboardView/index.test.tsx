@@ -6,6 +6,8 @@ import DashboardView from ".";
 
 // The contribution card fetches its own data; this suite is about the header.
 vi.mock("../ContributionCard", () => ({ default: () => null }));
+// The bell polls its own endpoint and has its own suite.
+vi.mock("@/components/notifications/NotificationBell", () => ({ default: () => null }));
 
 function makeModel(overrides: Record<string, unknown> = {}): DashboardPageModel {
   return {

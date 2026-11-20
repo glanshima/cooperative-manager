@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas, audit_service, validation
+from .. import models, schemas, audit_service, notification_service, validation
 from ..database import get_db
 from ..deps import (
     get_current_user,
@@ -252,6 +252,19 @@ def verify_repayment(
         if loan.amount_repaid >= loan.total_repayable:
             loan.status = models.LoanStatus.COMPLETED
 
+        notification_service.notify_member(
+            db,
+            loan.member,
+            category=models.NotificationCategory.REPAYMENT,
+            title="Repayment verified",
+            body=(
+                f"Your repayment of {repayment.amount_claimed} toward your "
+                f"{loan.loan_type.name if loan.loan_type else 'loan'} was verified. "
+                f"Remaining balance: {loan.total_repayable - loan.amount_repaid}."
+            ),
+            link_path="/dashboard",
+        )
+
         db.commit()
         db.refresh(repayment)
 
@@ -289,6 +302,15 @@ def verify_repayment(
             raise HTTPException(status_code=400, detail="rejection_reason is required when rejecting")
         repayment.status = models.RepaymentVerificationStatus.REJECTED
         repayment.rejection_reason = payload.rejection_reason
+
+        notification_service.notify_member(
+            db,
+            repayment.loan.member,
+            category=models.NotificationCategory.REPAYMENT,
+            title="Repayment not verified",
+            body=f"Your submitted repayment could not be verified: {payload.rejection_reason}",
+            link_path="/dashboard",
+        )
 
         db.commit()
         db.refresh(repayment)

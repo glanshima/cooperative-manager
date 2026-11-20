@@ -6,8 +6,10 @@ import { useEffect, useRef, useState } from "react";
 
 import CooperativeBrand from "@/components/branding/CooperativeBrand";
 import PlatformAttribution from "@/components/branding/PlatformAttribution";
+import NotificationBell from "@/components/notifications/NotificationBell";
 import LogoutControl from "@/components/ui/LogoutControl";
 import { useAuth } from "@/lib/useAuth";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 
 import { useAdminNav } from "../hooks/useAdminNav";
 import styles from "./AdminNav.module.css";
@@ -25,6 +27,9 @@ export default function AdminNav() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  // Below 900px the sidebar is an off-canvas drawer, so the bell rides in the
+  // top bar instead; above it, it shares the brand row with the wordmark.
+  const drawerNav = useMediaQuery("(max-width: 900px)");
 
   const activeGroupLabel = items.find(
     (item) => item.kind === "group" && item.children.some((child) => pathname === child.href)
@@ -76,17 +81,20 @@ export default function AdminNav() {
     <>
       <header className={styles.topbar}>
         <CooperativeBrand href="/admin/dashboard" />
-        <button
-          ref={menuButtonRef}
-          type="button"
-          className={styles.menuButton}
-          aria-expanded={drawerOpen}
-          aria-controls={SIDEBAR_ID}
-          aria-label={drawerOpen ? "Close admin navigation" : "Open admin navigation"}
-          onClick={() => setDrawerOpen((current) => !current)}
-        >
-          Menu
-        </button>
+        <div className={styles.topbarActions}>
+          {drawerNav ? <NotificationBell /> : null}
+          <button
+            ref={menuButtonRef}
+            type="button"
+            className={styles.menuButton}
+            aria-expanded={drawerOpen}
+            aria-controls={SIDEBAR_ID}
+            aria-label={drawerOpen ? "Close admin navigation" : "Open admin navigation"}
+            onClick={() => setDrawerOpen((current) => !current)}
+          >
+            Menu
+          </button>
+        </div>
       </header>
       <div
         className={styles.scrim}
@@ -102,14 +110,17 @@ export default function AdminNav() {
       >
         <div className={styles.brandRow}>
           <CooperativeBrand href="/admin/dashboard" tone="inverse" />
-          <button
-            type="button"
-            className={styles.closeButton}
-            aria-label="Close menu"
-            onClick={closeDrawer}
-          >
-            ×
-          </button>
+          <div className={styles.brandActions}>
+            {drawerNav ? null : <NotificationBell tone="inverse" />}
+            <button
+              type="button"
+              className={styles.closeButton}
+              aria-label="Close menu"
+              onClick={closeDrawer}
+            >
+              ×
+            </button>
+          </div>
         </div>
         <nav aria-label="Admin" className={styles.nav}>
           <ul className={styles.list}>

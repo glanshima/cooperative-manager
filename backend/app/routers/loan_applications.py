@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas, audit_service
+from .. import models, schemas, audit_service, notification_service
 from ..database import get_db
 from ..deps import (
     get_current_user,
@@ -308,6 +308,17 @@ def verify_payment(
 
     if payload.approved:
         application.payment_status = models.PaymentVerificationStatus.VERIFIED
+        notification_service.notify_member(
+            db,
+            application.member,
+            category=models.NotificationCategory.LOAN,
+            title="Loan form payment verified",
+            body=(
+                f"Your payment for the {application.loan_type.name} application has been "
+                "verified. The application now awaits a decision."
+            ),
+            link_path="/dashboard",
+        )
     else:
         if not payload.rejection_reason:
             raise HTTPException(status_code=400, detail="rejection_reason is required when rejecting a payment")
@@ -316,6 +327,17 @@ def verify_payment(
         # An invalid payment means the application itself can't proceed
         application.status = models.LoanApplicationStatus.REJECTED
         application.admin_notes = f"Payment not verified: {payload.rejection_reason}"
+        notification_service.notify_member(
+            db,
+            application.member,
+            category=models.NotificationCategory.LOAN,
+            title="Loan form payment could not be verified",
+            body=(
+                f"Your payment for the {application.loan_type.name} application was not "
+                f"verified: {payload.rejection_reason}"
+            ),
+            link_path="/dashboard",
+        )
 
     db.commit()
     db.refresh(application)
@@ -435,6 +457,20 @@ def decide_application(
         application.status = models.LoanApplicationStatus.APPROVED
         # resulting_loan_id stays null -- set only by /disburse below
 
+        notification_service.notify_member(
+            db,
+            application.member,
+            category=models.NotificationCategory.LOAN,
+            title="Loan application approved",
+            body=(
+                f"Your {application.loan_type.name} application for "
+                f"{application.approved_amount} was approved for "
+                f"{application.approved_tenure_months} months. Disbursement is a "
+                "separate step and will be confirmed when it happens."
+            ),
+            link_path="/dashboard",
+        )
+
         db.commit()
         db.refresh(application)
 
@@ -455,6 +491,18 @@ def decide_application(
     else:
         application.status = models.LoanApplicationStatus.REJECTED
         application.can_reapply = payload.can_reapply
+        notification_service.notify_member(
+            db,
+            application.member,
+            category=models.NotificationCategory.LOAN,
+            title="Loan application not approved",
+            body=(
+                f"Your {application.loan_type.name} application for "
+                f"{application.requested_amount} was not approved."
+                + (f" Reason: {payload.admin_notes}" if payload.admin_notes else "")
+            ),
+            link_path="/dashboard",
+        )
         db.commit()
         db.refresh(application)
 
@@ -662,6 +710,18 @@ def disburse_application(
         )
 
     application.resulting_loan_id = loan.id
+
+    notification_service.notify_member(
+        db,
+        application.member,
+        category=models.NotificationCategory.LOAN,
+        title="Loan disbursed",
+        body=(
+            f"Your {loan_type.name} has been disbursed. Net amount received: "
+            f"{net_disbursed - total_deducted}. Monthly installment: {monthly_installment}."
+        ),
+        link_path="/dashboard",
+    )
 
     commit_or_conflict(db)
     db.refresh(application)

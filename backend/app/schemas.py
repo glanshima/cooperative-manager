@@ -655,6 +655,37 @@ class AuditEventOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# In-app notifications
+# ---------------------------------------------------------------------------
+
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    category: str
+    title: str
+    body: Optional[str] = None
+    link_path: Optional[str] = None
+    is_read: bool
+    read_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class NotificationPageOut(BaseModel):
+    """The bell needs the newest items and the unread badge in one call,
+    so the total and unread count travel with the page."""
+
+    items: List[NotificationOut]
+    total: int
+    unread_count: int
+
+
+class NotificationReadAllOut(BaseModel):
+    updated: int
+
+
+# ---------------------------------------------------------------------------
 # Loan Applications
 # ---------------------------------------------------------------------------
 

@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from .. import audit_service, models, schemas
+from .. import audit_service, models, schemas, notification_service
 from .. import contributions as contribution_rules
 from ..database import get_db
 from ..deps import (
@@ -357,9 +357,31 @@ def _review(
         row.status = models.ContributionChangeRequestStatus.APPROVED
         row.effective_from = effective_from
         event_type, action = "contribution_change.approved", "approve"
+        notification_service.notify_member(
+            db,
+            member,
+            category=models.NotificationCategory.CONTRIBUTION,
+            title="Contribution change approved",
+            body=(
+                f"Your monthly contribution is now {row.requested_amount}, effective "
+                f"from {effective_from}."
+            ),
+            link_path="/dashboard",
+        )
     else:
         row.status = models.ContributionChangeRequestStatus.REJECTED
         event_type, action = "contribution_change.rejected", "reject"
+        notification_service.notify_member(
+            db,
+            member,
+            category=models.NotificationCategory.CONTRIBUTION,
+            title="Contribution change not approved",
+            body=(
+                "Your monthly contribution change request was not approved."
+                + (f" Reason: {reason}" if reason else "")
+            ),
+            link_path="/dashboard",
+        )
 
     db.commit()
 

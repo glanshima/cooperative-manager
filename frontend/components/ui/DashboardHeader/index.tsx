@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import LogoutControl from "@/components/ui/LogoutControl";
 import { timeOfDayGreeting } from "@/lib/greeting";
@@ -13,12 +13,15 @@ export default function DashboardHeader({
   fallbackTitle,
   identity,
   onLogout,
+  actions,
 }: {
   name?: string | null;
   fallbackTitle: string;
   identity?: string | null;
   /** Omitted where the surrounding shell already offers the account control. */
   onLogout?: (() => void) | null;
+  /** Extra controls shown beside the account, e.g. the notification bell. */
+  actions?: ReactNode;
 }) {
   // The session opens with a plain welcome, then settles into a greeting for
   // the time of day the officer is actually working. It keeps following the
@@ -43,7 +46,10 @@ export default function DashboardHeader({
   return (
     <div className="page-header" style={{ alignItems: "flex-start", marginBottom: 16 }}>
       <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>{title}</h1>
-      {onLogout ? <LogoutControl identity={identity} onLogout={onLogout} /> : null}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {actions}
+        {onLogout ? <LogoutControl identity={identity} onLogout={onLogout} /> : null}
+      </div>
     </div>
   );
 }

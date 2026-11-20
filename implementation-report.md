@@ -592,3 +592,42 @@ Approval of a loan application still sends no email, preserving the existing pro
 - `AdminNav` reads the session with the existing `useAuth()`, so every admin screen offers log out — previously only the two dashboards rendered the control.
 - `DashboardHeader`'s log-out control is now optional: the admin dashboard passes only the greeting, while the member dashboard keeps identity above Log out because it has no sidebar.
 - Verification: `npx tsc --noEmit` clean; Vitest **35 files / 230 tests passed** (sidebar account tests added; admin dashboard tests updated for the moved control); `npm run build` 20/20 static pages. A browser screenshot was not taken because the local sign-in flow was blocked by the credential guard; layout and behaviour were verified through the component tests only.
+
+## 21. In-app notifications (2026-11-19)
+
+### 21.1 Data and API
+
+- New `notifications` table (`backend/app/models.py`): `user_id` (FK `users`, cascade), `category` enum (`loan | repayment | contribution | account | system`), `title` (200), `body` (1000), `link_path` (255), `is_read` + `read_at`, `created_at`; index `(user_id, created_at DESC)` matching the bell's "newest first per user" query. Idempotent manual migration `scripts/manual_migration_2026_11_notifications.sql`, registered in `ORDERED_MIGRATIONS`.
+- `backend/app/notification_service.py` — `notify()` queues a row and `notify_member()` resolves the member's `role='member'` login (skipping members with no login or an inactive account). Both are called *inside* the same transaction as the change, so a notice rolls back with its change; email remains post-commit.
+- `routers/notifications.py`, mounted at `/api/notifications`:
+  - `GET ""` — newest first, `skip`/`limit` (max 100), returns `{items, total, unread_count}` so one poll feeds both the panel and the badge.
+  - `POST /read-all` — marks only the caller's unread rows, returns `{updated}`.
+  - `POST /{id}/read` — idempotent; an id belonging to another account is a 404.
+  - Every route filters on `current_user.id` from the token; no user id is ever accepted from the request.
+
+### 21.2 Producers (each written before its flow's commit)
+
+| Event | Category | Title |
+|---|---|---|
+| Loan form payment verified / rejected | loan | Loan form payment verified / could not be verified |
+| Loan application approved / rejected | loan | Loan application approved / not approved |
+| Loan disbursed | loan | Loan disbursed |
+| Repayment verified / rejected | repayment | Repayment verified / not verified |
+| Contribution change approved / rejected | contribution | Contribution change approved / not approved |
+
+Notify copy is stored as final rendered text, so later wording or policy changes never rewrite what a member was told. All member-facing links point at `/dashboard`.
+
+### 21.3 Frontend
+
+- `lib/api/notifications.ts` (`getNotifications`, `markNotificationRead`, `markAllNotificationsRead`) and `components/notifications/hooks/useNotifications.ts` (mount + 60 s poll, optimistic mark read / mark all, refetch on open).
+- `components/notifications/NotificationBell` — icon button with an unread badge (`99+` cap) and an accessible label (`Notifications, 3 unread`); the panel is portalled to `document.body` and anchored to the button's live rect, because the sidebar scrolls, clips overflow and is transformed on phones. Escape closes and returns focus; outside click closes; choosing a notice marks it read and follows its link.
+- Placement: in the member dashboard header via a new optional `actions` slot on `DashboardHeader`; in the admin shell via `useMediaQuery` (`lib/useMediaQuery.ts`) so exactly one bell is mounted — the top bar at ≤900px, the `AdminNav` brand row above that. Placing it in the brand row at every width squeezed the (customisable) cooperative name to an ellipsis inside the drawer.
+
+### 21.4 Verification
+
+- Backend: `pytest` on the sandbox test database **351 passed** (10 new: scoping, ordering/totals, cross-account 404, idempotent read, read-all scoping, three producer paths, no-login member, 401).
+- Migration: applied to the local sandbox via the runner (18 applied, 1 already applied); `notifications` columns and `ix_notifications_user_created` confirmed.
+- Routes: a throwaway backend on port 8010 (sandbox DB) answered `/api/health` 200 and `/api/notifications` + `/read-all` 401 without a token; instance stopped afterwards.
+- Frontend: `npx tsc --noEmit` clean; Vitest **36 files / 239 tests passed** (8 bell tests; a placement test asserting which container mounts the bell at each breakpoint; AdminNav mocks extended for the bell and `matchMedia`); `npm run build` 20/20 static pages (run before the bell-placement tweak, which was verified by typecheck + tests + browser only because the dev server held `.next`). Note: the first full-suite run reported 2 failures that did not reproduce — later full runs were clean.
+- Signed-in browser pass (local sandbox, `localhost:3000` against `127.0.0.1:8000`): the member bell showed the empty state, then "3 unread" with newest-first entries; **Mark all as read** cleared dots, tint and badge; Escape closed and returned focus; outside click closed; clicking an unread item marked it read, closed the panel and routed via `link_path`; read state survived a reload; a notification inserted mid-session appeared through the 60 s poll with no reload. On the admin side the bell sits in the mobile top bar and the drawer shows the full cooperative name; its panel portals out of the drawer to the viewport.
+- Broadcast caveat: the admin bell is empty in practice because every producer currently targets a member account; the router is user-scoped so staff notifications can be added later without schema changes.

@@ -966,6 +966,58 @@ class IdempotencyRecord(Base):
 
 
 # ---------------------------------------------------------------------------
+# In-app notifications
+# ---------------------------------------------------------------------------
+
+
+class NotificationCategory(str, enum.Enum):
+    LOAN = "loan"
+    REPAYMENT = "repayment"
+    CONTRIBUTION = "contribution"
+    ACCOUNT = "account"
+    SYSTEM = "system"
+
+
+class Notification(Base):
+    """
+    One in-app notice for one user account.
+
+    Rows are written in the SAME transaction as the state change they
+    describe, so a member never sees a notification for something that
+    was rolled back, and a committed change never loses its notice. The
+    title/body are stored as rendered text rather than a template plus
+    parameters: what the member was told must not change if wording or
+    business logic changes later.
+
+    There is deliberately no cross-user read path -- the router always
+    filters on current_user.id, so a notification id alone is never
+    enough to read or mark someone else's row.
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index("ix_notifications_user_created", "user_id", text("created_at DESC")),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    category = Column(
+        Enum(NotificationCategory, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+    )
+    title = Column(String(200), nullable=False)
+    body = Column(String(1000), nullable=True)
+    # Member-facing in-app route the notice points at (e.g. "/dashboard").
+    link_path = Column(String(255), nullable=True)
+
+    is_read = Column(Boolean, nullable=False, default=False)
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ---------------------------------------------------------------------------
 # Loan Applications
 # ---------------------------------------------------------------------------
 

@@ -8,4 +8,5 @@ export * from "./deductions";
 export * from "./contributions";
 export * from "./settings";
 export * from "./branding";
+export * from "./notifications";
 export * from "./admin";

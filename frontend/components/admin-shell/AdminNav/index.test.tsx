@@ -16,6 +16,8 @@ const { pathnameMock, logoutMock } = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   usePathname: pathnameMock,
+  // The notification bell in the shell's brand row navigates on click.
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 vi.mock("next/link", () => ({
@@ -44,6 +46,10 @@ vi.mock("next/link", () => ({
 
 vi.mock("@/lib/api", () => ({
   getSettings: vi.fn(),
+  // The shell renders the notification bell; this suite is about the nav.
+  getNotifications: vi.fn().mockResolvedValue({ items: [], total: 0, unread_count: 0 }),
+  markNotificationRead: vi.fn(),
+  markAllNotificationsRead: vi.fn(),
 }));
 
 vi.mock("@/lib/useAuth", () => ({
@@ -94,9 +100,25 @@ const SETTINGS_CHILDREN: Array<[string, string]> = [
   ["Cooperative settings", "/admin/settings"],
 ];
 
+// The shell swaps the bell between the top bar and the brand row on a
+// media query, so jsdom needs matchMedia. Desktop is the default.
+function stubDrawerBreakpoint(matchesDrawer: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: matchesDrawer,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 beforeEach(() => {
   pathnameMock.mockReturnValue("/admin/dashboard");
   getSettingsMock.mockResolvedValue(allModulesOn);
+  stubDrawerBreakpoint(false);
 });
 
 describe("AdminNav", () => {
@@ -123,6 +145,32 @@ describe("AdminNav", () => {
     );
     expect(within(nav).getByRole("button", { name: "Loan Management" })).toBeInTheDocument();
     expect(within(nav).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("moves the notification bell between the top bar and the brand row", () => {
+    stubDrawerBreakpoint(true);
+    const drawer = render(<AdminNav />);
+    expect(
+      within(screen.getByRole("banner")).getByRole("button", { name: /Notifications/ })
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("complementary", { name: "Admin sidebar" })).queryByRole(
+        "button",
+        { name: /Notifications/ }
+      )
+    ).not.toBeInTheDocument();
+    drawer.unmount();
+
+    stubDrawerBreakpoint(false);
+    render(<AdminNav />);
+    expect(
+      within(screen.getByRole("complementary", { name: "Admin sidebar" })).getByRole("button", {
+        name: /Notifications/,
+      })
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("button", { name: /Notifications/ })
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the signed-in account above the platform credit", () => {

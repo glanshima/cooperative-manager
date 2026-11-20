@@ -1,5 +1,6 @@
 import CooperativeBrand from "@/components/branding/CooperativeBrand";
 import PlatformAttribution from "@/components/branding/PlatformAttribution";
+import NotificationBell from "@/components/notifications/NotificationBell";
 import StatusMessage from "@/components/ui/StatusMessage";
 import DashboardHeader from "@/components/ui/DashboardHeader";
 import { lastNameFirst, userDisplayName } from "@/lib/names";
@@ -26,6 +27,7 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
         fallbackTitle="My Dashboard"
         identity={model.member?.name ?? userDisplayName(model.auth.user)}
         onLogout={model.auth.logout}
+        actions={<NotificationBell />}
       />
 
       {model.member && (
