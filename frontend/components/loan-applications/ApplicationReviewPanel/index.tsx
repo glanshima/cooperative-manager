@@ -1,3 +1,4 @@
+import CloseButton from "@/components/ui/CloseButton";
 import ReceiptPreview from "@/components/ui/ReceiptPreview";
 import { ConflictNotice } from "@/components/ui/ConflictMarker";
 import type { LoanApplicationsPageModel } from "../hooks/useLoanApplicationsPage";
@@ -26,9 +27,12 @@ export default function ApplicationReviewPanel({
         background: "#fff",
       }}
     >
-      <h2>
-        Reviewing: {expanded.member_name} ({expanded.member_psn?.replace("MCT-", "") ?? ""}) — {expanded.loan_type_name}
-      </h2>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <h2 style={{ flex: 1 }}>
+          Reviewing: {expanded.member_name} ({expanded.member_psn?.replace("MCT-", "") ?? ""}) — {expanded.loan_type_name}
+        </h2>
+        <CloseButton label="Close application review" onClick={review.close} />
+      </div>
       <p>
         Requested: {expanded.requested_amount} · Payment reference: {expanded.payment_reference}
       </p>
@@ -130,9 +134,6 @@ export default function ApplicationReviewPanel({
         </div>
       )}
 
-      <button onClick={review.close} style={{ marginTop: 12 }}>
-        Close
-      </button>
     </section>
   );
 }

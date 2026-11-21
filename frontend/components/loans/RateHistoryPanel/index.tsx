@@ -1,3 +1,4 @@
+import CloseButton from "@/components/ui/CloseButton";
 import Table from "@/components/ui/Table";
 import type { LoansPageModel } from "../hooks/useLoansPage";
 
@@ -15,9 +16,17 @@ export default function RateHistoryPanel({ types }: { types: LoansPageModel["typ
         background: "#fafafa",
       }}
     >
-      <h4>
-        Rate history — {historyFor.name} <button onClick={types.closeHistory}>Close</button>
-      </h4>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
+        <h4 style={{ margin: 0 }}>Rate history — {historyFor.name}</h4>
+        <CloseButton size="sm" label="Close rate history" onClick={types.closeHistory} />
+      </div>
       <Table style={{ marginBottom: 12 }}>
         <thead>
           <tr style={{ textAlign: "left", borderBottom: "1px solid #ccc" }}>

@@ -1,3 +1,4 @@
+import CloseButton from "@/components/ui/CloseButton";
 import ReceiptPreview from "@/components/ui/ReceiptPreview";
 import { ConflictNotice } from "@/components/ui/ConflictMarker";
 import { monthLabel } from "@/lib/month";
@@ -21,7 +22,10 @@ export default function RepaymentReviewPanel({
         padding: 16,
       }}
     >
-      <h2>Reviewing repayment of {repayment.amount_claimed}</h2>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <h2 style={{ flex: 1 }}>Reviewing repayment of {repayment.amount_claimed}</h2>
+        <CloseButton label="Close repayment review" onClick={review.close} />
+      </div>
       <p>Payment reference: {repayment.payment_reference}</p>
       <p>
         Month paid:{" "}
@@ -57,9 +61,6 @@ export default function RepaymentReviewPanel({
         </div>
       )}
 
-      <button onClick={review.close} style={{ marginTop: 12 }}>
-        Close
-      </button>
     </section>
   );
 }

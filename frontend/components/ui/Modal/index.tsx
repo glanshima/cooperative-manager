@@ -4,6 +4,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import CloseButton from "@/components/ui/CloseButton";
+
 import styles from "./Modal.module.css";
 
 export default function Modal({
@@ -99,9 +101,7 @@ export default function Modal({
           <h2 id={titleId} className={styles.title}>
             {title}
           </h2>
-          <button type="button" aria-label={closeLabel} disabled={busy} onClick={onClose}>
-            Close
-          </button>
+          <CloseButton label={closeLabel} disabled={busy} onClick={onClose} />
         </div>
         {hint && <p className={styles.hint}>{hint}</p>}
         {children}
