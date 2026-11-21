@@ -279,24 +279,27 @@ def verify_repayment(
             request=request,
         )
 
-        brand = current_brand(db)
-        result = send_email(
-            to=loan.member.email,
-            subject="Repayment received",
-            html=repayment_verified_email_html(
-                member_name=loan.member.name,
-                loan_type_name=loan.loan_type.name if loan.loan_type else "",
-                amount=repayment.amount_claimed,
-                new_balance=loan.total_repayable - loan.amount_repaid,
-                brand=brand,
-            ),
-            sender_name=brand.name,
-            idempotency_key=f"repayment-verified:{repayment.id}",
-        )
-        if not result.ok:
-            logger.warning(
-                "Repayment verification email not delivered (status=%s)", result.status
+        if notification_service.member_allows_email(
+            db, loan.member, models.NotificationCategory.REPAYMENT
+        ):
+            brand = current_brand(db)
+            result = send_email(
+                to=loan.member.email,
+                subject="Repayment received",
+                html=repayment_verified_email_html(
+                    member_name=loan.member.name,
+                    loan_type_name=loan.loan_type.name if loan.loan_type else "",
+                    amount=repayment.amount_claimed,
+                    new_balance=loan.total_repayable - loan.amount_repaid,
+                    brand=brand,
+                ),
+                sender_name=brand.name,
+                idempotency_key=f"repayment-verified:{repayment.id}",
             )
+            if not result.ok:
+                logger.warning(
+                    "Repayment verification email not delivered (status=%s)", result.status
+                )
     else:
         if not payload.rejection_reason:
             raise HTTPException(status_code=400, detail="rejection_reason is required when rejecting")
@@ -326,23 +329,26 @@ def verify_repayment(
             request=request,
         )
 
-        brand = current_brand(db)
-        result = send_email(
-            to=repayment.loan.member.email,
-            subject="Your repayment could not be verified",
-            html=repayment_rejected_email_html(
-                member_name=repayment.loan.member.name,
-                loan_type_name=repayment.loan.loan_type.name if repayment.loan.loan_type else "",
-                reason=payload.rejection_reason,
-                brand=brand,
-            ),
-            sender_name=brand.name,
-            idempotency_key=f"repayment-rejected:{repayment.id}",
-        )
-        if not result.ok:
-            logger.warning(
-                "Repayment rejection email not delivered (status=%s)", result.status
+        if notification_service.member_allows_email(
+            db, repayment.loan.member, models.NotificationCategory.REPAYMENT
+        ):
+            brand = current_brand(db)
+            result = send_email(
+                to=repayment.loan.member.email,
+                subject="Your repayment could not be verified",
+                html=repayment_rejected_email_html(
+                    member_name=repayment.loan.member.name,
+                    loan_type_name=repayment.loan.loan_type.name if repayment.loan.loan_type else "",
+                    reason=payload.rejection_reason,
+                    brand=brand,
+                ),
+                sender_name=brand.name,
+                idempotency_key=f"repayment-rejected:{repayment.id}",
             )
+            if not result.ok:
+                logger.warning(
+                    "Repayment rejection email not delivered (status=%s)", result.status
+                )
 
     result = schemas.LoanRepaymentOut.model_validate(repayment)
     idem.store(result.model_dump(mode="json"))

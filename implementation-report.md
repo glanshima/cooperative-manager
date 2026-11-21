@@ -707,3 +707,60 @@ Notify copy is stored as final rendered text, so later wording or policy changes
 - Focused tests: `PrintableSchedule` (now with the configured name, logo and footer) and `HomeView` (title from branding) — **10 passed**.
 - `npx tsc --noEmit` clean; full Vitest **37 files / 252 tests passed**; `npm run build` unchanged at 21 static routes plus the dynamic `/api/favicon`.
 - Print output itself is not observable in jsdom; the `@media print` rules still need a manual Ctrl+P check in the browser.
+
+## 25. Notification backlog: staff producers, deduction and account notices, email preferences (2026-11-21)
+
+### 25.1 What shipped
+
+Section 21 shipped the member-facing notices; this slice closes the rest of the audit except the items listed in 25.6.
+
+| Event | Recipient | Category | Title |
+|---|---|---|---|
+| Loan application submitted or re-applied | holders of `loan.review` | loan | New loan application |
+| Payroll deduction confirmed | the member | contribution | Payroll deduction recorded |
+| Payroll deduction marked not made | the member | contribution | Payroll deduction not made |
+| Member login created | the member | account | Your login is ready |
+| Password changed (self) | the member | account | Password changed |
+| Password reset by an officer | the member | account | Your password was reset |
+| Password reset from a recovery link | the member | account | Your password was reset |
+| Admin account status changed | the admin | account | Account status changed |
+| Admin password reset | the admin | account | Your password was reset |
+
+- `notification_service.notify_staff(db, permission_code=..., ...)` fans a notice out to every active admin holding the permission, and returns how many were queued. Staff notices go to the officer who can act next (`loan.review` for a new application, i.e. payment verification), never to "all admins" — that would ping officers who cannot do anything with it.
+- All notices are queued inside the business transaction. Bulk deduction actions write each notice inside that record's savepoint, so a record that rolls back takes its notice with it. Account-status changes commit inside `set_account_status`, so the notice is queued first; login creation uses `db.flush()` to obtain the new user id before notifying.
+
+### 25.2 Email preferences (Phase G, minimal scope)
+
+- New `notification_preferences` table: `user_id` PK (FK `users`, cascade), `email_loan`, `email_repayment` (both `BOOLEAN NOT NULL DEFAULT TRUE`), `updated_at`. Idempotent manual migration `scripts/manual_migration_2026_11_notification_preferences.sql`, registered in `ORDERED_MIGRATIONS`.
+- `GET /api/notifications/preferences` answers `{email_loan, email_repayment}`, defaulting to `true/true` when the account has no row. `PUT` upserts the caller's row and applies only the fields present in the body. Both are hard-scoped to the token's user.
+- `member_allows_email(db, member, category)` is the gate used before each member email send. Only `loan` and `repayment` are optional; `contribution`, `account` and `system` always send. Preferences live on the member's `role='member'` login while the email goes to `member.email`, so the gate resolves the login; a member with no login has no way to opt out, so their mail still sends.
+- Gated send sites: form-payment rejection, application rejection, and disbursement. In-app notices are unaffected — an opt-out silences the email only.
+
+### 25.3 Frontend
+
+- `getNotificationPreferences` / `updateNotificationPreferences` in `lib/api/notifications.ts`.
+- `components/dashboard/NotificationPreferences` — a card on the member dashboard with two checkboxes and an explicit **Save preferences** button. Save confirmation auto-clears after 4 s, and the copy states that in-app notices always show everything and that account and security emails cannot be turned off.
+
+### 25.4 Email log wording
+
+- `email_utils.py` previously logged one message for both 401 and 403. They are now distinct: 401 names a rejected API key, 403 names a sender/domain the key may not send from (the case that a mis-set `FROM_EMAIL` produces).
+
+### 25.5 Verification
+
+- Backend, focused (`tests/test_notifications.py`) **21 passed**; full suite on the sandbox test database **370 passed** (11 new).
+- Frontend, focused (`NotificationPreferences` + `DashboardView`) **2 files / 5 tests passed**; `npx tsc --noEmit` clean; `npm run build` 21 static routes plus the dynamic `/api/favicon`.
+- Full Vitest **38 files / 255 tests** reported 1 failure — the documented jsdom flake (`DeductionForm` queue prefill timing out), which passed **15/15** on an isolated rerun.
+- Not browser-tested: signing in as a member requires entering credentials, which the standing constraint blocks, so the dashboard card was verified by component tests and the production build only.
+
+### 25.6 Deliberately deferred
+
+- **Web Push** — left for a future integration if the need appears.
+- **Reminders, digest, outbox / scheduled delivery** — needs a scheduler the serverless deploy does not have.
+- **Welcome / membership-approval emails** — the member lifecycle these hang off is not implemented.
+- **Administrative-task-assigned and cooperative-announcement categories** — no underlying feature to attach them to.
+- Security/account notices stay outside the preference system by design; adding switches for them would weaken the guarantee that a compromise is always reported.
+
+### 25.7 Deploy note
+
+- The new table must exist in the target database before the API routes work: run the migration runner (or the single SQL file) against the branch. Not yet applied to production.
+- No new environment variables.

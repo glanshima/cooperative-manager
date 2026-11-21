@@ -26,7 +26,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, contains_eager, joinedload
 
-from .. import audit_service, deduction_expectations, models, schemas, validation
+from .. import (
+    audit_service,
+    deduction_expectations,
+    models,
+    notification_service,
+    schemas,
+    validation,
+)
 from ..database import get_db
 from ..deps import require_module_enabled, require_permission
 from ..loan_rules import assert_no_other_active_loan_of_type
@@ -404,9 +411,21 @@ def _transition_confirm(
     deduction.confirmed_by_user_id = current_user.id
     deduction.confirmed_at = datetime.utcnow()
 
+    notification_service.notify_member(
+        db,
+        deduction.member,
+        category=models.NotificationCategory.CONTRIBUTION,
+        title="Payroll deduction recorded",
+        body=(
+            f"Your payroll deduction for {deduction.deduction_month.strftime('%B %Y')} "
+            f"was recorded: {deduction.grand_total} in total."
+        ),
+        link_path="/dashboard",
+    )
+
 
 def _transition_not_deducted(
-    deduction: models.PayrollDeduction, current_user: models.User, reason: str
+    db: Session, deduction: models.PayrollDeduction, current_user: models.User, reason: str
 ) -> None:
     if deduction.status not in (
         models.PayrollDeductionStatus.DRAFT,
@@ -420,6 +439,19 @@ def _transition_not_deducted(
     deduction.not_deducted_by_user_id = current_user.id
     deduction.not_deducted_at = datetime.utcnow()
     deduction.not_deducted_reason = reason
+
+    notification_service.notify_member(
+        db,
+        deduction.member,
+        category=models.NotificationCategory.CONTRIBUTION,
+        title="Payroll deduction not made",
+        body=(
+            f"Your payroll deduction for {deduction.deduction_month.strftime('%B %Y')} "
+            f"was not made: {reason} You can pay by bank transfer and submit the "
+            "receipt from your dashboard."
+        ),
+        link_path="/dashboard",
+    )
 
 
 def _transition_void(
@@ -972,7 +1004,7 @@ def _run_bulk(
                 _transition_confirm(db, deduction, current_user)
                 event_type, audit_action = "payroll_deduction.confirmed", "approve"
             elif action == "not_deducted":
-                _transition_not_deducted(deduction, current_user, reason)
+                _transition_not_deducted(db, deduction, current_user, reason)
                 event_type, audit_action = "payroll_deduction.not_deducted", "reject"
             elif action == "void":
                 _transition_void(db, deduction, current_user, reason)
@@ -1150,7 +1182,7 @@ def _transition_response(
         _transition_confirm(db, deduction, current_user)
         event_type, audit_action = "payroll_deduction.confirmed", "approve"
     elif action == "not_deducted":
-        _transition_not_deducted(deduction, current_user, reason)
+        _transition_not_deducted(db, deduction, current_user, reason)
         event_type, audit_action = "payroll_deduction.not_deducted", "reject"
     elif action == "void":
         _transition_void(db, deduction, current_user, reason)

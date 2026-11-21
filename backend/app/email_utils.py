@@ -141,14 +141,18 @@ def send_email(
         logger.info("Email accepted by Resend (message_id=%s)", message_id)
         return EmailResult(True, SENT, message_id=message_id)
 
-    if response.status_code in (401, 403):
+    if response.status_code == 401:
+        logger.error("Email delivery failed: Resend rejected the API key (HTTP 401)")
+        return EmailResult(False, UNAUTHORIZED, detail="HTTP 401")
+
+    if response.status_code == 403:
+        # Resend answers 403 for a key that is valid but not allowed to
+        # send from this From address/domain -- not a credential error.
         logger.error(
-            "Email delivery failed: Resend rejected the API credentials (HTTP %s)",
-            response.status_code,
+            "Email delivery failed: Resend refused the sender or domain (HTTP 403) "
+            "-- check FROM_EMAIL is on a domain this API key may send from"
         )
-        return EmailResult(
-            False, UNAUTHORIZED, detail=f"HTTP {response.status_code}"
-        )
+        return EmailResult(False, UNAUTHORIZED, detail="HTTP 403")
 
     if response.status_code == 429:
         retry_after = response.headers.get("Retry-After")

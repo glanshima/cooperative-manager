@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import models, schemas, audit_service
+from .. import models, schemas, audit_service, notification_service
 from ..account_lifecycle import set_account_status, validate_password_strength
 from ..auth import hash_password
 from ..database import get_db
@@ -90,6 +90,17 @@ def update_admin_user_status(
         raise HTTPException(status_code=400, detail="You cannot deactivate or suspend your own account")
 
     previous_status = user.account_status.value
+    notification_service.notify(
+        db,
+        user_id=user.id,
+        category=models.NotificationCategory.ACCOUNT,
+        title="Account status changed",
+        body=(
+            f"An administrator changed your account status to "
+            f"{payload.account_status.value}."
+            + (f" Reason: {payload.reason}" if payload.reason else "")
+        ),
+    )
     set_account_status(db, user, payload.account_status, changed_by=current_user, reason=payload.reason)
 
     # A deactivated/suspended user's outstanding sessions are revoked
@@ -442,6 +453,18 @@ def reset_admin_user_password(
     ):
         session.revoked_at = _datetime.utcnow()
         session.revoked_reason = "admin_password_reset"
+
+    notification_service.notify(
+        db,
+        user_id=user.id,
+        category=models.NotificationCategory.ACCOUNT,
+        title="Your password was reset",
+        body=(
+            "An administrator reset your password. Sign in with the temporary "
+            "password you were given and choose a new one."
+        ),
+        link_path="/change-password",
+    )
 
     db.commit()
     db.refresh(user)

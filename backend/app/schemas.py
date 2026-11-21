@@ -688,6 +688,22 @@ class NotificationReadAllOut(BaseModel):
     updated: int
 
 
+class NotificationPreferencesOut(BaseModel):
+    """The caller's email switches for the optional categories.
+
+    Account and security notices are not represented: they are always
+    delivered and cannot be switched off.
+    """
+
+    email_loan: bool
+    email_repayment: bool
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    email_loan: Optional[bool] = None
+    email_repayment: Optional[bool] = None
+
+
 # ---------------------------------------------------------------------------
 # Loan Applications
 # ---------------------------------------------------------------------------

@@ -42,3 +42,22 @@ export async function markNotificationRead(id: string): Promise<Notification> {
 export async function markAllNotificationsRead(): Promise<{ updated: number }> {
   return apiFetch<{ updated: number }>("/api/notifications/read-all", { method: "POST" });
 }
+
+/** Email switches for the optional categories; account/security email is mandatory. */
+export interface NotificationPreferences {
+  email_loan: boolean;
+  email_repayment: boolean;
+}
+
+export async function getNotificationPreferences(): Promise<NotificationPreferences> {
+  return apiFetch<NotificationPreferences>("/api/notifications/preferences");
+}
+
+export async function updateNotificationPreferences(
+  patch: Partial<NotificationPreferences>
+): Promise<NotificationPreferences> {
+  return apiFetch<NotificationPreferences>("/api/notifications/preferences", {
+    method: "PUT",
+    body: patch,
+  });
+}

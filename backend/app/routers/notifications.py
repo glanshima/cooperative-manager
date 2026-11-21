@@ -64,6 +64,49 @@ def mark_all_read(
     return schemas.NotificationReadAllOut(updated=updated)
 
 
+@router.get("/preferences", response_model=schemas.NotificationPreferencesOut)
+def get_preferences(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A missing row means every optional email is on (the default)."""
+    row = (
+        db.query(models.NotificationPreference)
+        .filter(models.NotificationPreference.user_id == current_user.id)
+        .first()
+    )
+    if row is None:
+        return schemas.NotificationPreferencesOut(email_loan=True, email_repayment=True)
+    return schemas.NotificationPreferencesOut(
+        email_loan=row.email_loan, email_repayment=row.email_repayment
+    )
+
+
+@router.put("/preferences", response_model=schemas.NotificationPreferencesOut)
+def update_preferences(
+    payload: schemas.NotificationPreferencesUpdate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(models.NotificationPreference)
+        .filter(models.NotificationPreference.user_id == current_user.id)
+        .first()
+    )
+    if row is None:
+        row = models.NotificationPreference(user_id=current_user.id)
+        db.add(row)
+    if payload.email_loan is not None:
+        row.email_loan = payload.email_loan
+    if payload.email_repayment is not None:
+        row.email_repayment = payload.email_repayment
+    db.commit()
+    db.refresh(row)
+    return schemas.NotificationPreferencesOut(
+        email_loan=row.email_loan, email_repayment=row.email_repayment
+    )
+
+
 @router.post("/{notification_id}/read", response_model=schemas.NotificationOut)
 def mark_read(
     notification_id: uuid.UUID,

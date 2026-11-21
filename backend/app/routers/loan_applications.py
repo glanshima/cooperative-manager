@@ -164,6 +164,17 @@ def submit_application(
         reapplied_from_id=payload.reapplied_from_id,
     )
     db.add(application)
+    notification_service.notify_staff(
+        db,
+        permission_code="loan.review",
+        category=models.NotificationCategory.LOAN,
+        title="New loan application",
+        body=(
+            f"{member.name} applied for {payload.requested_amount} under "
+            f"{loan_type.name}. Verify the form payment to start the review."
+        ),
+        link_path="/admin/loan-applications",
+    )
     db.commit()
     db.refresh(application)
 
@@ -356,7 +367,9 @@ def verify_payment(
     )
 
     # After the commit: a mail outage must never undo a reviewed payment.
-    if not payload.approved:
+    if not payload.approved and notification_service.member_allows_email(
+        db, application.member, models.NotificationCategory.LOAN
+    ):
         brand = current_brand(db)
         result = send_email(
             to=application.member.email,
@@ -519,23 +532,26 @@ def decide_application(
         )
 
         brand = current_brand(db)
-        result = send_email(
-            to=application.member.email,
-            subject="Update on your loan application",
-            html=loan_rejected_email_html(
-                member_name=application.member.name,
-                loan_type_name=application.loan_type.name,
-                requested_amount=application.requested_amount,
-                admin_notes=payload.admin_notes or "",
-                brand=brand,
-            ),
-            sender_name=brand.name,
-            idempotency_key=f"loan-rejected:{application.id}",
-        )
-        if not result.ok:
-            logger.warning(
-                "Loan rejection email not delivered (status=%s)", result.status
+        if notification_service.member_allows_email(
+            db, application.member, models.NotificationCategory.LOAN
+        ):
+            result = send_email(
+                to=application.member.email,
+                subject="Update on your loan application",
+                html=loan_rejected_email_html(
+                    member_name=application.member.name,
+                    loan_type_name=application.loan_type.name,
+                    requested_amount=application.requested_amount,
+                    admin_notes=payload.admin_notes or "",
+                    brand=brand,
+                ),
+                sender_name=brand.name,
+                idempotency_key=f"loan-rejected:{application.id}",
             )
+            if not result.ok:
+                logger.warning(
+                    "Loan rejection email not delivered (status=%s)", result.status
+                )
 
     return _to_detail_schema(application)
 
@@ -726,32 +742,35 @@ def disburse_application(
     commit_or_conflict(db)
     db.refresh(application)
 
-    brand = current_brand(db)
-    result = send_email(
-        to=application.member.email,
-        subject="Your loan has been disbursed",
-        html=loan_disbursed_email_html(
-            member_name=application.member.name,
-            loan_type_name=loan_type.name,
-            approved_amount=application.approved_amount,
-            interest_amount=interest_amount,
-            net_disbursed=net_disbursed - total_deducted,
-            total_repayable=total_repayable,
-            monthly_installment=monthly_installment,
-            tenure_months=application.approved_tenure_months,
-            disbursement_date=disbursement_date,
-            expected_end_date=expected_end_date,
-            disbursement_bank_name=disbursement_bank_name,
-            disbursement_account_name=disbursement_account_name,
-            disbursement_account_number=disbursement_account_number,
-            deducted_amount=total_deducted if total_deducted else None,
-            brand=brand,
-        ),
-        sender_name=brand.name,
-        idempotency_key=f"loan-disbursed:{loan.id}",
-    )
-    if not result.ok:
-        logger.warning("Loan disbursement email not delivered (status=%s)", result.status)
+    if notification_service.member_allows_email(
+        db, application.member, models.NotificationCategory.LOAN
+    ):
+        brand = current_brand(db)
+        result = send_email(
+            to=application.member.email,
+            subject="Your loan has been disbursed",
+            html=loan_disbursed_email_html(
+                member_name=application.member.name,
+                loan_type_name=loan_type.name,
+                approved_amount=application.approved_amount,
+                interest_amount=interest_amount,
+                net_disbursed=net_disbursed - total_deducted,
+                total_repayable=total_repayable,
+                monthly_installment=monthly_installment,
+                tenure_months=application.approved_tenure_months,
+                disbursement_date=disbursement_date,
+                expected_end_date=expected_end_date,
+                disbursement_bank_name=disbursement_bank_name,
+                disbursement_account_name=disbursement_account_name,
+                disbursement_account_number=disbursement_account_number,
+                deducted_amount=total_deducted if total_deducted else None,
+                brand=brand,
+            ),
+            sender_name=brand.name,
+            idempotency_key=f"loan-disbursed:{loan.id}",
+        )
+        if not result.ok:
+            logger.warning("Loan disbursement email not delivered (status=%s)", result.status)
 
     audit_service.log_event(
         db,

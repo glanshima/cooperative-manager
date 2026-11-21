@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from .. import models, schemas, audit_service
+from .. import models, schemas, audit_service, notification_service
 from ..account_lifecycle import (
     is_locked_out,
     record_failed_login,
@@ -161,6 +161,14 @@ def change_password(
         session.revoked_at = datetime.utcnow()
         session.revoked_reason = "password_changed"
 
+    notification_service.notify(
+        db,
+        user_id=current_user.id,
+        category=models.NotificationCategory.ACCOUNT,
+        title="Password changed",
+        body="Your password was changed and your other sessions were signed out.",
+    )
+
     db.commit()
     db.refresh(current_user)
 
@@ -243,6 +251,18 @@ def create_member_login(
         account_status=models.AccountStatus.ACTIVE,
     )
     db.add(user)
+    db.flush()
+    notification_service.notify(
+        db,
+        user_id=user.id,
+        category=models.NotificationCategory.ACCOUNT,
+        title="Your login is ready",
+        body=(
+            "Sign in with your PSN and the temporary password an officer gave "
+            "you. You will be asked to choose a new password."
+        ),
+        link_path="/dashboard",
+    )
     db.commit()
     db.refresh(user)
 
@@ -294,6 +314,13 @@ def reset_member_password(
     # since the admin has just verified the member's identity out of band.
     user.failed_login_count = 0
     user.locked_until = None
+    notification_service.notify(
+        db,
+        user_id=user.id,
+        category=models.NotificationCategory.ACCOUNT,
+        title="Your password was reset",
+        body="An officer reset your password. You will be asked to choose a new one at your next sign-in.",
+    )
     db.commit()
     db.refresh(user)
 
@@ -658,6 +685,14 @@ def reset_password(
     for session in active_sessions:
         session.revoked_at = datetime.utcnow()
         session.revoked_reason = "password_recovery"
+
+    notification_service.notify(
+        db,
+        user_id=user.id,
+        category=models.NotificationCategory.ACCOUNT,
+        title="Your password was reset",
+        body="Your password was reset from a recovery link and all sessions were signed out.",
+    )
 
     db.commit()
     db.refresh(user)

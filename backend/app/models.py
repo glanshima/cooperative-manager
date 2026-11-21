@@ -1017,6 +1017,26 @@ class Notification(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class NotificationPreference(Base):
+    """
+    One account's email switches, per optional category.
+
+    Only categories whose email is genuinely optional get a column --
+    account and security notices are deliberate and cannot be switched
+    off. A missing row means "all defaults" (every optional email on),
+    so the table stays empty until an account changes something.
+    """
+
+    __tablename__ = "notification_preferences"
+
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    email_loan = Column(Boolean, nullable=False, default=True)
+    email_repayment = Column(Boolean, nullable=False, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 # ---------------------------------------------------------------------------
 # Loan Applications
 # ---------------------------------------------------------------------------

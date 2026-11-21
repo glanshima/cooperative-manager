@@ -9,6 +9,7 @@ import ApplicationsSection from "../ApplicationsSection";
 import ApplyForLoan from "../ApplyForLoan";
 import ContributionCard from "../ContributionCard";
 import LoansSection from "../LoansSection";
+import NotificationPreferencesCard from "../NotificationPreferences";
 import RestrictionBanner from "../RestrictionBanner";
 
 import styles from "./DashboardView.module.css";
@@ -60,6 +61,8 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
           </p>
         </section>
       )}
+
+      {model.member && <NotificationPreferencesCard />}
 
       <footer className={styles.footer}>
         <PlatformAttribution />
