@@ -1,17 +1,10 @@
 import StatusMessage from "@/components/ui/StatusMessage";
-import LogoutControl from "@/components/ui/LogoutControl";
 import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { OfficesPageModel } from "../hooks/useOfficesPage";
 import CreateOfficeForm from "../CreateOfficeForm";
 import OfficesTable from "../OfficesTable";
 
-export default function OfficesView({
-  model,
-  identity,
-}: {
-  model: OfficesPageModel;
-  identity?: string | null;
-}) {
+export default function OfficesView({ model }: { model: OfficesPageModel }) {
   if (model.loading) {
     return <PageSkeleton />;
   }
@@ -24,7 +17,6 @@ export default function OfficesView({
           <a href="/admin/users">Users</a>
           <a href="/admin/roles">Roles</a>
           <a href="/admin/audit">Audit log</a>
-          <LogoutControl identity={identity} onLogout={model.auth.logout} />
         </div>
       </div>
       <p style={{ color: "#555", fontSize: 14 }}>

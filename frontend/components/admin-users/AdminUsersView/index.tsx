@@ -1,16 +1,9 @@
 import StatusMessage from "@/components/ui/StatusMessage";
-import LogoutControl from "@/components/ui/LogoutControl";
 import type { AdminUsersPageModel } from "../hooks/useAdminUsersPage";
 import CreateStaffForm from "../CreateStaffForm";
 import StaffTable from "../StaffTable";
 
-export default function AdminUsersView({
-  model,
-  identity,
-}: {
-  model: AdminUsersPageModel;
-  identity?: string | null;
-}) {
+export default function AdminUsersView({ model }: { model: AdminUsersPageModel }) {
   return (
     <main className="page page--1000">
       <div className="page-header">
@@ -19,7 +12,6 @@ export default function AdminUsersView({
           <a href="/admin/offices">Offices</a>
           <a href="/admin/roles">Roles</a>
           <a href="/admin/audit">Audit log</a>
-          <LogoutControl identity={identity} onLogout={model.auth.logout} />
         </div>
       </div>
 

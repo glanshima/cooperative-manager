@@ -1,5 +1,4 @@
 import StatusMessage from "@/components/ui/StatusMessage";
-import LogoutControl from "@/components/ui/LogoutControl";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import type { MembersPageModel } from "../hooks/useMembersPage";
 import ContributionReviewPanel from "../ContributionReviewPanel";
@@ -9,20 +8,13 @@ import MemberForm from "../MemberForm";
 import MemberSearch from "../MemberSearch";
 import MemberTable from "../MemberTable";
 
-export default function MembersView({
-  model,
-  identity,
-}: {
-  model: MembersPageModel;
-  identity?: string | null;
-}) {
+export default function MembersView({ model }: { model: MembersPageModel }) {
   const { table, filters, contributions, details } = model;
 
   return (
     <main className="page page--1100">
       <div className="page-header">
         <h1>Members</h1>
-        <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>
 
       {model.feedback.error && (

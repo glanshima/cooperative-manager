@@ -4,11 +4,10 @@ import LoansView from "@/components/loans/LoansView";
 import { useLoansPage } from "@/components/loans/hooks/useLoansPage";
 import ModuleGate from "@/components/ui/ModuleGate";
 import PageSkeleton from "@/components/ui/PageSkeleton";
-import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function LoansPage() {
-  const { user, loading: authLoading, logout } = useAuth({
+  const { loading: authLoading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -18,19 +17,13 @@ export default function LoansPage() {
 
   return (
     <ModuleGate module="loans">
-      <LoansPageContent logout={logout} identity={userDisplayName(user)} />
+      <LoansPageContent logout={logout} />
     </ModuleGate>
   );
 }
 
-function LoansPageContent({
-  logout,
-  identity,
-}: {
-  logout: () => void;
-  identity: string | null;
-}) {
+function LoansPageContent({ logout }: { logout: () => void }) {
   const model = useLoansPage(false, logout);
 
-  return <LoansView model={model} identity={identity} />;
+  return <LoansView model={model} />;
 }

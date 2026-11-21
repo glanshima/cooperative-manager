@@ -1,5 +1,4 @@
 import StatusMessage from "@/components/ui/StatusMessage";
-import LogoutControl from "@/components/ui/LogoutControl";
 import PageSkeleton from "@/components/ui/PageSkeleton";
 import { PLATFORM_CREDIT } from "@/lib/branding";
 import { hasPermission } from "@/lib/permissions";
@@ -10,11 +9,9 @@ import ModulesSection from "../ModulesSection";
 
 export default function SettingsView({
   model,
-  identity,
   permissions,
 }: {
   model: SettingsPageModel;
-  identity?: string | null;
   permissions: string[];
 }) {
   if (model.loading || !model.settings) {
@@ -31,7 +28,6 @@ export default function SettingsView({
     <main className="page page--700">
       <div className="page-header">
         <h1>Settings</h1>
-        <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>
 
       {model.feedback.error && (

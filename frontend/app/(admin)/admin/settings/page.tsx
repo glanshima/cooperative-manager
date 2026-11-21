@@ -3,7 +3,6 @@
 import SettingsView from "@/components/admin-settings/SettingsView";
 import { useSettingsPage } from "@/components/admin-settings/hooks/useSettingsPage";
 import PageSkeleton from "@/components/ui/PageSkeleton";
-import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminSettingsPage() {
@@ -17,10 +16,6 @@ export default function AdminSettingsPage() {
   if (authLoading) return <PageSkeleton />;
 
   return (
-    <SettingsView
-      model={model}
-      identity={userDisplayName(user)}
-      permissions={user?.permissions ?? []}
-    />
+    <SettingsView model={model} permissions={user?.permissions ?? []} />
   );
 }

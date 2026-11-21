@@ -3,11 +3,10 @@
 import OfficesView from "@/components/offices/OfficesView";
 import { useOfficesPage } from "@/components/offices/hooks/useOfficesPage";
 import PageSkeleton from "@/components/ui/PageSkeleton";
-import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminOfficesPage() {
-  const { user, loading: authLoading, logout } = useAuth({
+  const { loading: authLoading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -16,5 +15,5 @@ export default function AdminOfficesPage() {
 
   if (authLoading) return <PageSkeleton />;
 
-  return <OfficesView model={model} identity={userDisplayName(user)} />;
+  return <OfficesView model={model} />;
 }

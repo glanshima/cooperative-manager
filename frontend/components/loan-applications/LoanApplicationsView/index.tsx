@@ -1,17 +1,10 @@
 import StatusMessage from "@/components/ui/StatusMessage";
-import LogoutControl from "@/components/ui/LogoutControl";
 import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { LoanApplicationsPageModel } from "../hooks/useLoanApplicationsPage";
 import ApplicationsTable from "../ApplicationsTable";
 import ApplicationReviewPanel from "../ApplicationReviewPanel";
 
-export default function LoanApplicationsView({
-  model,
-  identity,
-}: {
-  model: LoanApplicationsPageModel;
-  identity?: string | null;
-}) {
+export default function LoanApplicationsView({ model }: { model: LoanApplicationsPageModel }) {
   if (model.loading) {
     return <PageSkeleton />;
   }
@@ -20,7 +13,6 @@ export default function LoanApplicationsView({
     <main className="page page--1000">
       <div className="page-header">
         <h1>Loan Applications</h1>
-        <LogoutControl identity={identity} onLogout={model.auth.logout} />
       </div>
 
       {model.feedback.error && (

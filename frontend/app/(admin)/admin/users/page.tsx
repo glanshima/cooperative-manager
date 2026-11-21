@@ -3,11 +3,10 @@
 import AdminUsersView from "@/components/admin-users/AdminUsersView";
 import { useAdminUsersPage } from "@/components/admin-users/hooks/useAdminUsersPage";
 import PageSkeleton from "@/components/ui/PageSkeleton";
-import { userDisplayName } from "@/lib/names";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminUsersPage() {
-  const { user, loading, logout } = useAuth({
+  const { loading, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -16,5 +15,5 @@ export default function AdminUsersPage() {
 
   if (loading || model.loading) return <PageSkeleton />;
 
-  return <AdminUsersView model={model} identity={userDisplayName(user)} />;
+  return <AdminUsersView model={model} />;
 }
