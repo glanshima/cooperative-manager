@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import BrandingProvider from "@/components/branding/BrandingProvider";
 import type { CurrentUser, Settings } from "@/lib/api";
 
 import type { HomePageModel } from "../hooks/useHomePage";
@@ -85,6 +86,33 @@ describe("HomeView", () => {
     expect(screen.getByRole("link", { name: /log in/i })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Settings (admin)" })).not.toBeInTheDocument();
+  });
+
+  it("uses the configured cooperative name in the title", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            cooperative_name: "Riverside SACCO",
+            cooperative_short_name: "Riverside",
+            cooperative_monogram: "R",
+            logo_url: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      )
+    );
+
+    render(
+      <BrandingProvider>
+        <HomeView model={makeModel({})} />
+      </BrandingProvider>
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Riverside SACCO Manager" })
+    ).toBeInTheDocument();
   });
 
   it("shows admin pages but hides disabled modules", () => {

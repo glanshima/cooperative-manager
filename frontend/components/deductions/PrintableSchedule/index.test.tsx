@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import BrandingProvider from "@/components/branding/BrandingProvider";
 import type { PayrollDeductionSchedule } from "@/lib/api";
 
 import PrintableSchedule from ".";
@@ -88,6 +89,35 @@ describe("PrintableSchedule", () => {
     expect(screen.queryByText("Breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText("Status")).not.toBeInTheDocument();
     expect(screen.getByText("© MACT Cooperative 2026")).toBeInTheDocument();
+  });
+
+  it("prints the configured cooperative name and logo", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            cooperative_name: "Riverside SACCO",
+            cooperative_short_name: "Riverside",
+            cooperative_monogram: "R",
+            logo_url: "https://blob.example/logo.png",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      )
+    );
+
+    render(
+      <BrandingProvider>
+        <PrintableSchedule schedule={schedule} onClose={vi.fn()} />
+      </BrandingProvider>
+    );
+
+    expect(await screen.findByRole("heading", { name: "Riverside SACCO" })).toBeInTheDocument();
+    expect(screen.getByText("© Riverside SACCO 2026")).toBeInTheDocument();
+    expect(document.querySelector("header img")?.getAttribute("src")).toBe(
+      "https://blob.example/logo.png"
+    );
   });
 
   it("displays PSN as first column without MCT prefix", () => {

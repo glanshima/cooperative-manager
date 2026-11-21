@@ -246,3 +246,12 @@
     transition: none;
   }
 }
+
+/* Printing a report must not include the navigation chrome. */
+@media print {
+  .topbar,
+  .scrim,
+  .sidebar {
+    display: none !important;
+  }
+}

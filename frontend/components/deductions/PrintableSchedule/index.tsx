@@ -1,5 +1,8 @@
+"use client";
+
 import { useEffect } from "react";
 
+import { useBranding } from "@/components/branding/BrandingProvider";
 import Table from "@/components/ui/Table";
 import type { PayrollDeductionSchedule } from "@/lib/api";
 
@@ -7,7 +10,6 @@ import { monthLabel } from "@/lib/month";
 
 import { formatMoney } from "../labels";
 
-const COOPERATIVE_NAME = "MACT Cooperative";
 const cellStyle = { padding: "6px 8px", borderBottom: "1px solid #ccc", verticalAlign: "top" };
 
 export default function PrintableSchedule({
@@ -17,6 +19,8 @@ export default function PrintableSchedule({
   schedule: PayrollDeductionSchedule | null;
   onClose: () => void;
 }) {
+  const { branding } = useBranding();
+
   useEffect(() => {
     const timer = setTimeout(() => window.print(), 100);
     return () => clearTimeout(timer);
@@ -49,7 +53,14 @@ export default function PrintableSchedule({
       </div>
 
       <header style={{ marginBottom: 16 }}>
-        <h1 style={{ marginBottom: 4 }}>{COOPERATIVE_NAME}</h1>
+        {branding.logo_url && (
+          <img
+            src={branding.logo_url}
+            alt=""
+            style={{ display: "block", height: 48, width: "auto", marginBottom: 8 }}
+          />
+        )}
+        <h1 style={{ marginBottom: 4 }}>{branding.cooperative_name}</h1>
         <h2 style={{ marginTop: 0, fontSize: 18 }}>Payroll Deduction Schedule</h2>
         <p style={{ margin: "0 0 4px", fontWeight: 500 }}>{monthLabel(schedule.month)}</p>
         <p style={{ color: "#555", margin: 0 }}>
@@ -99,7 +110,7 @@ export default function PrintableSchedule({
       </Table>
 
       <footer style={{ marginTop: 24, textAlign: "center", fontSize: 12, color: "#555" }}>
-        © {COOPERATIVE_NAME} {schedule.month.slice(0, 4)}
+        © {branding.cooperative_name} {schedule.month.slice(0, 4)}
       </footer>
     </main>
   );

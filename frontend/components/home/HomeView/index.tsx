@@ -1,3 +1,6 @@
+"use client";
+
+import { useBranding } from "@/components/branding/BrandingProvider";
 import LogoutControl from "@/components/ui/LogoutControl";
 import { userDisplayName } from "@/lib/names";
 import {
@@ -9,14 +12,16 @@ import {
 import type { HomePageModel } from "../hooks/useHomePage";
 
 export default function HomeView({ model }: { model: HomePageModel }) {
+  const { branding } = useBranding();
   const { user, loading, logout } = model.auth;
+  const title = `${branding.cooperative_name} Manager`;
 
   if (loading) return <main className="page">Loading...</main>;
 
   if (!user) {
     return (
       <main className="page">
-        <h1>MACT Cooperative Manager</h1>
+        <h1>{title}</h1>
         <p>
           <a href="/login">Log in &rarr;</a>
         </p>
@@ -32,7 +37,7 @@ export default function HomeView({ model }: { model: HomePageModel }) {
   return (
     <main className="page">
       <div className="page-header" style={{ maxWidth: 640 }}>
-        <h1>MACT Cooperative Manager</h1>
+        <h1>{title}</h1>
         <LogoutControl identity={userDisplayName(user)} onLogout={logout} />
       </div>
       <p style={{ color: "#555" }}>Signed in as {user.username}.</p>
