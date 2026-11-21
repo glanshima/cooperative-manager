@@ -18,10 +18,9 @@ export const metadata: Metadata = {
   },
   description: "Cooperative society member, loan, and deduction management",
   icons: {
-    icon: [
-      { url: "/icons/favicon.svg", type: "image/svg+xml" },
-      { url: "/icons/favicon-64.png", sizes: "64x64", type: "image/png" },
-    ],
+    // Resolved per request so the tab follows the logo uploaded in Settings;
+    // the route falls back to the static Koperra icon.
+    icon: [{ url: "/api/favicon" }],
     apple: "/icons/koperra-app-icon-1024.png",
   },
 };
