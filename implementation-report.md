@@ -687,3 +687,23 @@ Notify copy is stored as final rendered text, so later wording or policy changes
 - Browsers cache tab icons beyond our headers; a newly uploaded logo may need a hard reload or a fresh tab before it shows.
 - Each uncached request costs one function invocation and two upstream fetches; the 300 s browser cache keeps that rare.
 - The iOS home-screen icon and `themeColor` remain static and still change only on deploy.
+
+## 24. Branded print header and landing page (2026-11-21)
+
+### 24.1 Print header
+
+- `PrintableSchedule` carried its own `COOPERATIVE_NAME = "MACT Cooperative"` constant, so a deployment renamed in Settings still printed the old name. It now reads `useBranding()`: the heading and the `© … <year>` footer use `branding.cooperative_name`, and the uploaded logo renders above the heading at 48 px when one is configured (omitted otherwise, so the monogram-only deployments print unchanged).
+
+### 24.2 Landing page
+
+- `HomeView` hardcoded "MACT Cooperative Manager" in both states. The title is now `${branding.cooperative_name} Manager`, covering the signed-out landing page and the signed-in index, which is the one page outside the branded shells.
+
+### 24.3 Navigation appearing in print
+
+- Printing any admin page used to include the navy sidebar (fixed-position, so it repeated on every sheet) and the mobile top bar. `AdminNav.module.css` now hides `.topbar`, `.scrim` and `.sidebar` under `@media print`, and `AdminShell.module.css` drops the 264 px content offset in print, so reports use the full paper width. The printable schedule's own `.no-print` toolbar is unaffected.
+
+### 24.4 Verification
+
+- Focused tests: `PrintableSchedule` (now with the configured name, logo and footer) and `HomeView` (title from branding) — **10 passed**.
+- `npx tsc --noEmit` clean; full Vitest **37 files / 252 tests passed**; `npm run build` unchanged at 21 static routes plus the dynamic `/api/favicon`.
+- Print output itself is not observable in jsdom; the `@media print` rules still need a manual Ctrl+P check in the browser.
