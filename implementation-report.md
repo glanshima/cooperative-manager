@@ -760,7 +760,8 @@ Section 21 shipped the member-facing notices; this slice closes the rest of the 
 - **Administrative-task-assigned and cooperative-announcement categories** — no underlying feature to attach them to.
 - Security/account notices stay outside the preference system by design; adding switches for them would weaken the guarantee that a compromise is always reported.
 
-### 25.7 Deploy note
+### 25.7 Deploy
 
-- The new table must exist in the target database before the API routes work: run the migration runner (or the single SQL file) against the branch. Not yet applied to production.
+- Shipped as `761e5b3` and pushed to `main` 2026-11-21; both Vercel projects reported `success`. Production verified: `/api/health` 200, `/api/branding` 200, `/api/notifications` 401 and `/api/notifications/preferences` 401 (the 401 rather than 404 proves the new route is live), `https://koperra.sidgakstech.me/login` 200.
+- `main.py` runs `Base.metadata.create_all()` at boot, so `notification_preferences` is created on the first backend deploy; the manual migration only keeps sandbox and Neon-branch parity.
 - No new environment variables.
