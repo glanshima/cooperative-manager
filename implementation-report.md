@@ -631,3 +631,59 @@ Notify copy is stored as final rendered text, so later wording or policy changes
 - Frontend: `npx tsc --noEmit` clean; Vitest **36 files / 239 tests passed** (8 bell tests; a placement test asserting which container mounts the bell at each breakpoint; AdminNav mocks extended for the bell and `matchMedia`); `npm run build` 20/20 static pages (run before the bell-placement tweak, which was verified by typecheck + tests + browser only because the dev server held `.next`). Note: the first full-suite run reported 2 failures that did not reproduce — later full runs were clean.
 - Signed-in browser pass (local sandbox, `localhost:3000` against `127.0.0.1:8000`): the member bell showed the empty state, then "3 unread" with newest-first entries; **Mark all as read** cleared dots, tint and badge; Escape closed and returned focus; outside click closed; clicking an unread item marked it read, closed the panel and routed via `link_path`; read state survived a reload; a notification inserted mid-session appeared through the 60 s poll with no reload. On the admin side the bell sits in the mobile top bar and the drawer shows the full cooperative name; its panel portals out of the drawer to the viewport.
 - Broadcast caveat: the admin bell is empty in practice because every producer currently targets a member account; the router is user-scoped so staff notifications can be added later without schema changes.
+
+## 22. Permission-scoped admin navigation (2026-11-20)
+
+### 22.1 Resolved permissions on the session
+
+- `app/deps.py` gained `user_permission_codes(db, user)`: members get `[]`, a super admin gets `sorted(PERMISSION_CODES)` from the catalogue itself, and every other admin gets the distinct codes reachable through active `UserRoleAssignment → Role → RolePermission` rows. Reading the catalogue (not the table) for super admins means a deployment whose `permissions` table lags the code still reports the full set.
+- `UserOut.permissions` (`schemas.py`) carries the list; `GET /api/auth/me` fills it, so the client resolves navigation from the same data the server enforces.
+
+### 22.2 Branding permissions and tightened auth routes
+
+- Catalogue additions `branding.view` (Branding) and `branding.manage` (Branding). `DEFAULT_ROLES` is unchanged; super admins hold them through the catalogue rule above.
+- `PUT /api/settings` stays admin-only but is field-scoped: branding fields (`cooperative_name`, `cooperative_short_name`, `cooperative_monogram`) require `branding.manage`; any other field requires `admin.settings_manage`. `POST`/`DELETE /api/settings/logo` require `branding.manage`. `GET /api/settings` is unchanged.
+- `POST /api/auth/create-member-login` and `POST /api/auth/reset-member-password` now require `member.update` instead of bare admin, and the permission-catalogue drift test still passes (no uncatalogued string literals).
+
+### 22.3 Frontend
+
+- `lib/permissions.ts` (`hasPermission`, `hasAnyPermission`, plus the disbursement and settings-page code groups).
+- `useAdminNav(permissions)` filters every link: Dashboard is ungated; Members needs `member.view` + module; Loans and Loan applications `loan.view`; Disbursements any disbursement code; Repayments `repayment.view`; Deductions `deduction.view` + module; Audit `audit.view`; Settings children by `admin.user_manage` / `admin.office_manage` / `admin.role_manage` / `branding.view|manage`. A group renders only when its module is on and it has children left.
+- `AdminNav` runs the shell auth guard (`useAuth({requireAuth, requirePasswordChanged, requireRole:"admin"})`) and renders nothing until `/me` resolves, so a member never sees admin chrome flash. `app/(admin)/admin/page.tsx` redirects to `/admin/dashboard`, removing the duplicate landing page.
+- Settings save is split into two scopes (`SCOPE_FIELDS`) so a partial-permission officer only PUTs the fields they may change. `BrandingSection` gained `readOnly`, which disables the three identity inputs and hides upload/remove when the officer holds `branding.view` only, with the required permission named on screen. New Platform section renders `PLATFORM_CREDIT`.
+- `HomeView` gates each link with the same helpers; members now see only the member dashboard, since `/loans` is admin-only.
+
+### 22.4 Verification
+
+- Backend: `pytest` on the sandbox test database **359 passed**; focused rerun of the changed suites **62 passed**.
+- Frontend: `npx tsc --noEmit` clean; Vitest **36 files / 247 tests passed**; `npm run build` 21 static routes including `/admin`.
+- No ESLint config exists in the repo, so `next lint` was not run.
+
+### 22.5 Deploy note
+
+- Shipped as `de65673`. The new permission rows must exist in the target database — `scripts/seed_permissions.py` is idempotent and only upserts permissions by code (existing role grants are untouched). It was run against the production branch `br-rough-flower-aycl78im` on 2026-11-20 (43 permissions seeded/updated; all five default roles already existed).
+- Super admins need nothing further. Any non-super-admin role that should see or edit branding needs `branding.view` / `branding.manage` granted in Roles & Permissions — that remains an owner action.
+
+## 23. Tab icon follows the uploaded logo (2026-11-21)
+
+### 23.1 The gap
+
+`app/layout.tsx` declared static `/icons/favicon.svg` and `/icons/favicon-64.png`, so the browser tab kept the Koperra mark no matter what Settings → Branding held; changing it meant shipping files.
+
+### 23.2 Approach
+
+- New `app/api/favicon/route.ts`, a dynamic route handler. Per request it reads `{API_URL}/api/branding`; when `logo_url` is set it fetches the blob and streams the bytes back with the blob's own content type and `Cache-Control: public, max-age=300`. With no logo, an unreachable backend, or a failed blob fetch it answers 307 to the static `/icons/favicon.svg` (60 s cache), so the tab is never blank.
+- Layout metadata now declares `icon: [{ url: "/api/favicon" }]`. The apple touch icon stays `koperra-app-icon-1024.png` — iOS expects a 180 px PNG and caches it far more aggressively than desktop browsers do.
+- The backend base URL is read from `NEXT_PUBLIC_API_URL`, which is available server-side, so no new environment variable was needed.
+
+### 23.3 Verification
+
+- Three route tests: streams the logo with its content type, redirects when no logo is set, redirects when the backend is unreachable. Focused run **3 passed**.
+- `npx tsc --noEmit` clean; full Vitest **37 files / 250 tests**, with 2 failures — the documented jsdom flake (`login-redirects`, `BulkActionsBar`), both passing in isolation.
+- `npm run build`: 21 static routes plus `/api/favicon` as a dynamic (ƒ) route.
+
+### 23.4 Caveats
+
+- Browsers cache tab icons beyond our headers; a newly uploaded logo may need a hard reload or a fresh tab before it shows.
+- Each uncached request costs one function invocation and two upstream fetches; the 300 s browser cache keeps that rare.
+- The iOS home-screen icon and `themeColor` remain static and still change only on deploy.
