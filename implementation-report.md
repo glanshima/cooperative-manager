@@ -825,4 +825,23 @@ One `monthly_installment` cannot express `spread_first_months`, so the deduction
 - Before deploying, run `manual_migration_2026_11_loan_interest_modes.sql` on the production branch (the app's `create_all` creates `loan_fee_payments` but cannot add the columns), then run `scripts/seed_permissions.py` so `loan.fee_verify` exists and can be granted; existing roles keep their customizations, so assign it to Loan Officer/Treasurer where the defaults are wanted.
 - No new environment variables.
 
+## 27. Member cancellation notifies the reviewers (2026-11-22)
 
+### 27.1 The gap
+
+Submitting an application told the `loan.review` holders, but cancelling one told nobody: `POST /api/loan-applications/{id}/cancel` changed the status and wrote a `loan_application.cancelled` audit row only. An approved-but-undisbursed application that the member cancels disappears from the disbursement queue without any signal, which is exactly the case an officer needs to know about.
+
+### 27.2 Implementation
+
+- `cancel_application` now calls `notification_service.notify_staff(db, permission_code="loan.review", ...)` before the commit, so the notice is queued in the same transaction as the status change — same contract as the submission notice.
+- Recipients are limited to active admins holding `loan.review`; officers with only `loan.view` or `disbursement.*` are not pinged, and the member who cancelled gets no notice for their own deliberate action.
+- Notice: category `loan`, title **Loan application cancelled**, body naming the member, loan type and amount (`approved_amount`, falling back to `requested_amount` for still-pending applications) plus a reminder that the loan-form fee is not refunded, link `/admin/loan-applications`.
+
+### 27.3 Verification
+
+- `tests/test_notifications.py` — 2 new tests: a reviewer receives exactly one notice with the right title/amount/link while the member receives none, and an admin holding only `loan.view` receives nothing. Focused run **23 passed**; full backend suite **392 passed**.
+- Full Vitest run was **39/40 files, 264/265 tests** — the one failure was the documented jsdom/CPU-contention flake in `NotificationBell` (unread-count test), which passed **8/8** on an isolated rerun.
+
+### 27.4 Deploy
+
+- No schema change and no new permission. It ships in the same deploy as section 26, whose production migration and permission seed must run first.

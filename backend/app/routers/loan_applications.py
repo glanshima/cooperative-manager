@@ -853,6 +853,21 @@ def cancel_application(
 
     application.status = models.LoanApplicationStatus.CANCELLED
     application.cancelled_at = datetime.utcnow()
+    # Approved-but-undisbursed applications still owed staff a payout, so
+    # the queue must not silently lose them.
+    notification_service.notify_staff(
+        db,
+        permission_code="loan.review",
+        category=models.NotificationCategory.LOAN,
+        title="Loan application cancelled",
+        body=(
+            f"{application.member.name} cancelled their "
+            f"{application.loan_type.name} application for "
+            f"{application.approved_amount or application.requested_amount}. "
+            f"The loan-form fee is not refunded."
+        ),
+        link_path="/admin/loan-applications",
+    )
     db.commit()
     db.refresh(application)
 

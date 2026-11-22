@@ -358,6 +358,61 @@ def test_a_new_application_skips_staff_without_the_review_permission(
     assert _feed(db_session, bystander) == []
 
 
+def test_a_member_cancellation_notifies_the_staff_who_can_review_it(client, db_session):
+    reviewer = make_admin_user(db_session, username="notify_cancel_reviewer", super_admin=True)
+    member = make_member(db_session, psn="PSN-NOT-15", name="Ada Canceller")
+    login = make_member_user(db_session, member)
+    loan_type = make_loan_type(db_session, "Notify Cancel Loan")
+    application = _make_application(
+        db_session,
+        member,
+        loan_type,
+        payment_status=models.PaymentVerificationStatus.AWAITING_VERIFICATION,
+        status=models.LoanApplicationStatus.PENDING,
+    )
+
+    response = client.post(
+        f"/api/loan-applications/{application.id}/cancel",
+        headers=auth_headers(login),
+    )
+
+    assert response.status_code == 200, response.text
+    rows = _feed(db_session, reviewer)
+    assert len(rows) == 1
+    assert rows[0].category == models.NotificationCategory.LOAN
+    assert rows[0].title == "Loan application cancelled"
+    assert "Ada Canceller" in rows[0].body
+    assert "500" in rows[0].body
+    assert rows[0].link_path == "/admin/loan-applications"
+    # The member made the choice; they don't get told about it.
+    assert _feed(db_session, login) == []
+
+
+def test_a_member_cancellation_skips_staff_without_the_review_permission(
+    client, db_session, seed_permissions
+):
+    bystander = make_admin_user(db_session, username="notify_cancel_bystander")
+    grant_permission(db_session, bystander, "loan.view")
+    member = make_member(db_session, psn="PSN-NOT-16")
+    login = make_member_user(db_session, member)
+    loan_type = make_loan_type(db_session, "Notify Cancel Scoped Loan")
+    application = _make_application(
+        db_session,
+        member,
+        loan_type,
+        payment_status=models.PaymentVerificationStatus.VERIFIED,
+        status=models.LoanApplicationStatus.APPROVED,
+    )
+
+    response = client.post(
+        f"/api/loan-applications/{application.id}/cancel",
+        headers=auth_headers(login),
+    )
+
+    assert response.status_code == 200, response.text
+    assert _feed(db_session, bystander) == []
+
+
 # ---------------------------------------------------------------------------
 # Payroll deductions
 # ---------------------------------------------------------------------------
