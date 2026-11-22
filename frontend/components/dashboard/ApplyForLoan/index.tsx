@@ -98,12 +98,21 @@ export default function ApplyForLoan({
               >
                 <strong>Estimated terms</strong> (final terms are set by the cooperative at
                 approval, and may differ):
-                <div>Interest (deducted at source): {preview.interest.toFixed(2)}</div>
+                <div>
+                  Interest ({preview.mode === "at_source" ? "deducted at source" : "collected with your instalments"}):{" "}
+                  {preview.interest.toFixed(2)}
+                </div>
                 <div>Amount you would receive: {preview.netDisbursed.toFixed(2)}</div>
-                {preview.flatCharge > 0 && <div>Flat charge: {preview.flatCharge.toFixed(2)}</div>}
+                {preview.flatCharge > 0 && (
+                  <div>Processing fee (paid separately): {preview.flatCharge.toFixed(2)}</div>
+                )}
                 <div>Total repayable: {preview.totalRepayable.toFixed(2)}</div>
                 <div>
                   Monthly installment ({preview.tenure} months): {preview.installment.toFixed(2)}
+                  {preview.interestInstallment > 0 &&
+                    ` + ${preview.interestInstallment.toFixed(2)} interest for the first ${
+                      preview.spreadMonths
+                    } months`}
                 </div>
               </div>
             )}

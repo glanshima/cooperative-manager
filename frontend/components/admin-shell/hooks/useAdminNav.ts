@@ -63,6 +63,11 @@ export function useAdminNav(permissions: string[]) {
   if (can("repayment.view")) {
     loanChildren.push({ href: "/admin/loan-repayments", label: "Loan repayments" });
   }
+  if (can("loan.fee_verify") && can("loan.view")) {
+    // The queue's data call is gated on loan.view, so offer it only when
+    // the officer can both read the list and act on it.
+    loanChildren.push({ href: "/admin/loan-fees", label: "Loan fees" });
+  }
   if (settings && isModuleEnabled(settings, "loans") && loanChildren.length > 0) {
     // Every stage of the loan workflow lives under one menu so related
     // screens stay together as more loan features are added.

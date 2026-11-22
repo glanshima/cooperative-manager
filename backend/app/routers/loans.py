@@ -14,7 +14,12 @@ from ..deps import (
     require_module_enabled,
     user_has_permission,
 )
-from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
+from ..loan_calc import (
+    compute_expected_end_date,
+    compute_loan_terms,
+    get_effective_terms,
+    resolve_interest_terms,
+)
 from ..loan_rules import (
     assert_member_may_borrow,
     assert_no_other_active_loan_of_type,
@@ -45,6 +50,12 @@ def _to_detail_schema(loan: models.Loan) -> schemas.LoanOutWithDetails:
         net_disbursed=loan.net_disbursed,
         total_repayable=loan.total_repayable,
         monthly_installment=loan.monthly_installment,
+        interest_mode=loan.interest_mode,
+        interest_spread_months=loan.interest_spread_months,
+        interest_installment=loan.interest_installment,
+        fee_amount=loan.fee_amount,
+        fee_status=loan.fee_status,
+        fee_rejection_reason=loan.fee_rejection_reason,
         disbursement_date=loan.disbursement_date,
         expected_end_date=loan.expected_end_date,
         disbursement_bank_name=loan.disbursement_bank_name,
@@ -73,7 +84,11 @@ def list_loans(
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Loan).options(
-        joinedload(models.Loan.member), joinedload(models.Loan.loan_type)
+        joinedload(models.Loan.member),
+        joinedload(models.Loan.loan_type),
+        # fee_status reads the payments; without this each row in the list
+        # would issue its own query.
+        joinedload(models.Loan.fee_payments),
     )
 
     # Members can only see their own loans; admins need loan.view.
@@ -117,7 +132,11 @@ def get_loan(
 ):
     loan = (
         db.query(models.Loan)
-        .options(joinedload(models.Loan.member), joinedload(models.Loan.loan_type))
+        .options(
+            joinedload(models.Loan.member),
+            joinedload(models.Loan.loan_type),
+            joinedload(models.Loan.fee_payments),
+        )
         .filter(models.Loan.id == loan_id)
         .first()
     )
@@ -186,9 +205,19 @@ def create_loan(
     interest_rate, tenure_months, flat_charge = get_effective_terms(
         db, loan_type, payload.disbursement_date
     )
-    interest_amount, net_disbursed, total_repayable, monthly_installment = compute_loan_terms(
-        payload.principal, interest_rate, flat_charge, tenure_months
+    interest_mode, interest_spread_months = resolve_interest_terms(
+        db, loan_type, payload.disbursement_date
     )
+    try:
+        terms = compute_loan_terms(
+            payload.principal, interest_rate, tenure_months, interest_mode, interest_spread_months
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Loan terms are misconfigured: {exc}")
+    interest_amount = terms.interest_amount
+    net_disbursed = terms.net_disbursed
+    total_repayable = terms.total_repayable
+    monthly_installment = terms.monthly_installment
     expected_end_date = compute_expected_end_date(payload.disbursement_date, tenure_months)
 
     loan = models.Loan(
@@ -199,6 +228,14 @@ def create_loan(
         net_disbursed=net_disbursed,
         total_repayable=total_repayable,
         monthly_installment=monthly_installment,
+        interest_mode=interest_mode,
+        interest_spread_months=(
+            interest_spread_months
+            if interest_mode == models.InterestDeductionMode.SPREAD_FIRST_MONTHS
+            else None
+        ),
+        interest_installment=terms.interest_installment,
+        fee_amount=flat_charge,
         disbursement_date=payload.disbursement_date,
         expected_end_date=expected_end_date,
         disbursement_bank_name=member.bank_name,
@@ -226,7 +263,11 @@ def create_loan(
 
     loan = (
         db.query(models.Loan)
-        .options(joinedload(models.Loan.member), joinedload(models.Loan.loan_type))
+        .options(
+            joinedload(models.Loan.member),
+            joinedload(models.Loan.loan_type),
+            joinedload(models.Loan.fee_payments),
+        )
         .filter(models.Loan.id == loan.id)
         .first()
     )
@@ -295,7 +336,11 @@ def update_loan(
 
     loan = (
         db.query(models.Loan)
-        .options(joinedload(models.Loan.member), joinedload(models.Loan.loan_type))
+        .options(
+            joinedload(models.Loan.member),
+            joinedload(models.Loan.loan_type),
+            joinedload(models.Loan.fee_payments),
+        )
         .filter(models.Loan.id == loan.id)
         .first()
     )

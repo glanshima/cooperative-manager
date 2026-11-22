@@ -13,6 +13,8 @@ from .models import (
     LoanApplicationStatus,
     PaymentVerificationStatus,
     LoanRestrictionBehavior,
+    InterestDeductionMode,
+    FeePaymentStatus,
     RepaymentVerificationStatus,
     ContributionChangeRequestStatus,
     PayrollDeductionStatus,
@@ -348,13 +350,35 @@ class LoanTypeBase(BaseModel):
     open_for_application: bool = False
 
 
+def _validate_interest_terms(
+    interest_mode: Optional[InterestDeductionMode],
+    interest_spread_months: Optional[int],
+    tenure_months: int,
+) -> None:
+    if interest_spread_months is not None:
+        if interest_mode != InterestDeductionMode.SPREAD_FIRST_MONTHS:
+            raise ValueError("interest_spread_months only applies to spread_first_months")
+        if not 1 <= interest_spread_months <= tenure_months:
+            raise ValueError("interest_spread_months must be between 1 and the tenure")
+    if interest_mode == InterestDeductionMode.SPREAD_FIRST_MONTHS and interest_spread_months is None:
+        raise ValueError("interest_spread_months is required for spread_first_months")
+
+
 class LoanTypeCreate(LoanTypeBase):
     """interest_rate/tenure_months/flat_charge here seed the loan type's
-    FIRST rate version. effective_from defaults to today if not given."""
+    FIRST rate version. effective_from defaults to today if not given.
+    interest_mode omitted means "use the cooperative default"."""
     interest_rate: Decimal
     tenure_months: int
     flat_charge: Decimal = Decimal("0")
+    interest_mode: Optional[InterestDeductionMode] = None
+    interest_spread_months: Optional[int] = None
     effective_from: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _check_interest_terms(self):
+        _validate_interest_terms(self.interest_mode, self.interest_spread_months, self.tenure_months)
+        return self
 
 
 class LoanTypeUpdate(BaseModel):
@@ -374,6 +398,8 @@ class LoanTypeOut(LoanTypeBase):
     interest_rate: Decimal  # current effective rate (denormalized cache)
     tenure_months: int
     flat_charge: Decimal
+    interest_mode: Optional[InterestDeductionMode] = None  # None = cooperative default
+    interest_spread_months: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -382,7 +408,14 @@ class LoanTypeRateVersionCreate(BaseModel):
     interest_rate: Decimal
     tenure_months: int
     flat_charge: Decimal = Decimal("0")
+    interest_mode: Optional[InterestDeductionMode] = None
+    interest_spread_months: Optional[int] = None
     effective_from: date
+
+    @model_validator(mode="after")
+    def _check_interest_terms(self):
+        _validate_interest_terms(self.interest_mode, self.interest_spread_months, self.tenure_months)
+        return self
 
 
 class LoanTypeRateVersionOut(BaseModel):
@@ -393,6 +426,8 @@ class LoanTypeRateVersionOut(BaseModel):
     interest_rate: Decimal
     tenure_months: int
     flat_charge: Decimal
+    interest_mode: Optional[InterestDeductionMode] = None
+    interest_spread_months: Optional[int] = None
     effective_from: date
     created_at: datetime
 
@@ -428,6 +463,13 @@ class LoanOut(BaseModel):
     net_disbursed: Decimal
     total_repayable: Decimal
     monthly_installment: Decimal
+    interest_mode: InterestDeductionMode = InterestDeductionMode.AT_SOURCE
+    interest_spread_months: Optional[int] = None
+    interest_installment: Decimal = Decimal("0")
+    # Fee owed separately from the loan (never part of the figures above).
+    fee_amount: Decimal = Decimal("0")
+    fee_status: str = "not_required"
+    fee_rejection_reason: Optional[str] = None
     disbursement_date: date
     expected_end_date: date
     disbursement_bank_name: Optional[str] = None
@@ -884,6 +926,56 @@ class LoanRepaymentOutWithReceipt(LoanRepaymentOut):
 
 
 # ---------------------------------------------------------------------------
+# Loan fees (paid separately, never part of the loan figures)
+# ---------------------------------------------------------------------------
+
+class LoanFeePaymentCreate(BaseModel):
+    """The amount is NOT accepted here: the fee owed is the snapshot taken
+    when the loan was disbursed (`Loan.fee_amount`), so a member cannot
+    settle a different figure than the cooperative is owed."""
+    payment_reference: str
+    receipt_image_base64: str
+    receipt_content_type: str
+
+    _validate_receipt_type = field_validator("receipt_content_type")(validation.validate_receipt_content_type)
+    _validate_receipt_b64 = field_validator("receipt_image_base64")(validation.validate_receipt_base64)
+
+
+class FeePaymentVerificationRequest(BaseModel):
+    approved: bool
+    rejection_reason: Optional[str] = None  # required by the router if approved=False
+
+
+class LoanFeePaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    loan_id: uuid.UUID
+    member_id: uuid.UUID
+    amount: Decimal
+    payment_reference: str
+    receipt_content_type: str
+    status: FeePaymentStatus
+    rejection_reason: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    # True when the caller is conflicted against this payment's member.
+    conflicted: bool = False
+
+
+class LoanFeePaymentOutWithReceipt(LoanFeePaymentOut):
+    receipt_image_base64: str
+
+
+class LoanFeePaymentOutWithDetails(LoanFeePaymentOut):
+    member_name: str
+    member_psn: str
+    loan_type_name: str
+
+
+# ---------------------------------------------------------------------------
 # Monthly contribution changes
 # ---------------------------------------------------------------------------
 
@@ -1221,6 +1313,8 @@ class SettingsOut(BaseModel):
     id: uuid.UUID
     loan_restriction_behavior: LoanRestrictionBehavior
     loan_form_fee: Decimal
+    loan_interest_mode: InterestDeductionMode
+    loan_interest_spread_months: Optional[int] = None
     members_module_enabled: bool
     loans_module_enabled: bool
     deductions_module_enabled: bool
@@ -1235,6 +1329,8 @@ class SettingsOut(BaseModel):
 class SettingsUpdate(BaseModel):
     loan_restriction_behavior: Optional[LoanRestrictionBehavior] = None
     loan_form_fee: Optional[Decimal] = None
+    loan_interest_mode: Optional[InterestDeductionMode] = None
+    loan_interest_spread_months: Optional[int] = Field(default=None, ge=1)
     members_module_enabled: Optional[bool] = None
     loans_module_enabled: Optional[bool] = None
     deductions_module_enabled: Optional[bool] = None

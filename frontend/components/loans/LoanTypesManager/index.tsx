@@ -1,4 +1,5 @@
 import Table from "@/components/ui/Table";
+import { INTEREST_MODE_LABELS } from "@/lib/loanMath";
 import type { LoansPageModel } from "../hooks/useLoansPage";
 import RateHistoryPanel from "../RateHistoryPanel";
 
@@ -22,7 +23,8 @@ export default function LoanTypesManager({ types }: { types: LoansPageModel["typ
             <th>Description</th>
             <th>Rate</th>
             <th>Tenure (months)</th>
-            <th>Flat charge</th>
+            <th>Interest deduction</th>
+            <th>Fee (paid separately)</th>
             <th>Active</th>
             <th>Open for application</th>
           </tr>
@@ -36,6 +38,14 @@ export default function LoanTypesManager({ types }: { types: LoansPageModel["typ
               </td>
               <td>{(parseFloat(t.interest_rate) * 100).toFixed(2)}%</td>
               <td>{t.tenure_months}</td>
+              <td>
+                {t.interest_mode
+                  ? INTEREST_MODE_LABELS[t.interest_mode]
+                  : "Cooperative default"}
+                {t.interest_mode === "spread_first_months" &&
+                  t.interest_spread_months &&
+                  ` (${t.interest_spread_months}mo)`}
+              </td>
               <td>{parseFloat(t.flat_charge) > 0 ? t.flat_charge : "—"}</td>
               <td>
                 <button onClick={() => types.onToggleActive(t)}>
@@ -86,10 +96,43 @@ export default function LoanTypesManager({ types }: { types: LoansPageModel["typ
         <input
           type="number"
           step="0.01"
-          placeholder="Flat charge (optional, e.g. 500)"
+          placeholder="Processing fee (optional, paid separately)"
           value={form.flat_charge}
           onChange={(e) => types.setField("flat_charge", parseFloat(e.target.value) || 0)}
         />
+        <select
+          aria-label="Interest deduction"
+          value={form.interest_mode}
+          onChange={(e) =>
+            types.setField(
+              "interest_mode",
+              e.target.value as typeof form.interest_mode
+            )
+          }
+        >
+          <option value="">Use the cooperative default</option>
+          {Object.entries(INTEREST_MODE_LABELS).map(([mode, label]) => (
+            <option key={mode} value={mode}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {form.interest_mode === "spread_first_months" && (
+          <input
+            required
+            type="number"
+            min={1}
+            max={form.tenure_months}
+            placeholder="Months the interest is spread over"
+            value={form.interest_spread_months}
+            onChange={(e) =>
+              types.setField(
+                "interest_spread_months",
+                parseInt(e.target.value) || ""
+              )
+            }
+          />
+        )}
         <input
           required
           type="date"

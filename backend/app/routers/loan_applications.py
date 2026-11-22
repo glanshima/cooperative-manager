@@ -23,7 +23,12 @@ from ..self_conflict import (
     mark_conflicted_reads,
     require_no_member_conflict,
 )
-from ..loan_calc import compute_loan_terms, compute_expected_end_date, get_effective_terms
+from ..loan_calc import (
+    compute_expected_end_date,
+    compute_loan_terms,
+    get_effective_terms,
+    resolve_interest_terms,
+)
 from ..loan_rules import (
     assert_member_may_borrow,
     assert_no_other_active_loan_of_type,
@@ -634,9 +639,21 @@ def disburse_application(
     disbursement_date = date.today().replace(day=1)
 
     interest_rate, _default_tenure, flat_charge = get_effective_terms(db, loan_type, disbursement_date)
-    interest_amount, net_disbursed, total_repayable, monthly_installment = compute_loan_terms(
-        application.approved_amount, interest_rate, flat_charge, application.approved_tenure_months
-    )
+    interest_mode, interest_spread_months = resolve_interest_terms(db, loan_type, disbursement_date)
+    try:
+        terms = compute_loan_terms(
+            application.approved_amount,
+            interest_rate,
+            application.approved_tenure_months,
+            interest_mode,
+            interest_spread_months,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Loan terms are misconfigured: {exc}")
+    interest_amount = terms.interest_amount
+    net_disbursed = terms.net_disbursed
+    total_repayable = terms.total_repayable
+    monthly_installment = terms.monthly_installment
     expected_end_date = compute_expected_end_date(disbursement_date, application.approved_tenure_months)
 
     if application.use_default_account:
@@ -707,6 +724,14 @@ def disburse_application(
         net_disbursed=net_disbursed - total_deducted,
         total_repayable=total_repayable,
         monthly_installment=monthly_installment,
+        interest_mode=interest_mode,
+        interest_spread_months=(
+            interest_spread_months
+            if interest_mode == models.InterestDeductionMode.SPREAD_FIRST_MONTHS
+            else None
+        ),
+        interest_installment=terms.interest_installment,
+        fee_amount=flat_charge,
         disbursement_date=disbursement_date,
         expected_end_date=expected_end_date,
         disbursement_bank_name=disbursement_bank_name,

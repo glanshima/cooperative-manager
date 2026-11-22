@@ -84,6 +84,8 @@ const allModulesOn: Settings = {
   id: "settings-1",
   loan_restriction_behavior: "block",
   loan_form_fee: "50.00",
+  loan_interest_mode: "at_source",
+  loan_interest_spread_months: null,
   members_module_enabled: true,
   loans_module_enabled: true,
   deductions_module_enabled: true,

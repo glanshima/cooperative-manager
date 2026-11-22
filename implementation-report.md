@@ -765,3 +765,64 @@ Section 21 shipped the member-facing notices; this slice closes the rest of the 
 - Shipped as `761e5b3` and pushed to `main` 2026-11-21; both Vercel projects reported `success`. Production verified: `/api/health` 200, `/api/branding` 200, `/api/notifications` 401 and `/api/notifications/preferences` 401 (the 401 rather than 404 proves the new route is live), `https://koperra.sidgakstech.me/login` 200.
 - `main.py` runs `Base.metadata.create_all()` at boot, so `notification_preferences` is created on the first backend deploy; the manual migration only keeps sandbox and Neon-branch parity.
 - No new environment variables.
+
+## 26. Loan interest deduction modes and a separately-paid processing fee (2026-11-22)
+
+### 26.1 What shipped
+
+- **The fee bug is fixed.** A loan type's `flat_charge` was being added to `total_repayable` and therefore to the instalment. It is a processing fee paid separately, so it is now outside every loan figure: `compute_loan_terms` no longer receives it, `Loan.fee_amount` snapshots what is owed at disbursement, and a new `loan_fee_payments` ledger records the member's payment and its verification. Verifying a fee changes nothing on the loan.
+- **Interest can be recovered three ways**, configurable per cooperative, overridable per loan type and per rate version.
+
+| Mode | Payout | Total repayable | Monthly instalment |
+|---|---|---|---|
+| `at_source` | principal − interest | principal | principal / tenure |
+| `spread_over_tenure` | principal | principal + interest | (principal + interest) / tenure |
+| `spread_first_months` (M months) | principal | principal + interest | principal / tenure, **plus** interest / M for the first M months |
+
+- Existing disbursed loans are untouched. The migration defaults every existing row to `at_source` with `fee_amount = 0`, which reproduces what those loans already had.
+
+### 26.2 Resolution order
+
+A rate version may carry its own mode; otherwise the loan type's cached mode applies; otherwise the cooperative default in `settings.loan_interest_mode` applies. The spread months fall back independently (a type may set `spread_first_months` while inheriting the coop's month count). The loan snapshots `interest_mode`, `interest_spread_months` and `interest_installment` at disbursement, so later settings changes never rewrite an existing loan.
+
+Validation: settings require a positive month count for `spread_first_months` and reject a stray month count for the other modes (merged-state check, 400). Disbursement raises `ValueError` when `spread_months > tenure_months` (possible after a later tenure change) and the router converts it to a 400 explaining the misconfiguration.
+
+### 26.3 Arrears
+
+One `monthly_installment` cannot express `spread_first_months`, so the deduction expectations engine asks `instalment_for_due_month(loan, n)` / `expected_total_by_due_month(loan, n)` instead: the first M instalments include `interest_installment`, later ones do not. `at_source` and `spread_over_tenure` behave exactly as before.
+
+### 26.4 Fee payment endpoints (`backend/app/routers/loan_fees.py`)
+
+| Endpoint | Who | Behaviour |
+|---|---|---|
+| `POST /api/loans/{id}/fee-payment` | the owning member | amount comes from `Loan.fee_amount`, never the client; refuses fee ≤ 0, an already-paid fee, or a duplicate awaiting review; notifies holders of `loan.fee_verify` |
+| `GET /api/loans/{id}/fee-payments` | owner or `loan.view` | history for one loan |
+| `GET /api/loan-fees?status=` | `loan.view` | cross-loan queue (`awaiting_verification`) or history |
+| `GET /api/loan-fees/{id}` / `/receipt` | owner or `loan.view` | details / receipt |
+| `POST /api/loan-fees/{id}/verify` | `loan.fee_verify` | row-locked, idempotent; COI guard returns 409; approve/reject notifies the member and writes `loan_fee.verified` / `loan_fee.rejected` audit events |
+
+### 26.5 Schema, migration and permissions
+
+- `scripts/manual_migration_2026_11_loan_interest_modes.sql` (idempotent): enums `interestdeductionmode` and `feepaymentstatus`; `settings.loan_interest_mode` (default `at_source`) + `loan_interest_spread_months`; the same nullable pair on `loan_types` and `loan_type_rate_versions`; `loans.interest_mode`, `interest_spread_months`, `interest_installment`, `fee_amount`; `loan_fee_payments` with status default `awaiting_verification` and indexes on status, loan and member; CHECK constraints for non-negative amounts and a positive spread period. Registered in `ORDERED_MIGRATIONS` with `apply_manual_migrations.py` server-default fixups.
+- New permission `loan.fee_verify` ("Verify/reject a separately-paid loan fee payment"), granted by default to Loan Officer and Treasurer (Super Admin is automatic).
+
+### 26.6 Frontend
+
+- `lib/loanMath.ts` mirrors the backend so the four previews (admin disbursement, member application, types manager, dashboard) cannot drift; previews now state the mode, show the fee as owed separately, and show the first-M-months interest portion.
+- Types manager lists each type's mode (or "Cooperative default") and accepts a mode + months when adding a type; the rate-history panel does the same per version and shows the mode in history.
+- Admin settings gained the cooperative-default mode and month count; they are saved in the configuration scope alongside the other module settings.
+- Member dashboard: a "Processing fee" column with its state (due / awaiting verification / rejected + reason / paid) and a Pay/Resubmit fee form that uploads the receipt.
+- New `/admin/loan-fees` review page (`components/loan-fees/`): awaiting-verification queue with an all-history filter, receipt preview, rejection reason, conflicted rows read-only; added to the Loan Management menu when the officer holds `loan.fee_verify`.
+
+### 26.7 Verification
+
+- Backend: `tests/test_loan_interest_modes.py` (10) and `tests/test_loan_fees.py` (10) — **20 passed**; full suite on the sandbox test database **390 passed**. The sandbox `mact_test` and `mact_local` databases had the new migration applied.
+- Frontend: `npx tsc --noEmit` clean; `npm run build` produced 23 static routes including `/admin/loan-fees`; new component tests (`FeePaymentsTable` 3, `LoansSection` 4) and the rewritten `computeDisbursePreview` tests (6) passed. Full Vitest **40 files / 265 tests** reported 1 failure — the known jsdom timeout flake, this time in `ContributionReviewPanel`, which passed **3/3** on an isolated rerun.
+- The local backend and frontend both booted (frontend 200). **Authenticated browser checks were not run**: signing in requires entering credentials, which the standing constraint blocks — the fee UI is covered by the component tests and the production build only.
+
+### 26.8 Deploy
+
+- Before deploying, run `manual_migration_2026_11_loan_interest_modes.sql` on the production branch (the app's `create_all` creates `loan_fee_payments` but cannot add the columns), then run `scripts/seed_permissions.py` so `loan.fee_verify` exists and can be granted; existing roles keep their customizations, so assign it to Loan Officer/Treasurer where the defaults are wanted.
+- No new environment variables.
+
+

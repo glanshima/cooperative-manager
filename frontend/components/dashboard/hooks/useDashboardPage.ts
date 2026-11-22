@@ -10,6 +10,7 @@ import {
   getSettings,
   fileToBase64,
   submitRepayment,
+  submitFeePayment,
   cancelApplication,
   rescheduleApplication,
   reapplyLoanApplication,
@@ -21,6 +22,7 @@ import {
   CurrentUser,
 } from "@/lib/api";
 import { currentMonth } from "@/lib/month";
+import { computeLoanPreview, resolveTypeInterestTerms } from "@/lib/loanMath";
 
 export type LoanApplicationFormValues = {
   loan_type_id: string;
@@ -65,6 +67,10 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
   const [repayMonth, setRepayMonth] = useState(currentMonth());
   const [repayReference, setRepayReference] = useState("");
   const [repayReceiptFile, setRepayReceiptFile] = useState<File | null>(null);
+
+  const [feePayingLoanId, setFeePayingLoanId] = useState<string | null>(null);
+  const [feeReference, setFeeReference] = useState("");
+  const [feeReceiptFile, setFeeReceiptFile] = useState<File | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -248,18 +254,55 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
     }
   }
 
+  function handleStartFeePayment(loan: Loan) {
+    setFeePayingLoanId(loan.id);
+    setFeeReference("");
+    setFeeReceiptFile(null);
+  }
+
+  async function handleSubmitFeePayment(e: FormEvent) {
+    e.preventDefault();
+    if (!feePayingLoanId) return;
+    setError(null);
+    setSuccess(null);
+    if (!feeReceiptFile) {
+      setError("Please attach your payment receipt.");
+      return;
+    }
+    try {
+      const base64 = await fileToBase64(feeReceiptFile);
+      await submitFeePayment(feePayingLoanId, {
+        payment_reference: feeReference,
+        receipt_image_base64: base64,
+        receipt_content_type: feeReceiptFile.type,
+      });
+      setSuccess("Fee payment submitted for verification.");
+      setFeePayingLoanId(null);
+      setFeeReference("");
+      setFeeReceiptFile(null);
+      await refresh();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
   const applyableTypes = loanTypes.filter((t) => t.is_active && t.open_for_application);
   const selectedType = applyableTypes.find((t) => t.id === form.loan_type_id);
 
   const previewTenure = form.requested_tenure_months || selectedType?.tenure_months || 0;
-  const previewInterest =
-    selectedType && form.requested_amount
-      ? form.requested_amount * parseFloat(selectedType.interest_rate)
-      : 0;
-  const previewFlatCharge = selectedType ? parseFloat(selectedType.flat_charge) : 0;
-  const previewNetDisbursed = form.requested_amount - previewInterest;
-  const previewTotalRepayable = form.requested_amount + previewFlatCharge;
-  const previewInstallment = previewTenure > 0 ? previewTotalRepayable / previewTenure : 0;
+  const typeTerms = resolveTypeInterestTerms(
+    selectedType,
+    settings?.loan_interest_mode,
+    settings?.loan_interest_spread_months
+  );
+  const preview = computeLoanPreview(
+    form.requested_amount,
+    selectedType ? parseFloat(selectedType.interest_rate) : 0,
+    previewTenure,
+    typeTerms.mode,
+    typeTerms.spreadMonths,
+    selectedType ? parseFloat(selectedType.flat_charge) : 0
+  );
 
   return {
     auth: { user, logout },
@@ -280,11 +323,14 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
       selectedType,
       preview: {
         tenure: previewTenure,
-        interest: previewInterest,
-        flatCharge: previewFlatCharge,
-        netDisbursed: previewNetDisbursed,
-        totalRepayable: previewTotalRepayable,
-        installment: previewInstallment,
+        mode: typeTerms.mode,
+        spreadMonths: typeTerms.spreadMonths,
+        interest: preview.interest,
+        flatCharge: preview.fee,
+        netDisbursed: preview.netDisbursed,
+        totalRepayable: preview.totalRepayable,
+        installment: preview.installment,
+        interestInstallment: preview.interestInstallment,
       },
     },
     applications: {
@@ -307,6 +353,14 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
       startRepayment: handleStartRepayment,
       submitRepayment: handleSubmitRepayment,
       cancelRepayment: () => setServicingLoanId(null),
+      feePayingLoanId,
+      feeReference,
+      setFeeReference,
+      feeReceiptFile,
+      setFeeReceiptFile,
+      startFeePayment: handleStartFeePayment,
+      submitFeePayment: handleSubmitFeePayment,
+      cancelFeePayment: () => setFeePayingLoanId(null),
     },
   };
 }

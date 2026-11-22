@@ -1,7 +1,19 @@
 import Table from "@/components/ui/Table";
+import type { Loan } from "@/lib/api";
 import type { DashboardPageModel } from "../hooks/useDashboardPage";
 
+const FEE_STATUS_LABELS: Record<NonNullable<Loan["fee_status"]>, string> = {
+  not_required: "—",
+  due: "Due",
+  awaiting_verification: "Awaiting verification",
+  rejected: "Rejected",
+  paid: "Paid",
+};
+
 export default function LoansSection({ loans }: { loans: DashboardPageModel["loans"] }) {
+  const feePayable = (feeStatus: Loan["fee_status"]) =>
+    feeStatus === "due" || feeStatus === "rejected";
+
   return (
     <section>
       <h2>My loans</h2>
@@ -15,6 +27,7 @@ export default function LoansSection({ loans }: { loans: DashboardPageModel["loa
               <th>Principal</th>
               <th>Monthly installment</th>
               <th>Balance</th>
+              <th>Processing fee</th>
               <th>Status</th>
               <th>Expected end</th>
               <th></th>
@@ -27,17 +40,75 @@ export default function LoansSection({ loans }: { loans: DashboardPageModel["loa
                 <td>{loan.principal}</td>
                 <td>{loan.monthly_installment}</td>
                 <td>{loan.balance}</td>
+                <td>
+                  {loan.fee_status ? FEE_STATUS_LABELS[loan.fee_status] : "—"}
+                  {feePayable(loan.fee_status) && ` (${loan.fee_amount})`}
+                  {loan.fee_status === "rejected" && loan.fee_rejection_reason && (
+                    <div style={{ fontSize: 13, color: "#a33" }}>
+                      {loan.fee_rejection_reason}
+                    </div>
+                  )}
+                </td>
                 <td>{loan.status}</td>
                 <td>{loan.expected_end_date}</td>
                 <td>
                   {loan.status === "active" && (
                     <button onClick={() => loans.startRepayment(loan)}>Make a repayment</button>
                   )}
+                  {feePayable(loan.fee_status) &&
+                    !loan.conflicted && (
+                      <>
+                        {" "}
+                        <button onClick={() => loans.startFeePayment(loan)}>
+                          {loan.fee_status === "rejected" ? "Resubmit fee" : "Pay fee"}
+                        </button>
+                      </>
+                    )}
                 </td>
               </tr>
             ))}
           </tbody>
         </Table>
+      )}
+
+      {loans.feePayingLoanId && (
+        <section
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            padding: 16,
+            marginTop: 16,
+          }}
+        >
+          <h3>Pay the processing fee</h3>
+          <p style={{ fontSize: 13, color: "#666", marginTop: 0 }}>
+            The processing fee is separate from your loan. Pay it to the cooperative and attach
+            the receipt — a staff member verifies it. It is never added to what you repay.
+          </p>
+          <form onSubmit={loans.submitFeePayment} style={{ display: "grid", gap: 10 }}>
+            <input
+              required
+              placeholder="Bank transfer reference number"
+              value={loans.feeReference}
+              onChange={(e) => loans.setFeeReference(e.target.value)}
+            />
+            <label>
+              Payment receipt (photo or PDF):
+              <input
+                required
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) => loans.setFeeReceiptFile(e.target.files?.[0] || null)}
+              />
+            </label>
+            <div>
+              <button type="submit">Submit fee payment</button>{" "}
+              <button type="button" onClick={loans.cancelFeePayment}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </section>
       )}
 
       {loans.servicingLoanId && (

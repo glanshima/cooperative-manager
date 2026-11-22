@@ -2,11 +2,14 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import {
+  InterestDeductionMode,
   Loan,
   LoanInput,
   LoanType,
   LoanTypeCreateInput,
   LoanTypeRateVersion,
+  getSettings,
+  Settings,
   listLoans,
   createLoan,
   updateLoan,
@@ -19,12 +22,21 @@ import {
   listMembers,
   Member,
 } from "@/lib/api";
+import { computeLoanPreview, resolveTypeInterestTerms } from "@/lib/loanMath";
 
 export type RateVersionForm = {
   interest_rate: number;
   tenure_months: number;
   flat_charge: number;
+  // "" = inherit the loan type / cooperative default.
+  interest_mode: InterestDeductionMode | "";
+  interest_spread_months: number | "";
   effective_from: string;
+};
+
+export type LoanTypeForm = Omit<LoanTypeCreateInput, "interest_mode" | "interest_spread_months"> & {
+  interest_mode: InterestDeductionMode | "";
+  interest_spread_months: number | "";
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -37,12 +49,14 @@ export const EMPTY_LOAN_FORM: LoanInput = {
   notes: "",
 };
 
-export const EMPTY_TYPE_FORM: LoanTypeCreateInput = {
+export const EMPTY_TYPE_FORM: LoanTypeForm = {
   name: "",
   description: "",
   interest_rate: 0.15,
   tenure_months: 12,
   flat_charge: 0,
+  interest_mode: "",
+  interest_spread_months: "",
   is_active: true,
   open_for_application: false,
   effective_from: today(),
@@ -51,31 +65,56 @@ export const EMPTY_TYPE_FORM: LoanTypeCreateInput = {
 export interface DisbursePreview {
   interest: number;
   netDisbursed: number;
+  // The processing fee, owed separately -- never part of `total`.
   flatCharge: number;
   total: number;
   installment: number;
+  interestInstallment: number;
+  mode: InterestDeductionMode;
+  spreadMonths: number | null;
 }
 
-// Mirrors loan_calc.compute_loan_terms: interest is deducted at source, so
-// it lowers what the member receives rather than raising what they repay.
-// Only the flat charge is added to the repayable amount, and the instalment
-// is that total spread over the tenure.
+// Mirrors loan_calc.compute_loan_terms via the shared frontend helper: the
+// mode decides whether interest is withheld from the payout or collected
+// through the instalments, and the processing fee is never part of the
+// loan figures.
 export function computeDisbursePreview(
   principal: number,
-  type?: Pick<LoanType, "interest_rate" | "flat_charge" | "tenure_months">
+  type?: Pick<LoanType, "interest_rate" | "flat_charge" | "tenure_months"> &
+    Partial<Pick<LoanType, "interest_mode" | "interest_spread_months">>,
+  defaultMode?: InterestDeductionMode,
+  defaultSpreadMonths?: number | null
 ): DisbursePreview {
   if (!type) {
-    return { interest: 0, netDisbursed: 0, flatCharge: 0, total: 0, installment: 0 };
+    return {
+      interest: 0,
+      netDisbursed: 0,
+      flatCharge: 0,
+      total: 0,
+      installment: 0,
+      interestInstallment: 0,
+      mode: defaultMode ?? "at_source",
+      spreadMonths: defaultSpreadMonths ?? null,
+    };
   }
-  const interest = principal * parseFloat(type.interest_rate);
-  const flatCharge = parseFloat(type.flat_charge);
-  const total = principal + flatCharge;
+  const { mode, spreadMonths } = resolveTypeInterestTerms(type, defaultMode, defaultSpreadMonths);
+  const preview = computeLoanPreview(
+    principal,
+    parseFloat(type.interest_rate),
+    type.tenure_months,
+    mode,
+    spreadMonths,
+    parseFloat(type.flat_charge)
+  );
   return {
-    interest,
-    netDisbursed: principal - interest,
-    flatCharge,
-    total,
-    installment: type.tenure_months > 0 ? total / type.tenure_months : 0,
+    interest: preview.interest,
+    netDisbursed: preview.netDisbursed,
+    flatCharge: preview.fee,
+    total: preview.totalRepayable,
+    installment: preview.installment,
+    interestInstallment: preview.interestInstallment,
+    mode,
+    spreadMonths,
   };
 }
 
@@ -83,9 +122,10 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loanTypes, setLoanTypes] = useState<LoanType[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
 
   const [loanForm, setLoanForm] = useState<LoanInput>(EMPTY_LOAN_FORM);
-  const [typeForm, setTypeForm] = useState<LoanTypeCreateInput>(EMPTY_TYPE_FORM);
+  const [typeForm, setTypeForm] = useState<LoanTypeForm>(EMPTY_TYPE_FORM);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,6 +137,8 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
     interest_rate: 0.15,
     tenure_months: 12,
     flat_charge: 0,
+    interest_mode: "",
+    interest_spread_months: "",
     effective_from: today(),
   });
 
@@ -104,9 +146,16 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
     setLoading(true);
     setError(null);
     try {
-      const [loansData, typesData] = await Promise.all([listLoans(), listLoanTypes()]);
+      const [loansData, typesData, settingsData] = await Promise.all([
+        listLoans(),
+        listLoanTypes(),
+        // Needed for the interest-mode preview when a type inherits the
+        // cooperative default.
+        getSettings().catch(() => null),
+      ]);
       setLoans(loansData);
       setLoanTypes(typesData);
+      setSettings(settingsData);
       // The member picker needs the directory, but member management may be
       // disabled on its own. Treat that lookup as best-effort so the rest of
       // the Loans page still works.
@@ -132,7 +181,7 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
     setLoanForm((current) => ({ ...current, [key]: value }));
   }
 
-  function setTypeField<K extends keyof LoanTypeCreateInput>(key: K, value: LoanTypeCreateInput[K]) {
+  function setTypeField<K extends keyof LoanTypeForm>(key: K, value: LoanTypeForm[K]) {
     setTypeForm((current) => ({ ...current, [key]: value }));
   }
 
@@ -156,7 +205,14 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
     e.preventDefault();
     setError(null);
     try {
-      await createLoanType(typeForm);
+      await createLoanType({
+        ...typeForm,
+        interest_mode: typeForm.interest_mode || null,
+        interest_spread_months:
+          typeForm.interest_mode === "spread_first_months"
+            ? typeForm.interest_spread_months || null
+            : null,
+      });
       setTypeForm(EMPTY_TYPE_FORM);
       await refresh();
     } catch (e: any) {
@@ -192,6 +248,8 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
         interest_rate: parseFloat(type.interest_rate),
         tenure_months: type.tenure_months,
         flat_charge: parseFloat(type.flat_charge),
+        interest_mode: type.interest_mode ?? "",
+        interest_spread_months: type.interest_spread_months ?? "",
         effective_from: today(),
       });
     } catch (e: any) {
@@ -204,7 +262,14 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
     if (!rateHistoryFor) return;
     setError(null);
     try {
-      await createRateVersion(rateHistoryFor.id, newVersion);
+      await createRateVersion(rateHistoryFor.id, {
+        ...newVersion,
+        interest_mode: newVersion.interest_mode || null,
+        interest_spread_months:
+          newVersion.interest_mode === "spread_first_months"
+            ? newVersion.interest_spread_months || null
+            : null,
+      });
       await handleShowRateHistory(rateHistoryFor);
       await refresh();
     } catch (e: any) {
@@ -237,7 +302,12 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
   }
 
   const selectedType = loanTypes.find((t) => t.id === loanForm.loan_type_id);
-  const preview = computeDisbursePreview(loanForm.principal, selectedType);
+  const preview = computeDisbursePreview(
+    loanForm.principal,
+    selectedType,
+    settings?.loan_interest_mode,
+    settings?.loan_interest_spread_months
+  );
 
   return {
     auth: { logout },

@@ -35,6 +35,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from . import contributions, models
+from .loan_calc import expected_total_by_due_month, instalment_for_due_month
 
 ZERO = Decimal("0.00")
 
@@ -193,21 +194,24 @@ def _loan_expectation(
     if due_months == 0:
         return []
 
-    instalment = min(loan.monthly_installment, remaining)
+    # SPREAD_FIRST_MONTHS loans charge more during their interest period,
+    # so the instalment is priced for the month being entered rather than
+    # read straight off the loan.
+    instalment = min(instalment_for_due_month(loan, due_months), remaining)
     amount = max(instalment - paid_this_month, ZERO)
 
     # What the schedule should have collected by now, measured against the
     # loan's own history rather than this month's pre-filled line: a member
     # who paid this month's instalment by bank can still be behind on the
     # earlier ones.
-    scheduled = min(loan.monthly_installment * due_months, loan.total_repayable)
+    scheduled = expected_total_by_due_month(loan, due_months)
     outstanding = max(scheduled - loan.amount_repaid - paid_this_month, ZERO)
     arrears = max(outstanding - amount, ZERO)
 
     months_behind = 0
-    if arrears > ZERO and loan.monthly_installment > ZERO:
-        months_behind = int(arrears // loan.monthly_installment)
-        if arrears % loan.monthly_installment:
+    if arrears > ZERO and instalment > ZERO:
+        months_behind = int(arrears // instalment)
+        if arrears % instalment:
             months_behind += 1
 
     # Arrears describe the loan, so both of its lines carry them; the queue

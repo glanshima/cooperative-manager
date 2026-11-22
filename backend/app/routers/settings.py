@@ -75,6 +75,24 @@ def update_settings(
         )
 
     settings = _get_or_create_settings(db)
+
+    # The spread length only means something for spread_first_months, and is
+    # required there. Checked against the MERGED state, because setting the
+    # mode and the months in one request is the normal way to switch modes.
+    merged_mode = changes.get("loan_interest_mode", settings.loan_interest_mode)
+    merged_months = changes.get("loan_interest_spread_months", settings.loan_interest_spread_months)
+    if merged_mode == models.InterestDeductionMode.SPREAD_FIRST_MONTHS:
+        if not merged_months:
+            raise HTTPException(
+                status_code=400,
+                detail="A spread period is required when interest is collected over the first months.",
+            )
+    elif merged_months is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="A spread period only applies when interest is collected over the first months.",
+        )
+
     previous = {field: getattr(settings, field) for field in changes}
     for field, value in changes.items():
         setattr(settings, field, value)

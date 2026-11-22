@@ -27,6 +27,7 @@ PERMISSION_CATALOGUE = [
     ("loan.review", "Loans", "Verify loan-application form-fee payments"),
     ("loan.approve", "Loans", "Approve or reject a loan application decision"),
     ("loan.reject", "Loans", "Reject a loan application decision"),
+    ("loan.fee_verify", "Loans", "Verify/reject a separately-paid loan fee payment"),
     # Disbursement
     ("disbursement.prepare", "Disbursement", "Prepare a disbursement/manifest"),
     ("disbursement.approve", "Disbursement", "Approve a prepared disbursement"),
@@ -87,6 +88,7 @@ DEFAULT_ROLES = {
             "loan.review",
             "loan.approve",
             "loan.reject",
+            "loan.fee_verify",
             "repayment.view",
             "repayment.verify",
             "deduction.view",
@@ -98,6 +100,7 @@ DEFAULT_ROLES = {
         "permissions": [
             "member.view",
             "loan.view",
+            "loan.fee_verify",
             "disbursement.prepare",
             "disbursement.approve",
             "disbursement.submit",

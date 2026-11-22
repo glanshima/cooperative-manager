@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import type { InterestDeductionMode } from "./loans";
 
 export type LoanRestrictionBehavior = "block" | "warn";
 
@@ -6,6 +7,9 @@ export interface Settings {
   id: string;
   loan_restriction_behavior: LoanRestrictionBehavior;
   loan_form_fee: string;
+  // Cooperative-wide default; a loan type or rate version may override it.
+  loan_interest_mode: InterestDeductionMode;
+  loan_interest_spread_months: number | null;
   members_module_enabled: boolean;
   loans_module_enabled: boolean;
   deductions_module_enabled: boolean;

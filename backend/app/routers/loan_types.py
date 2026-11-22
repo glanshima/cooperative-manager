@@ -56,6 +56,8 @@ def create_loan_type(
         interest_rate=payload.interest_rate,
         tenure_months=payload.tenure_months,
         flat_charge=payload.flat_charge,
+        interest_mode=payload.interest_mode,
+        interest_spread_months=payload.interest_spread_months,
     )
     db.add(loan_type)
     db.flush()  # get loan_type.id for the version row below
@@ -65,6 +67,8 @@ def create_loan_type(
         interest_rate=payload.interest_rate,
         tenure_months=payload.tenure_months,
         flat_charge=payload.flat_charge,
+        interest_mode=payload.interest_mode,
+        interest_spread_months=payload.interest_spread_months,
         effective_from=payload.effective_from or date.today(),
     )
     db.add(version)
@@ -165,6 +169,8 @@ def create_rate_version(
         interest_rate=payload.interest_rate,
         tenure_months=payload.tenure_months,
         flat_charge=payload.flat_charge,
+        interest_mode=payload.interest_mode,
+        interest_spread_months=payload.interest_spread_months,
         effective_from=payload.effective_from,
     )
     db.add(version)
@@ -185,6 +191,8 @@ def create_rate_version(
             "interest_rate": str(version.interest_rate),
             "tenure_months": version.tenure_months,
             "flat_charge": str(version.flat_charge),
+            "interest_mode": version.interest_mode.value if version.interest_mode else None,
+            "interest_spread_months": version.interest_spread_months,
             "effective_from": str(version.effective_from),
         },
         request=request,

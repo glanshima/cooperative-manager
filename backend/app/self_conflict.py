@@ -73,6 +73,7 @@ MemberLike = Union[
     "models.LoanApplication",
     "models.Loan",
     "models.LoanRepayment",
+    "models.LoanFeePayment",
 ]
 
 
@@ -82,7 +83,7 @@ def resolve_owning_member_id(db: Session, target: MemberLike) -> Optional[uuid.U
     (Section 6 -- object ownership, direct and indirect):
       Member                       -> itself
       LoanApplication, Loan        -> .member_id (direct FK)
-      LoanRepayment                -> .loan.member_id (via the loan)
+      LoanRepayment, LoanFeePayment -> .member_id (denormalized)
       raw UUID/str                 -> parsed as a member_id directly
       None                         -> None
     """
@@ -96,11 +97,10 @@ def resolve_owning_member_id(db: Session, target: MemberLike) -> Optional[uuid.U
         return target.id
     if isinstance(target, (models.LoanApplication, models.Loan)):
         return target.member_id
-    if isinstance(target, models.LoanRepayment):
-        # LoanRepayment carries its own member_id column directly
-        # (denormalized alongside loan_id) -- use it rather than going
-        # through .loan, so this works even when the relationship wasn't
-        # eagerly loaded.
+    if isinstance(target, (models.LoanRepayment, models.LoanFeePayment)):
+        # Both carry their own member_id column directly (denormalized
+        # alongside loan_id) -- use it rather than going through .loan, so
+        # this works even when the relationship wasn't eagerly loaded.
         return target.member_id
     raise TypeError(f"resolve_owning_member_id: unsupported target type {type(target)!r}")
 

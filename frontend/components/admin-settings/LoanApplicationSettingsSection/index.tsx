@@ -1,3 +1,5 @@
+import { INTEREST_MODE_LABELS } from "@/lib/loanMath";
+import type { Settings } from "@/lib/api";
 import type { SettingsPageModel } from "../hooks/useSettingsPage";
 
 export default function LoanApplicationSettingsSection({
@@ -20,6 +22,41 @@ export default function LoanApplicationSettingsSection({
           style={{ display: "block", padding: 8, marginTop: 4 }}
         />
       </label>
+      <label style={{ display: "block", marginBottom: 8 }}>
+        Interest deduction (applies to loan types without their own setting)
+        <select
+          value={settings.loan_interest_mode}
+          onChange={(e) => {
+            const mode = e.target.value as Settings["loan_interest_mode"];
+            setField("loan_interest_mode", mode);
+            if (mode !== "spread_first_months") {
+              setField("loan_interest_spread_months", null);
+            }
+          }}
+          style={{ display: "block", padding: 8, marginTop: 4 }}
+        >
+          {Object.entries(INTEREST_MODE_LABELS).map(([mode, label]) => (
+            <option key={mode} value={mode}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {settings.loan_interest_mode === "spread_first_months" && (
+        <label style={{ display: "block", marginBottom: 8 }}>
+          Months the interest is spread over
+          <input
+            required
+            type="number"
+            min={1}
+            value={settings.loan_interest_spread_months ?? ""}
+            onChange={(e) =>
+              setField("loan_interest_spread_months", parseInt(e.target.value) || null)
+            }
+            style={{ display: "block", padding: 8, marginTop: 4 }}
+          />
+        </label>
+      )}
       <label style={{ display: "block" }}>
         When a restricted member applies:
         <select

@@ -14,6 +14,8 @@ const SCOPE_FIELDS: Record<SettingsSaveScope, Array<keyof Settings>> = {
   branding: ["cooperative_name", "cooperative_short_name", "cooperative_monogram"],
   configuration: [
     "loan_restriction_behavior",
+    "loan_interest_mode",
+    "loan_interest_spread_months",
     "loan_form_fee",
     "members_module_enabled",
     "loans_module_enabled",

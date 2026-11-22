@@ -1,12 +1,23 @@
 import { apiFetch } from "./client";
 
+// How (and whether) interest is taken out of the disbursed amount.
+// at_source: withheld from the payout, member repays the principal.
+// spread_over_tenure: full payout, interest in every instalment.
+// spread_first_months: full payout, interest folded into the first N.
+export type InterestDeductionMode = "at_source" | "spread_over_tenure" | "spread_first_months";
+
 export interface LoanType {
   id: string;
   name: string;
   description?: string | null;
   interest_rate: string; // decimal fraction as string, e.g. "0.1500" - current effective rate (cached)
   tenure_months: number;
+  // Processing fee, paid separately: never deducted from the loan and never
+  // added to what the member repays.
   flat_charge: string;
+  // null = inherit the cooperative default.
+  interest_mode?: InterestDeductionMode | null;
+  interest_spread_months?: number | null;
   is_active: boolean;
   open_for_application: boolean;
   created_at: string;
@@ -19,6 +30,8 @@ export interface LoanTypeCreateInput {
   interest_rate: number;
   tenure_months: number;
   flat_charge?: number;
+  interest_mode?: InterestDeductionMode | null;
+  interest_spread_months?: number | null;
   is_active?: boolean;
   open_for_application?: boolean;
   effective_from?: string; // ISO date; defaults to today if omitted
@@ -37,6 +50,8 @@ export interface LoanTypeRateVersion {
   interest_rate: string;
   tenure_months: number;
   flat_charge: string;
+  interest_mode?: InterestDeductionMode | null;
+  interest_spread_months?: number | null;
   effective_from: string;
   created_at: string;
 }
@@ -45,6 +60,8 @@ export interface LoanTypeRateVersionInput {
   interest_rate: number;
   tenure_months: number;
   flat_charge?: number;
+  interest_mode?: InterestDeductionMode | null;
+  interest_spread_months?: number | null;
   effective_from: string; // ISO date, can be future-dated to schedule a change
 }
 
@@ -89,6 +106,15 @@ export interface Loan {
   net_disbursed: string;
   total_repayable: string;
   monthly_installment: string;
+  // Snapshot of the rules agreed at disbursement.
+  interest_mode?: InterestDeductionMode;
+  interest_spread_months?: number | null;
+  // Extra amount on each of the first interest_spread_months instalments.
+  interest_installment?: string;
+  // Processing fee owed separately; fee_status tracks its own payment.
+  fee_amount?: string;
+  fee_status?: "not_required" | "due" | "awaiting_verification" | "rejected" | "paid";
+  fee_rejection_reason?: string | null;
   disbursement_date: string;
   expected_end_date: string;
   disbursement_bank_name?: string | null;

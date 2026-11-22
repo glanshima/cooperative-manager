@@ -13,6 +13,7 @@ from .routers import (
     settings,
     loan_applications,
     loan_repayments,
+    loan_fees,
     admin_users,
     offices,
     roles,
@@ -48,6 +49,7 @@ app.include_router(auth.router)
 app.include_router(settings.router)
 app.include_router(loan_applications.router)
 app.include_router(loan_repayments.router)
+app.include_router(loan_fees.router)
 app.include_router(admin_users.router)
 app.include_router(offices.router)
 app.include_router(roles.router)

@@ -328,6 +328,21 @@ class LoanStatus(str, enum.Enum):
 # to match the older Member/Gender behavior.
 
 
+class InterestDeductionMode(str, enum.Enum):
+    """How the interest on a loan is recovered from the member.
+
+    AT_SOURCE: deducted from the payout; the member repays the principal.
+    SPREAD_OVER_TENURE: full principal paid out; interest repaid in level
+    instalments across the whole tenure.
+    SPREAD_FIRST_MONTHS: full principal paid out; the interest is added to
+    the instalment for the first N months only.
+    """
+
+    AT_SOURCE = "at_source"
+    SPREAD_OVER_TENURE = "spread_over_tenure"
+    SPREAD_FIRST_MONTHS = "spread_first_months"
+
+
 class LoanType(Base):
     """
     Mirrors the 'Loan Types' sheet: each loan product has its own
@@ -369,10 +384,23 @@ class LoanType(Base):
 
     is_active = Column(Boolean, default=True, nullable=False)
 
-    # Flat charge on top of interest, e.g. the workbook's Item Loan has a
-    # 500 flat processing charge in addition to its interest rate. Zero
-    # for loan types that don't have one.
+    # Processing fee charged for this loan type. It is paid separately by
+    # the member (bank transfer + receipt, verified like the application
+    # form fee) and is NEVER part of the loan: it changes neither the
+    # payout, the total repayable, nor the instalment. Zero when the type
+    # has no fee.
     flat_charge = Column(Numeric(14, 2), nullable=False, default=0)
+
+    # Interest recovery override for this type (denormalized cache of the
+    # effective rate version, same as interest_rate above). NULL means
+    # "use the cooperative default" from Settings.
+    interest_mode = Column(
+        Enum(InterestDeductionMode, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=True,
+    )
+    # Only meaningful for SPREAD_FIRST_MONTHS; NULL means inherit the
+    # cooperative default.
+    interest_spread_months = Column(Integer, nullable=True)
 
     # Whether members can self-apply for this loan type through their
     # dashboard. Admin-only loan types (e.g. still being configured, or
@@ -420,6 +448,16 @@ class LoanTypeRateVersion(Base):
     tenure_months = Column(Integer, nullable=False)
     flat_charge = Column(Numeric(14, 2), nullable=False, default=0)
 
+    # Contractual repayment shape as of this version: changing how interest
+    # is recovered is a term change, so it is effective-dated like the
+    # rate itself. NULL = inherit the cooperative default (for mode) or
+    # that default's spread months.
+    interest_mode = Column(
+        Enum(InterestDeductionMode, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=True,
+    )
+    interest_spread_months = Column(Integer, nullable=True)
+
     effective_from = Column(Date, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -435,14 +473,22 @@ class Loan(Base):
     Replaces the ~59 monthly 'Loan Disbursement' tables in the original
     workbook.
 
-    Interest-at-source model: interest is deducted from what's actually
-    paid out, not added on top of what's repaid.
+    Interest recovery is resolved at disbursement from the rate version
+    effective that day (see loan_calc.compute_loan_terms); the resulting
+    mode is snapshotted here so later configuration changes never rewrite
+    an existing loan.
+
       interest_amount     = principal * effective interest_rate
-      net_disbursed         = principal - interest_amount  (what the member actually receives)
-      total_repayable        = principal + flat_charge  (flat_charge, if any, IS added -- it's
-                               a processing fee, not interest; only interest is "at source")
-      monthly_installment    = total_repayable / approved_tenure_months
-      expected_end_date      = disbursement_date + tenure_months (EDATE equivalent)
+      at source           net_disbursed = principal - interest, total = principal
+      spread modes        net_disbursed = principal,          total = principal + interest
+      SPREAD_FIRST_MONTHS additionally records interest_installment (the
+      extra monthly amount during the first interest_spread_months) --
+      monthly_installment stays the principal portion.
+      expected_end_date   = disbursement_date + tenure_months (EDATE equivalent)
+
+    The loan type's flat_charge is a fee paid separately and is not part
+    of any of these figures; fee_amount only records what is owed outside
+    the loan so the payment can be verified.
     disbursement_date is always normalized to the 1st of the month in
     which disbursement actually happens (not the member's requested date,
     which is only a preference recorded on the application).
@@ -456,6 +502,10 @@ class Loan(Base):
         CheckConstraint("total_repayable > 0", name="ck_loans_total_repayable_positive"),
         CheckConstraint("monthly_installment > 0", name="ck_loans_monthly_installment_positive"),
         CheckConstraint("amount_repaid >= 0", name="ck_loans_amount_repaid_nonnegative"),
+        CheckConstraint(
+            "interest_installment >= 0", name="ck_loans_interest_installment_nonnegative"
+        ),
+        CheckConstraint("fee_amount >= 0", name="ck_loans_fee_amount_nonnegative"),
         # A member can hold at most one ACTIVE loan of each loan type.
         Index(
             "uq_loans_member_loan_type_active",
@@ -481,6 +531,21 @@ class Loan(Base):
     net_disbursed = Column(Numeric(14, 2), nullable=False)
     total_repayable = Column(Numeric(14, 2), nullable=False)
     monthly_installment = Column(Numeric(14, 2), nullable=False)
+
+    # Snapshot of the resolved terms at disbursement. interest_installment
+    # is the extra amount on each of the first interest_spread_months
+    # instalments (SPREAD_FIRST_MONTHS only); zero otherwise.
+    interest_mode = Column(
+        Enum(InterestDeductionMode, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=InterestDeductionMode.AT_SOURCE,
+    )
+    interest_spread_months = Column(Integer, nullable=True)
+    interest_installment = Column(Numeric(14, 2), nullable=False, default=0)
+
+    # Fee owed separately from this loan (the loan type's flat_charge at
+    # disbursement). Never part of the figures above.
+    fee_amount = Column(Numeric(14, 2), nullable=False, default=0)
 
     disbursement_date = Column(Date, nullable=False)
     expected_end_date = Column(Date, nullable=False)
@@ -510,6 +575,29 @@ class Loan(Base):
     loan_type = relationship("LoanType", back_populates="loans")
     application = relationship("LoanApplication", back_populates="resulting_loan", uselist=False)
     repayments = relationship("LoanRepayment", back_populates="loan", cascade="all, delete-orphan")
+    fee_payments = relationship(
+        "LoanFeePayment", back_populates="loan", cascade="all, delete-orphan"
+    )
+
+    @property
+    def fee_status(self) -> str:
+        """not_required | due | awaiting_verification | rejected | paid."""
+        if not self.fee_amount or self.fee_amount <= 0:
+            return "not_required"
+        if any(p.status == FeePaymentStatus.VERIFIED for p in self.fee_payments):
+            return "paid"
+        if any(p.status == FeePaymentStatus.AWAITING_VERIFICATION for p in self.fee_payments):
+            return "awaiting_verification"
+        if any(p.status == FeePaymentStatus.REJECTED for p in self.fee_payments):
+            return "rejected"
+        return "due"
+
+    @property
+    def fee_rejection_reason(self):
+        rejected = [p for p in self.fee_payments if p.status == FeePaymentStatus.REJECTED]
+        if not rejected:
+            return None
+        return max(rejected, key=lambda p: p.created_at or datetime.min).rejection_reason
 
 
 # ---------------------------------------------------------------------------
@@ -1243,6 +1331,55 @@ class LoanRepayment(Base):
 
 
 # ---------------------------------------------------------------------------
+# Loan fee payments (the loan type's processing fee, paid separately)
+# ---------------------------------------------------------------------------
+
+class FeePaymentStatus(str, enum.Enum):
+    AWAITING_VERIFICATION = "awaiting_verification"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+
+
+class LoanFeePayment(Base):
+    """
+    Proof of payment of a loan's processing fee. The fee is cooperative
+    income, charged outside the loan itself: a verified row never changes
+    Loan.total_repayable, amount_repaid or the disbursed amount. It
+    exists so the money can be reviewed now and reported as income by
+    the cashbook once that module lands.
+    """
+
+    __tablename__ = "loan_fee_payments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    loan_id = Column(UUID(as_uuid=True), ForeignKey("loans.id", ondelete="CASCADE"), nullable=False)
+    member_id = Column(UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
+
+    # Snapshot of Loan.fee_amount at submission so a later correction to
+    # the loan never rewrites what this payment was for.
+    amount = Column(Numeric(14, 2), nullable=False)
+    payment_reference = Column(String, nullable=False)
+    receipt_image_base64 = Column(Text, nullable=False)
+    receipt_content_type = Column(String, nullable=False)
+
+    status = Column(
+        Enum(FeePaymentStatus, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=FeePaymentStatus.AWAITING_VERIFICATION,
+    )
+    rejection_reason = Column(String, nullable=True)
+    verified_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    loan = relationship("Loan", back_populates="fee_payments")
+    member = relationship("Member")
+
+
+# ---------------------------------------------------------------------------
 # Monthly contribution amounts (the member's savings instalment)
 # ---------------------------------------------------------------------------
 
@@ -1553,6 +1690,10 @@ class Settings(Base):
     __tablename__ = "settings"
     __table_args__ = (
         CheckConstraint("loan_form_fee >= 0", name="ck_settings_loan_form_fee_nonnegative"),
+        CheckConstraint(
+            "loan_interest_spread_months IS NULL OR loan_interest_spread_months > 0",
+            name="ck_settings_loan_interest_spread_months_positive",
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1566,6 +1707,16 @@ class Settings(Base):
     # Fixed fee a member must pay (and upload proof of) before a loan
     # application is even reviewable. Same amount regardless of loan type.
     loan_form_fee = Column(Numeric(14, 2), nullable=False, default=0)
+
+    # Cooperative-wide default for how loan interest is recovered. A loan
+    # type's rate version may override it; NULL there means "use this".
+    loan_interest_mode = Column(
+        Enum(InterestDeductionMode, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=InterestDeductionMode.AT_SOURCE,
+    )
+    # Cooperative-wide default for SPREAD_FIRST_MONTHS.
+    loan_interest_spread_months = Column(Integer, nullable=True)
 
     members_module_enabled = Column(Boolean, nullable=False, default=True)
     loans_module_enabled = Column(Boolean, nullable=False, default=True)
