@@ -824,6 +824,9 @@ One `monthly_installment` cannot express `spread_first_months`, so the deduction
 
 - Before deploying, run `manual_migration_2026_11_loan_interest_modes.sql` on the production branch (the app's `create_all` creates `loan_fee_payments` but cannot add the columns), then run `scripts/seed_permissions.py` so `loan.fee_verify` exists and can be granted; existing roles keep their customizations, so assign it to Loan Officer/Treasurer where the defaults are wanted.
 - No new environment variables.
+- Shipped and deployed 2026-11-22 as `b2fc4bb`, pushed with the cancellation notice (`6409309..9be33c4`). Production branch `br-rough-flower-aycl78im` received the migration before the push — the runner reported `[REMOTE (ep-rapid-feather-ay5ak2pz…)]`, applied `manual_migration_2026_11_loan_interest_modes.sql`, and restored the new server defaults; `seed_permissions.py` then seeded/updated 44 permissions.
+- Both Vercel contexts reported `success`. Verified after deploy: `/api/health` 200, `/api/branding` 200 (proves the new settings columns are readable), `/api/settings` 401, `/api/notifications` 401, and `/openapi.json` exposes `/api/loan-fees`, `/api/loan-fees/{payment_id}`, `/api/loan-fees/{payment_id}/receipt` and `/api/loan-fees/{payment_id}/verify`, each 401 unauthenticated; frontend `/` and `/login` 200.
+- The seed never touches existing roles, so **`loan.fee_verify` exists in production but is not yet granted to Loan Officer or Treasurer** — assign it on `/admin/roles` where the default is wanted.
 
 ## 27. Member cancellation notifies the reviewers (2026-11-22)
 
@@ -844,4 +847,4 @@ Submitting an application told the `loan.review` holders, but cancelling one tol
 
 ### 27.4 Deploy
 
-- No schema change and no new permission. It ships in the same deploy as section 26, whose production migration and permission seed must run first.
+- No schema change and no new permission. Shipped as `9be33c4` in the same deploy as section 26 (2026-11-22), whose production migration and permission seed ran before the push; both Vercel contexts reported `success`.
