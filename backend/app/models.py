@@ -2,6 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import (
     Column,
@@ -1401,8 +1402,8 @@ class ContributionChangeRequest(Base):
 
     Approval is never retroactive: effective_from is the first day of a
     future payroll month, and confirmed deduction lines keep the amount
-    actually deducted (savings.contributions_balance reads those lines,
-    not this column), so a change cannot rewrite savings history.
+    actually deducted (the savings ledger records those lines, not this
+    column), so a change cannot rewrite savings history.
 
     One pending request per member -- the partial unique index below --
     because two competing amounts for the same payroll month cannot both
@@ -1612,8 +1613,8 @@ class PayrollDeductionLine(Base):
     """
     One category amount inside a member's monthly deduction. Loan lines
     carry an explicit loan_id (the member's own allocation across loans);
-    'other' lines carry a free-text label; contribution lines are totalled
-    directly from here (no separate savings ledger yet).
+    'other' lines carry a free-text label. A contribution line is posted
+    to the member's savings ledger when the deduction is confirmed.
     """
 
     __tablename__ = "payroll_deduction_lines"
@@ -1791,3 +1792,151 @@ class Settings(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Member savings ledger
+#
+# Member savings is a liability the cooperative owes the member, so it is
+# kept as its own append-only subledger rather than a sign on a shared
+# cash list: every entry names what happened, and the balance is the sum
+# of the entries. Nothing is ever updated or deleted -- a confirmed payroll
+# month that is later voided gets a reversal entry, which is why the
+# deduction line link is unique per entry kind.
+# ---------------------------------------------------------------------------
+
+class SavingsEntryType(str, enum.Enum):
+    CONTRIBUTION = "contribution"
+    CONTRIBUTION_REVERSAL = "contribution_reversal"
+    # Savings applied to the member's loans when they leave the
+    # cooperative, and the balance returned to them in cash.
+    EXIT_OFFSET = "exit_offset"
+    EXIT_PAYOUT = "exit_payout"
+
+
+class SavingsEntry(Base):
+    __tablename__ = "savings_entries"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_savings_entries_amount_positive"),
+        UniqueConstraint(
+            "deduction_line_id",
+            "entry_type",
+            name="uq_savings_entries_line_kind",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    member_id = Column(
+        UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False
+    )
+
+    entry_type = Column(
+        Enum(SavingsEntryType, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+    )
+    amount = Column(Numeric(14, 2), nullable=False)
+
+    # The payroll line that produced a contribution (or its reversal).
+    deduction_line_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("payroll_deduction_lines.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    settlement_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("member_settlements.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    posted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    posted_at = Column(DateTime, default=datetime.utcnow)
+    note = Column(Text, nullable=True)
+
+
+class SettlementPayoutStatus(str, enum.Enum):
+    PENDING = "pending"
+    PAID = "paid"
+
+
+class MemberSettlement(Base):
+    """
+    One member's exit settlement: their savings first offset their active
+    loans (oldest loan first), and whatever remains is paid out to them.
+
+    The figures are snapshots of the moment of settlement, not derived
+    later -- a payroll correction cannot rewrite what the office settled.
+    The ledger is debited in full at settlement; marking the payout paid
+    records that the office handed the money over. The cashbook will post
+    the actual cash movement when it exists.
+    """
+
+    __tablename__ = "member_settlements"
+    __table_args__ = (
+        CheckConstraint("savings_balance >= 0", name="ck_member_settlements_savings_nonnegative"),
+        CheckConstraint("offset_total >= 0", name="ck_member_settlements_offset_nonnegative"),
+        CheckConstraint("payout_amount >= 0", name="ck_member_settlements_payout_nonnegative"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    member_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("members.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+
+    settled_on = Column(Date, nullable=False)
+    settled_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    settled_at = Column(DateTime, default=datetime.utcnow)
+
+    savings_balance = Column(Numeric(14, 2), nullable=False)
+    offset_total = Column(Numeric(14, 2), nullable=False)
+    payout_amount = Column(Numeric(14, 2), nullable=False)
+
+    payout_status = Column(
+        Enum(SettlementPayoutStatus, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=SettlementPayoutStatus.PENDING,
+    )
+    paid_on = Column(Date, nullable=True)
+    paid_at = Column(DateTime, nullable=True)
+    paid_reference = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+
+    member = relationship("Member")
+    allocations = relationship(
+        "SettlementAllocation",
+        back_populates="settlement",
+        cascade="all, delete-orphan",
+        order_by="SettlementAllocation.created_at",
+    )
+
+
+class SettlementAllocation(Base):
+    """How much of one settlement went to one loan."""
+
+    __tablename__ = "settlement_allocations"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_settlement_allocations_amount_positive"),
+        UniqueConstraint("settlement_id", "loan_id", name="uq_settlement_allocations_loan"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    settlement_id = Column(
+        UUID(as_uuid=True), ForeignKey("member_settlements.id", ondelete="CASCADE"), nullable=False
+    )
+    loan_id = Column(UUID(as_uuid=True), ForeignKey("loans.id"), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    settlement = relationship("MemberSettlement", back_populates="allocations")
+    loan = relationship("Loan")
+
+    @property
+    def loan_type_name(self) -> Optional[str]:
+        """Exposed so the settlement breakdown can say which loan the
+        offset went to without the client fetching each loan."""
+        return self.loan.loan_type.name if self.loan and self.loan.loan_type else None

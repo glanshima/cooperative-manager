@@ -7,7 +7,7 @@ import PageSkeleton from "@/components/ui/PageSkeleton";
 import { useAuth } from "@/lib/useAuth";
 
 export default function MembersPage() {
-  const { loading, logout } = useAuth({
+  const { loading, user, logout } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
@@ -17,13 +17,19 @@ export default function MembersPage() {
 
   return (
     <ModuleGate module="members">
-      <MembersPageContent logout={logout} />
+      <MembersPageContent logout={logout} permissions={user?.permissions ?? []} />
     </ModuleGate>
   );
 }
 
-function MembersPageContent({ logout }: { logout: () => void }) {
-  const model = useMembersPage(false, logout);
+function MembersPageContent({
+  logout,
+  permissions,
+}: {
+  logout: () => void;
+  permissions: string[];
+}) {
+  const model = useMembersPage(false, logout, permissions);
 
   return <MembersView model={model} />;
 }

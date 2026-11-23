@@ -7,7 +7,8 @@ password reset flow), a member-linked admin fixture for the smoke test's
 Next-of-Kin conflict check, and 26 login-less members owing a
 contribution so the payroll deduction Enter queue runs past one page,
 plus one login-less member whose loan is behind schedule so the queue
-pre-fills an arrears catch-up line.
+pre-fills an arrears catch-up line, and one exited member with savings and
+an open loan so the exit-settlement flow can be run by hand.
 
 THIS SCRIPT IS LOCAL-ONLY. It refuses to run unless DATABASE_URL points
 at the sandbox Postgres (127.0.0.1:55432, see scripts/local_db.py).
@@ -78,9 +79,12 @@ from app.models import (  # noqa: E402
     LoanTypeRateVersion,
     Member,
     MemberRelationship,
+    MemberSettlement,
     MemberStatus,
     RelationshipStatus,
     RelationshipType,
+    SavingsEntry,
+    SavingsEntryType,
     User,
     UserRole,
 )
@@ -127,6 +131,16 @@ ARREARS_FIXTURE_INSTALLMENT = Decimal("10000.00")
 # Interest-at-source: the repayable total is the principal, so the numbers
 # below stay readable (6 x 10,000 = 60,000).
 ARREARS_FIXTURE_PRINCIPAL = ARREARS_FIXTURE_INSTALLMENT * ARREARS_FIXTURE_TENURE_MONTHS
+
+# Fixture for the exit settlement panel. The member has left, still owes
+# one active loan, and has savings on the ledger: their details view shows
+# the offset preview, then the two-step settlement (settle the exit, then
+# record the payout as paid). Savings exceed the loan, so the first
+# settlement leaves a payout pending -- the state the mark-paid form serves.
+SETTLEMENT_FIXTURE_PSN = "QLEXIT"
+SETTLEMENT_FIXTURE_SAVINGS = Decimal("12000.00")
+SETTLEMENT_FIXTURE_LOAN = Decimal("8000.00")
+SETTLEMENT_FIXTURE_EXIT_DATE = date(2026, 10, 31)
 
 SAMPLE_MEMBERS = [
     # (psn, name, gender, department, phone, email, status, bank, account_no,
@@ -375,6 +389,96 @@ def seed_arrears_fixture(session):
           f"{ARREARS_FIXTURE_DISBURSED} with no repayments.")
 
 
+def seed_settlement_fixture(session):
+    """One exited member with savings on the ledger and a loan still open.
+
+    Settlement itself is left for the officer to run in the UI -- seeding
+    a settlement would skip the very flow this fixture exists to show."""
+    member = session.execute(
+        select(Member).where(Member.psn == SETTLEMENT_FIXTURE_PSN)
+    ).scalar_one_or_none()
+    if member is None:
+        member = Member(
+            psn=SETTLEMENT_FIXTURE_PSN,
+            name=compose_member_name("Fixture", "Settlement", "Member"),
+            first_name="Settlement",
+            last_name="Fixture",
+            other_names="Member",
+            status=MemberStatus.NON_FINANCIAL,
+            email="qlsettlement@example.com",
+            membership_exit_date=SETTLEMENT_FIXTURE_EXIT_DATE,
+            membership_exit_reason="Sample: left the cooperative",
+        )
+        session.add(member)
+        session.flush()
+        print(f"Settlement fixture: member {SETTLEMENT_FIXTURE_PSN} created.")
+    else:
+        if member.membership_exit_date is None:
+            member.membership_exit_date = SETTLEMENT_FIXTURE_EXIT_DATE
+            member.membership_exit_reason = "Sample: left the cooperative"
+            member.status = MemberStatus.NON_FINANCIAL
+        print(f"Settlement fixture: member {SETTLEMENT_FIXTURE_PSN} already existed.")
+
+    loan_type = session.execute(
+        select(LoanType).where(LoanType.name == "Capital Loan")
+    ).scalar_one()
+    existing_loan = session.execute(
+        select(Loan).where(Loan.member_id == member.id, Loan.loan_type_id == loan_type.id)
+    ).scalar_one_or_none()
+
+    # Re-running the seed returns the fixture to its demo state: an open
+    # loan and a full savings balance. A settlement recorded while
+    # exercising the flow is deleted (cascading to its allocations and
+    # ledger entries), and the loan is put back to owing everything.
+    recorded_settlement = session.execute(
+        select(MemberSettlement).where(MemberSettlement.member_id == member.id)
+    ).scalar_one_or_none()
+    if recorded_settlement is not None:
+        session.delete(recorded_settlement)
+        session.flush()
+        print("Settlement fixture: previously recorded settlement cleared.")
+
+    if existing_loan is None:
+        session.add(Loan(
+            member_id=member.id,
+            loan_type_id=loan_type.id,
+            principal=SETTLEMENT_FIXTURE_LOAN,
+            interest_amount=Decimal("0.00"),
+            net_disbursed=SETTLEMENT_FIXTURE_LOAN,
+            total_repayable=SETTLEMENT_FIXTURE_LOAN,
+            monthly_installment=Decimal("1000.00"),
+            disbursement_date=date(2025, 11, 1),
+            expected_end_date=compute_expected_end_date(date(2025, 11, 1), 12),
+            amount_repaid=Decimal("0.00"),
+            status=LoanStatus.ACTIVE,
+            notes="Sample: open loan on an exited member",
+        ))
+        print(f"Settlement fixture: loan of {SETTLEMENT_FIXTURE_LOAN} open.")
+    else:
+        existing_loan.amount_repaid = Decimal("0.00")
+        existing_loan.status = LoanStatus.ACTIVE
+        print("Settlement fixture: loan reset to open.")
+
+    entries = session.execute(
+        select(SavingsEntry).where(
+            SavingsEntry.member_id == member.id,
+            SavingsEntry.entry_type == SavingsEntryType.CONTRIBUTION,
+        )
+    ).scalars().all()
+    if len(entries) == 1 and entries[0].amount == SETTLEMENT_FIXTURE_SAVINGS:
+        print("Settlement fixture: savings already on the ledger.")
+    else:
+        for entry in entries:
+            session.delete(entry)
+        session.add(SavingsEntry(
+            member_id=member.id,
+            entry_type=SavingsEntryType.CONTRIBUTION,
+            amount=SETTLEMENT_FIXTURE_SAVINGS,
+            note="Sample: accumulated monthly contributions",
+        ))
+        print(f"Settlement fixture: {SETTLEMENT_FIXTURE_SAVINGS} of savings on the ledger.")
+
+
 def seed_loan_types(session):
     created = 0
     for name, description, rate, tenure, flat, open_for_app in SAMPLE_LOAN_TYPES:
@@ -429,6 +533,7 @@ def main():
         seed_conflict_fixture(session)
         seed_queue_paging_fixture(session)
         seed_arrears_fixture(session)
+        seed_settlement_fixture(session)
 
         m1 = session.execute(select(Member).where(Member.psn == "MCT-0001")).scalar_one()
         m3 = session.execute(select(Member).where(Member.psn == "MCT-0003")).scalar_one()

@@ -22,6 +22,7 @@ from .models import (
     PayrollDeductionLineCategory,
     DeductionWorklistEntryState,
     AccountStatus,
+    SettlementPayoutStatus,
 )
 from . import validation
 
@@ -303,10 +304,10 @@ class MemberListResponse(BaseModel):
 class MemberSavingsOut(BaseModel):
     """A member's own accumulated contributions, for their dashboard.
 
-    Kept out of MemberOut deliberately: savings_balance is a SUM over
-    confirmed deduction lines, and MemberOut is serialized for every row of
-    the members list, where that aggregate would be paid 100 times per page
-    to serve nobody who reads it."""
+    Kept out of MemberOut deliberately: savings_balance is a ledger sum,
+    and MemberOut is serialized for every row of the members list, where
+    that aggregate would be paid 100 times per page to serve nobody who
+    reads it."""
 
     member_id: uuid.UUID
     savings_balance: Decimal
@@ -316,17 +317,74 @@ class MemberSavingsOut(BaseModel):
 class MemberWithdrawalOut(BaseModel):
     """What a membership exit means financially, in one response: the
     savings the member takes with them, what they still owe, and how much
-    of that has to keep coming out of payroll after the savings offset.
+    of that payroll would still have to recover if nothing is settled.
 
-    It reports the offset rather than posting it -- there is no savings
-    ledger to move money from, and the repayment flow is the audited
-    place money changes hands."""
+    It reports the offset rather than posting it: money only moves when
+    the exit is settled (POST /members/{id}/settle-exit)."""
 
     member: MemberOut
     savings_balance: Decimal
     active_loan_count: int
     active_loan_outstanding: Decimal
     payroll_recovery_still_due: Decimal
+
+
+class SettlementAllocationOut(BaseModel):
+    """How much of a settlement went to one loan."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    loan_id: uuid.UUID
+    amount: Decimal
+    loan_type_name: Optional[str] = None
+
+
+class MemberSettlementOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    member_id: uuid.UUID
+    settled_on: date
+    settled_at: Optional[datetime] = None
+    savings_balance: Decimal
+    offset_total: Decimal
+    payout_amount: Decimal
+    payout_status: SettlementPayoutStatus
+    paid_on: Optional[date] = None
+    paid_at: Optional[datetime] = None
+    paid_reference: Optional[str] = None
+    note: Optional[str] = None
+    allocations: List[SettlementAllocationOut] = []
+
+
+class MemberSettlementPreviewOut(BaseModel):
+    """What settling this member would do right now, plus the settlement
+    already recorded (if any)."""
+
+    member_id: uuid.UUID
+    savings_balance: Decimal
+    active_loan_count: int
+    active_loan_outstanding: Decimal
+    settlement: Optional[MemberSettlementOut] = None
+
+
+class MemberSettleRequest(BaseModel):
+    settled_on: Optional[date] = None
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class MemberSettlementPaidRequest(BaseModel):
+    paid_on: Optional[date] = None
+    reference: str = Field(min_length=1, max_length=120)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("reference")
+    @classmethod
+    def _validate_reference(cls, value: str) -> str:
+        collapsed = " ".join(value.split())
+        if not collapsed:
+            raise ValueError("must not be blank")
+        return collapsed
 
 
 class MemberFilterOptions(BaseModel):

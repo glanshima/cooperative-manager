@@ -12,7 +12,7 @@ routers/members.py); from then on it only moves through this flow:
 Approval is deliberately never retroactive and never immediate: the
 current payroll month may already be drafted or submitted, and confirmed
 deduction lines keep the amount actually deducted, so savings history
-(savings.contributions_balance) cannot be rewritten by a later decision.
+(the savings ledger) cannot be rewritten by a later decision.
 
 Deciding a request is a conflict-of-interest sensitive action -- an officer
 must not approve their own next of kin's contribution -- so approve/reject

@@ -848,3 +848,88 @@ Submitting an application told the `loan.review` holders, but cancelling one tol
 ### 27.4 Deploy
 
 - No schema change and no new permission. Shipped as `9be33c4` in the same deploy as section 26 (2026-11-22), whose production migration and permission seed ran before the push; both Vercel contexts reported `success`.
+
+## 28. Cooperative policy settings foundation (2026-11-23)
+
+### 28.1 What moved out of code
+
+Two payroll policies were constants: a 5,000 monthly contribution floor and a loan default charge percentage that had no value at all. Both now live on the single `settings` row, so one deployment can serve cooperatives with different policies:
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `minimum_monthly_contribution` | Floor for a member's monthly contribution; 0 means no floor | backfilled to the old 5,000 floor |
+| `default_monthly_contribution` | Figure offered when recording an amount | 0 |
+| `loan_default_charge_pct` | Charge raised once per missed instalment | 0 |
+| `loan_default_grace_mode` | `next_payroll` or `days` | `next_payroll` |
+| `loan_default_grace_days` | Day count for the `days` mode, 0–365 (CHECK constraint) | 0 |
+
+### 28.2 Where the floor is enforced
+
+`backend/app/cooperative_settings.py` reads the row per request (no caching — a policy change applies to the very next request). The floor is checked where the session exists: member create and update, the contribution-change request, and the approval path, so a floor raised while a request sat in review is re-checked before the approved amount is committed.
+
+### 28.3 Migration
+
+`manual_migration_2026_11_cooperative_policies.sql` (idempotent) adds the five columns with CHECK constraints and backfills existing rows to the old 5,000 floor; fresh databases get neutral server defaults (see `SERVER_DEFAULT_FIXUPS` in `apply_manual_migrations.py`).
+
+### 28.4 Frontend
+
+- `ContributionSettingsSection` and `LoanDefaultSettingsSection` in the admin Settings screen; the settings type, scopes, and dirty-state handling were extended alongside them.
+- The dashboard contribution card and the member form consume the default figure instead of a hard-coded value.
+
+### 28.5 Verification and deploy
+
+- `tests/test_cooperative_policies.py` — 6 tests covering floor enforcement on every path and the merged grace-mode validation; full backend suite green at the time.
+- Committed as `6fe8edd` and pushed. No new permission and no environment variable.
+
+## 29. Member savings ledger and exit settlement (2026-11-23)
+
+Step 2 of the accounting rebuild. Built on standing double-entry principles, not the workbook's shortcuts: savings is a liability the cooperative owes the member, kept on its own append-only subledger.
+
+### 29.1 The ledger
+
+`savings_entries` is append-only and typed: `contribution`, `contribution_reversal`, `exit_offset`, `exit_payout`. The balance is the sum of the entries (credits minus debits); nothing is edited or deleted, so a confirmed payroll month that is later voided gets a reversal entry instead — enforced by the unique `(deduction_line_id, entry_type)` constraint. Confirmed `monthly_contribution` deduction lines post their entries from the payroll confirm path, and the migration backfills the entries for months confirmed before the ledger existed.
+
+### 29.2 Exit settlement
+
+`member_settlements` holds one snapshot row per member (`UNIQUE member_id`); `settlement_allocations` records how much of the settlement went to each loan. The figures are snapshots of the moment of settlement and are never recomputed, so a later payroll correction cannot rewrite what the office settled.
+
+`backend/app/settlements.py`:
+
+- **Guards before anything is written**: the member must have a recorded exit date (409), must not already be settled (409), must not have a live DRAFT/SUBMITTED deduction (409 — the payroll queue and the settlement would otherwise both consume the same savings), the settlement date may not be in the future (400), the ledger balance may not be negative (409), and there must be something to settle (400).
+- **Order of application**: savings offset active loans oldest first (disbursement date, then id), crediting `amount_repaid` and completing fully-repaid loans; the remainder becomes `payout_amount`. Zero payout is recorded as already `paid` at settlement; anything else starts `pending`.
+- **Ledger entries at settlement**: `exit_offset` for what went to loans and `exit_payout` for the money handed back — the ledger is debited in full at settlement, so the member's savings balance closes even while the payout is still owed.
+- **Mark paid** records `paid_on`, `paid_at` and a mandatory bank/cash reference (whitespace collapsed); it cannot precede the settlement date or be in the future, and repeats are refused (409).
+
+### 29.3 Endpoints and permissions
+
+| Endpoint | Permission | Behaviour |
+|---|---|---|
+| `GET /api/members/{id}/settlement` | `savings.view` | Preview: current savings balance, active loan count and outstanding, plus any recorded settlement |
+| `POST /api/members/{id}/settle-exit` | `savings.settle` | Row-locks the member, runs the COI guard, calls `settlements.settle`, audits `member.exit_settled` |
+| `POST /api/members/{id}/settlements/mark-paid` | `savings.settle` | Row-locks the settlement row, COI guard, audits `member.exit_payout_paid` |
+
+`settlements.settle` notifies the member in the same transaction as the state change; audits are written after the commit, following the established ordering. `delete_member` now counts an existing settlement as financial history, alongside loans and applications. The deduction-expectations engine excludes settled members, so a residual loan balance can never re-enter the payroll queue after the books are closed.
+
+### 29.4 Frontend
+
+`MemberSettlementPanel` sits in the member details modal, only for members with a recorded exit and only with `savings.view`:
+
+- Unsettled: savings available and loans outstanding, then an inline settle form (date defaulting to today, optional note, explanation that savings offset loans oldest first and the remainder is owed as a payout).
+- Settled: date, savings at settlement, amount applied, payout, status, and — when pending — an inline mark-paid form (date bounded between the settlement date and today, required reference that enables the button). Pending-payout view-only officers get explanatory copy instead of the form.
+- `useMembersPage` exposes `savings.canView` / `savings.canSettle` from the user's permissions; conflicted officers see the panel read-only.
+
+### 29.5 Sandbox fixture
+
+`scripts/seed_local_sample_data.py` gained a self-resetting fixture (`QLEXIT`): a non-financial member with an exit date, 12,000 of contributions on the ledger and an 8,000 Capital Loan still open. Re-running the seed deletes any settlement recorded while exercising the flow (cascading to its allocations and ledger entries), restores the loan to ACTIVE with nothing repaid, and normalizes the contribution, so the member is always back at the start of the two-step demo.
+
+### 29.6 Verification
+
+- Backend: `tests/test_savings_settlement.py` — **14 passed** (guards, oldest-first allocation across two loan types, ledger postings, preview before/after, mark-paid validation, settled member refused by payroll creation, residual loan leaving the queue, permissions, audit events); full suite **412 passed**.
+- Frontend: full Vitest **273 passed**; `npx tsc --noEmit` clean.
+- Live browser check (2026-11-23): because the running `:8000` backend predates this code and could not be restarted, an isolated copy of the UI was served on `:3010` against a temporary backend on `:8020` (origin added to CORS); the user's own servers were left untouched. Verified end to end as `localadmin`: details modal showed 12,000 savings vs 8,000 outstanding; settling posted offset 8,000 with payout 4,000 **Pending** and allocation "Capital Loan 8,000"; the mark-paid form refused an empty reference, then recorded **Paid**, paid-on 2026-11-23, reference "CASH 0421". The zero-payout path was also exercised earlier (payout 0 settles directly as Paid).
+
+### 29.7 Deploy notes (not yet shipped)
+
+- Run `manual_migration_2026_11_savings_ledger.sql` on the production branch before deploying: it creates the two enums and three tables, and backfills ledger entries from confirmed contribution months. `create_all` cannot do either.
+- Run `scripts/seed_permissions.py` so `savings.settle` exists; existing roles keep their grants, so assign it to Treasurer (and any other officer who settles exits) on `/admin/roles` — the Treasurer *default* includes it, but defaults never rewrite a role that already exists.
+- No new environment variables. Uncommitted as of this entry.

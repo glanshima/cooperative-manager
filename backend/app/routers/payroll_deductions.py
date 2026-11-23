@@ -31,6 +31,7 @@ from .. import (
     deduction_expectations,
     models,
     notification_service,
+    savings as savings_service,
     schemas,
     validation,
 )
@@ -238,6 +239,25 @@ def _build_lines(
     return lines
 
 
+def _assert_member_not_settled(db: Session, member_id: uuid.UUID) -> None:
+    """Once a member's exit is settled their savings balance is zero and
+    their remaining loan balance is a direct receivable, so no payroll
+    record can be created or reversed for them any more."""
+    settled = (
+        db.query(models.MemberSettlement.id)
+        .filter(models.MemberSettlement.member_id == member_id)
+        .first()
+    )
+    if settled is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This member's exit has been settled; payroll records can no "
+                "longer be created or changed for them."
+            ),
+        )
+
+
 def _assert_no_live_record(
     db: Session, member_id: uuid.UUID, month: date, *, exclude_id: Optional[uuid.UUID] = None
 ) -> None:
@@ -411,6 +431,15 @@ def _transition_confirm(
     deduction.confirmed_by_user_id = current_user.id
     deduction.confirmed_at = datetime.utcnow()
 
+    # The contribution is the member's savings from this moment on. Loan
+    # credits and savings postings share the same transaction, so a
+    # confirmed record can never exist without its ledger entries.
+    for line in deduction.lines:
+        if line.category == models.PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION:
+            savings_service.post_contribution(
+                db, deduction, line, actor_id=current_user.id
+            )
+
     notification_service.notify_member(
         db,
         deduction.member,
@@ -461,6 +490,10 @@ def _transition_void(
         raise HTTPException(status_code=400, detail="This deduction is already void")
 
     if deduction.status == models.PayrollDeductionStatus.CONFIRMED:
+        # After settlement the savings balance is already applied and paid
+        # out; reversing a contribution would drive money the member no
+        # longer holds back onto the ledger's debit side.
+        _assert_member_not_settled(db, deduction.member_id)
         loans = _load_loans_for_lines(
             db, deduction.member_id, deduction.lines, lock=True, for_reversal=True
         )
@@ -493,6 +526,13 @@ def _transition_void(
                 and loan.amount_repaid < loan.total_repayable
             ):
                 loan.status = models.LoanStatus.ACTIVE
+
+        savings_service.reverse_for_deduction(
+            db,
+            deduction,
+            actor_id=current_user.id,
+            note=f"Reversal: {deduction.deduction_month:%Y-%m} deduction voided",
+        )
 
     deduction.status = models.PayrollDeductionStatus.VOID
     deduction.voided_by_user_id = current_user.id
@@ -847,6 +887,7 @@ def create_deduction(
         raise HTTPException(status_code=404, detail="Member not found")
 
     month_start = validation.month_start_from_label(payload.deduction_month)
+    _assert_member_not_settled(db, member.id)
     _assert_no_live_record(db, member.id, month_start)
 
     expectation = deduction_expectations.for_member(db, member, month_start)

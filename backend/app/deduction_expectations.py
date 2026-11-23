@@ -124,9 +124,16 @@ class MemberExpectation:
 def _loans_owing(db: Session, member_ids: List[uuid.UUID]) -> List[models.Loan]:
     """Every loan that could still expect an instalment, oldest first. A
     settled or closed loan can never produce a line, so SQL drops it here
-    rather than letting each one be priced and discarded."""
+    rather than letting each one be priced and discarded.
+
+    A settled member's books are closed: their savings were applied at exit
+    and the remainder paid out, so any residual loan balance is no longer
+    recovered through payroll and must not re-enter the queue."""
     if not member_ids:
         return []
+    settled = db.query(models.MemberSettlement.member_id).filter(
+        models.MemberSettlement.member_id.in_(member_ids)
+    )
     return (
         db.query(models.Loan)
         .options(joinedload(models.Loan.loan_type))
@@ -134,6 +141,7 @@ def _loans_owing(db: Session, member_ids: List[uuid.UUID]) -> List[models.Loan]:
             models.Loan.member_id.in_(member_ids),
             models.Loan.status == models.LoanStatus.ACTIVE,
             models.Loan.total_repayable > models.Loan.amount_repaid,
+            ~models.Loan.member_id.in_(settled),
         )
         .order_by(models.Loan.member_id, models.Loan.disbursement_date.asc())
         .all()

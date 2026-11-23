@@ -2,6 +2,7 @@ import Modal from "@/components/ui/Modal";
 import { ConflictNotice } from "@/components/ui/ConflictMarker";
 import { formatMoney } from "@/components/deductions/labels";
 import type { Member } from "@/lib/api";
+import MemberSettlementPanel from "../MemberSettlementPanel";
 import { describeMemberOption } from "../utils";
 
 function shown(value?: string | null): string {
@@ -22,6 +23,8 @@ function nextOfKin(m: Member): string {
 
 export default function MemberDetailsModal({
   member,
+  canViewSavings,
+  canSettleSavings,
   onClose,
   onEdit,
   onDelete,
@@ -31,6 +34,8 @@ export default function MemberDetailsModal({
   onWithdraw,
 }: {
   member: Member;
+  canViewSavings: boolean;
+  canSettleSavings: boolean;
   onClose: () => void;
   onEdit: (member: Member) => void;
   onDelete: (id: string) => void;
@@ -132,6 +137,14 @@ export default function MemberDetailsModal({
           </div>
         )}
       </dl>
+
+      <MemberSettlementPanel
+        member={member}
+        canView={canViewSavings}
+        // A conflicted record is read-only for this officer; the backend
+        // refuses the mutation anyway.
+        canSettle={canSettleSavings && !member.conflicted}
+      />
 
       {/* A conflicted member's record stays viewable -- this officer just
           isn't the one who may change it. */}

@@ -15,7 +15,7 @@ Two things that were cooperative policy but not code:
 from datetime import date
 from decimal import Decimal
 
-from app import models
+from app import models, savings as savings_service
 from tests.conftest import (
     auth_headers,
     grant_permission,
@@ -72,12 +72,17 @@ def _make_contribution_deduction(db_session, member, *, month, status, amount=De
         deduction_month=month,
         status=status,
     )
-    deduction.lines = [
-        models.PayrollDeductionLine(
-            category=models.PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION, amount=amount
-        )
-    ]
+    line = models.PayrollDeductionLine(
+        category=models.PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION, amount=amount
+    )
+    deduction.lines = [line]
     db_session.add(deduction)
+    db_session.flush()
+    if status == models.PayrollDeductionStatus.CONFIRMED:
+        # Confirmation is what posts a contribution to the savings ledger;
+        # the API does it on confirm, so a fixture writing the row directly
+        # must post the matching entry too.
+        savings_service.post_contribution(db_session, deduction, line, actor_id=None)
     db_session.commit()
     db_session.refresh(deduction)
     return deduction

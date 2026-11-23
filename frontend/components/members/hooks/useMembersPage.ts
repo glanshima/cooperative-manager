@@ -24,6 +24,7 @@ import {
 } from "@/lib/api/contributions";
 
 import { splitStoredName } from "@/lib/names";
+import { hasPermission } from "@/lib/permissions";
 
 import type { NokMemberOption } from "../types";
 import { describeError } from "../utils";
@@ -59,7 +60,11 @@ const EMPTY_FORM: MemberInput = {
   restriction_reason: "",
 };
 
-export function useMembersPage(authLoading: boolean, logout: () => void) {
+export function useMembersPage(
+  authLoading: boolean,
+  logout: () => void,
+  permissions: readonly string[] = []
+) {
   const [members, setMembers] = useState<Member[]>([]);
   const [total, setTotal] = useState(0);
   const [skip, setSkip] = useState(0);
@@ -675,6 +680,13 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
       refresh: refreshContributionRequests,
       approve: approveContribution,
       reject: rejectContribution,
+    },
+    // The settlement panel offers its actions only to accounts that may
+    // perform them; the server refuses them anyway. Without savings.view
+    // the panel isn't rendered at all, so its data request is never made.
+    savings: {
+      canView: hasPermission(permissions, "savings.view"),
+      canSettle: hasPermission(permissions, "savings.settle"),
     },
   };
 }

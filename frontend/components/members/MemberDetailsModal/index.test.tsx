@@ -34,7 +34,10 @@ const conflictedMember = {
   conflicted: true,
 } as unknown as Member;
 
-function renderDetails(member: Member) {
+function renderDetails(
+  member: Member,
+  savings: { canView?: boolean; canSettle?: boolean } = {}
+) {
   const handlers = {
     onClose: vi.fn(),
     onEdit: vi.fn(),
@@ -44,7 +47,14 @@ function renderDetails(member: Member) {
     onReactivateLogin: vi.fn(),
     onWithdraw: vi.fn(),
   };
-  render(<MemberDetailsModal member={member} {...handlers} />);
+  render(
+    <MemberDetailsModal
+      member={member}
+      canViewSavings={savings.canView ?? false}
+      canSettleSavings={savings.canSettle ?? false}
+      {...handlers}
+    />
+  );
   return handlers;
 }
 

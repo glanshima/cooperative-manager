@@ -113,10 +113,10 @@ export interface MemberFilterOptions {
   departments: string[];
 }
 
-// What a membership exit means financially. The backend REPORTS the
-// savings offset (a member's savings is their accumulated monthly
-// contribution) against the loans still outstanding; it never posts it,
-// so applying the offset stays on the audited repayment flow.
+// What a membership exit means financially, at the moment the exit is
+// recorded. Applying the savings offset is a separate, deliberate step
+// (settleMemberExit below), run once the member's final payroll month is
+// confirmed -- recording the exit never moves money.
 export interface MemberWithdrawal {
   member: Member;
   savings_balance: string;
@@ -186,5 +186,68 @@ export async function withdrawMember(
   return apiFetch<MemberWithdrawal>(`/api/members/${id}/withdraw`, {
     method: "POST",
     body: { reason, exit_date: exitDate ?? null },
+  });
+}
+
+export type SettlementPayoutStatus = "pending" | "paid";
+
+export interface SettlementAllocation {
+  loan_id: string;
+  amount: string;
+  loan_type_name?: string | null;
+}
+
+// What was settled, as a snapshot taken at exit settlement. The payout is
+// a recorded claim on the office until it is marked paid; the savings
+// ledger was already debited when the settlement was created.
+export interface MemberSettlement {
+  id: string;
+  member_id: string;
+  settled_on: string;
+  settled_at?: string | null;
+  savings_balance: string;
+  offset_total: string;
+  payout_amount: string;
+  payout_status: SettlementPayoutStatus;
+  paid_on?: string | null;
+  paid_at?: string | null;
+  paid_reference?: string | null;
+  note?: string | null;
+  allocations: SettlementAllocation[];
+}
+
+export interface MemberSettlementPreview {
+  member_id: string;
+  savings_balance: string;
+  active_loan_count: number;
+  active_loan_outstanding: string;
+  settlement: MemberSettlement | null;
+}
+
+export async function getMemberSettlement(id: string): Promise<MemberSettlementPreview> {
+  return apiFetch<MemberSettlementPreview>(`/api/members/${id}/settlement`);
+}
+
+export async function settleMemberExit(
+  id: string,
+  input: { settled_on?: string; note?: string } = {}
+): Promise<MemberSettlement> {
+  return apiFetch<MemberSettlement>(`/api/members/${id}/settle-exit`, {
+    method: "POST",
+    body: { settled_on: input.settled_on ?? null, note: input.note ?? null },
+  });
+}
+
+export async function markSettlementPaid(
+  id: string,
+  input: { paid_on?: string; reference: string; note?: string }
+): Promise<MemberSettlement> {
+  return apiFetch<MemberSettlement>(`/api/members/${id}/settlements/mark-paid`, {
+    method: "POST",
+    body: {
+      paid_on: input.paid_on ?? null,
+      reference: input.reference,
+      note: input.note ?? null,
+    },
   });
 }

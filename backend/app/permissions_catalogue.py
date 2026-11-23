@@ -22,6 +22,11 @@ PERMISSION_CATALOGUE = [
     ("savings.request_change", "Savings", "Request a savings amount change"),
     ("savings.approve_change", "Savings", "Approve a savings amount change request"),
     ("savings.reject_change", "Savings", "Reject a savings amount change request"),
+    (
+        "savings.settle",
+        "Savings",
+        "Settle an exiting member's savings against loans and record the payout",
+    ),
     # Loans
     ("loan.view", "Loans", "View loans and loan applications"),
     ("loan.review", "Loans", "Verify loan-application form-fee payments"),
@@ -110,6 +115,8 @@ DEFAULT_ROLES = {
             "deduction.submit",
             "deduction.confirm",
             "deduction.void",
+            "savings.view",
+            "savings.settle",
             "accounting.view",
             "accounting.post",
             "accounting.reconcile",

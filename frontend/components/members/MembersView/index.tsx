@@ -85,6 +85,8 @@ export default function MembersView({ model }: { model: MembersPageModel }) {
       {details.member && (
         <MemberDetailsModal
           member={details.member}
+          canViewSavings={model.savings.canView}
+          canSettleSavings={model.savings.canSettle}
           onClose={details.close}
           // Editing replaces the details view rather than stacking a second
           // dialog on top of it.

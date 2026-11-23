@@ -10,6 +10,7 @@ from sqlalchemy import func, or_
 from .. import models, schemas, audit_service, member_relationships, validation
 from .. import contributions as contribution_rules
 from .. import savings as savings_service
+from .. import settlements as settlement_service
 from ..database import get_db
 from ..deps import require_admin, get_current_user, require_permission, require_module_enabled
 from ..self_conflict import (
@@ -158,7 +159,7 @@ def get_my_savings(
 
     return schemas.MemberSavingsOut(
         member_id=member.id,
-        savings_balance=savings_service.contributions_balance(db, member.id),
+        savings_balance=savings_service.balance(db, member.id),
         months_contributed=int(months or 0),
     )
 
@@ -691,7 +692,7 @@ def withdraw_member(
         )
         .all()
     )
-    savings = savings_service.contributions_balance(db, member.id)
+    savings = savings_service.balance(db, member.id)
     outstanding = sum(
         (loan.total_repayable - loan.amount_repaid for loan in active_loans), Decimal("0")
     )
@@ -723,6 +724,180 @@ def withdraw_member(
         active_loan_outstanding=outstanding,
         payroll_recovery_still_due=max(outstanding - savings, Decimal("0")),
     )
+
+
+@router.get(
+    "/{member_id}/settlement",
+    response_model=schemas.MemberSettlementPreviewOut,
+    dependencies=_member_management_gate,
+)
+def get_member_settlement(
+    member_id: uuid.UUID,
+    current_user: models.User = Depends(require_permission("savings.view")),
+    db: Session = Depends(get_db),
+):
+    """What settling this member's exit would mean right now, and what was
+    actually settled if it already happened.
+
+    Read-only: the figures move only when settle-exit is called, once the
+    final payroll month is confirmed."""
+    member = db.query(models.Member).filter(models.Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    loans = settlement_service.active_loans(db, member.id)
+    return schemas.MemberSettlementPreviewOut(
+        member_id=member.id,
+        savings_balance=savings_service.balance(db, member.id),
+        active_loan_count=len(loans),
+        active_loan_outstanding=settlement_service.outstanding_total(loans),
+        settlement=settlement_service.for_member(db, member.id),
+    )
+
+
+@router.post(
+    "/{member_id}/settle-exit",
+    response_model=schemas.MemberSettlementOut,
+    dependencies=_member_management_gate,
+)
+def settle_member_exit(
+    member_id: uuid.UUID,
+    payload: schemas.MemberSettleRequest,
+    request: Request,
+    current_user: models.User = Depends(require_permission("savings.settle")),
+    db: Session = Depends(get_db),
+):
+    """Apply the member's savings to their loans (oldest first) and record
+    the payout the office owes them.
+
+    Separate from recording the exit on purpose: the exit marks intent, the
+    settlement moves money, and the office runs the second only once the
+    member's last payroll month is confirmed. The savings ledger is debited
+    here; the payout is a recorded claim until someone marks it paid."""
+    member = settlement_service.lock_member(db, member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    require_no_member_conflict(
+        db,
+        current_user,
+        member,
+        action_description="settle this member's exit savings",
+        permission_code="savings.settle",
+        entity_type="member",
+        entity_id=str(member.id),
+        request=request,
+    )
+
+    try:
+        settlement_service.settle(
+            db,
+            member,
+            actor=current_user,
+            settled_on=payload.settled_on,
+            note=payload.note,
+        )
+    except settlement_service.SettlementError as err:
+        raise HTTPException(status_code=err.status_code, detail=err.detail)
+
+    db.commit()
+    settlement = settlement_service.for_member(db, member.id)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="member.exit_settled",
+        action="create",
+        entity_type="member_settlement",
+        entity_id=str(settlement.id),
+        new_values={
+            "member_id": str(member.id),
+            "settled_on": settlement.settled_on.isoformat(),
+            "savings_balance": str(settlement.savings_balance),
+            "offset_total": str(settlement.offset_total),
+            "payout_amount": str(settlement.payout_amount),
+            "payout_status": settlement.payout_status.value,
+            "allocations": [
+                {"loan_id": str(item.loan_id), "amount": str(item.amount)}
+                for item in settlement.allocations
+            ],
+        },
+        request=request,
+    )
+    return settlement
+
+
+@router.post(
+    "/{member_id}/settlements/mark-paid",
+    response_model=schemas.MemberSettlementOut,
+    dependencies=_member_management_gate,
+)
+def mark_settlement_paid(
+    member_id: uuid.UUID,
+    payload: schemas.MemberSettlementPaidRequest,
+    request: Request,
+    current_user: models.User = Depends(require_permission("savings.settle")),
+    db: Session = Depends(get_db),
+):
+    """Record that the office handed the exit payout over, with the date
+    and the bank/cash reference. Until the cashbook exists this is the
+    record of the cash movement, not a posting."""
+    member = db.query(models.Member).filter(models.Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    settlement = (
+        db.query(models.MemberSettlement)
+        .filter(models.MemberSettlement.member_id == member.id)
+        .with_for_update(of=models.MemberSettlement)
+        .first()
+    )
+    if not settlement:
+        raise HTTPException(status_code=404, detail="This member has no recorded settlement")
+
+    require_no_member_conflict(
+        db,
+        current_user,
+        member,
+        action_description="record this member's exit payout as paid",
+        permission_code="savings.settle",
+        entity_type="member",
+        entity_id=str(member.id),
+        request=request,
+    )
+
+    previous_status = settlement.payout_status.value
+    try:
+        settlement_service.mark_paid(
+            db,
+            settlement,
+            member=member,
+            paid_on=payload.paid_on,
+            reference=payload.reference,
+        )
+    except settlement_service.SettlementError as err:
+        raise HTTPException(status_code=err.status_code, detail=err.detail)
+
+    db.commit()
+    settlement = settlement_service.for_member(db, member.id)
+
+    audit_service.log_event(
+        db,
+        actor=current_user,
+        event_type="member.exit_payout_paid",
+        action="update",
+        entity_type="member_settlement",
+        entity_id=str(settlement.id),
+        previous_values={"payout_status": previous_status},
+        new_values={
+            "payout_status": settlement.payout_status.value,
+            "paid_on": settlement.paid_on.isoformat() if settlement.paid_on else None,
+            "paid_reference": settlement.paid_reference,
+            "note": payload.note,
+        },
+        request=request,
+    )
+    return settlement
 
 
 @router.delete("/{member_id}", status_code=204, dependencies=_member_management_gate)
@@ -764,13 +939,18 @@ def delete_member(
         request=request,
     )
 
-    has_financial_history = bool(member.loans) or bool(member.loan_applications)
+    has_financial_history = (
+        bool(member.loans)
+        or bool(member.loan_applications)
+        or settlement_service.for_member(db, member.id) is not None
+    )
     if has_financial_history:
         raise HTTPException(
             status_code=409,
             detail=(
-                "This member has loan or loan-application history and cannot be deleted. "
-                "Revoke their login instead (see admin.user_manage on their linked user account)."
+                "This member has loan, loan-application or savings-settlement history and cannot "
+                "be deleted. Revoke their login instead (see admin.user_manage on their linked "
+                "user account)."
             ),
         )
 
