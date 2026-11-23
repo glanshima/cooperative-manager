@@ -75,6 +75,7 @@ ORDERED_MIGRATIONS = [
     "manual_migration_2026_11_notifications.sql",
     "manual_migration_2026_11_notification_preferences.sql",
     "manual_migration_2026_11_loan_interest_modes.sql",
+    "manual_migration_2026_11_cooperative_policies.sql",
 ]
 
 # Postgres SQLSTATEs meaning "this object already exists" -- treated as
@@ -108,6 +109,11 @@ SERVER_DEFAULT_FIXUPS = [
     ("loans", "interest_mode", "'at_source'"),
     ("loans", "interest_installment", "0"),
     ("loans", "fee_amount", "0"),
+    ("settings", "minimum_monthly_contribution", "0"),
+    ("settings", "default_monthly_contribution", "0"),
+    ("settings", "loan_default_charge_pct", "0"),
+    ("settings", "loan_default_grace_mode", "'next_payroll'"),
+    ("settings", "loan_default_grace_days", "0"),
 ]
 
 

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { formatMoney } from "@/components/deductions/labels";
 import Modal from "@/components/ui/Modal";
-import type { Member } from "@/lib/api";
+import { getSettings, type Member } from "@/lib/api";
 import {
   ContributionChangeRequest,
   createContributionChangeRequest,
@@ -12,8 +12,6 @@ import {
   getMySavings,
   MemberSavings,
 } from "@/lib/api/contributions";
-
-const MINIMUM = 5000;
 
 const cardStyle = {
   border: "1px solid #ddd",
@@ -25,6 +23,8 @@ const cardStyle = {
 export default function ContributionCard({ member }: { member: Member }) {
   const [requests, setRequests] = useState<ContributionChangeRequest[]>([]);
   const [savings, setSavings] = useState<MemberSavings | null>(null);
+  // The cooperative's floor, as a setting; 0 means it sets none.
+  const [minimum, setMinimum] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -37,12 +37,16 @@ export default function ContributionCard({ member }: { member: Member }) {
     try {
       // Settled, not all: a savings lookup failing must not hide the
       // member's own change-request history.
-      const [requestResult, savingsResult] = await Promise.allSettled([
+      const [requestResult, savingsResult, settingsResult] = await Promise.allSettled([
         getMyContributionChangeRequests(),
         getMySavings(),
+        getSettings(),
       ]);
       if (requestResult.status === "fulfilled") setRequests(requestResult.value);
       if (savingsResult.status === "fulfilled") setSavings(savingsResult.value);
+      if (settingsResult.status === "fulfilled") {
+        setMinimum(Number(settingsResult.value.minimum_monthly_contribution));
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -77,8 +81,12 @@ export default function ContributionCard({ member }: { member: Member }) {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const value = parseFloat(requestedAmount);
-    if (!Number.isFinite(value) || value < MINIMUM) {
-      setError(`The minimum monthly contribution is ₦${MINIMUM.toLocaleString()}.`);
+    if (!Number.isFinite(value) || value <= 0) {
+      setError("Enter the monthly amount you want to contribute.");
+      return;
+    }
+    if (minimum > 0 && value < minimum) {
+      setError(`The minimum monthly contribution is ₦${minimum.toLocaleString()}.`);
       return;
     }
     if (!reason.trim()) {
@@ -187,16 +195,18 @@ export default function ContributionCard({ member }: { member: Member }) {
               <input
                 type="number"
                 step="0.01"
-                min={MINIMUM}
+                min={minimum > 0 ? minimum : 0}
                 required
                 value={requestedAmount}
                 onChange={(e) => setRequestedAmount(e.target.value)}
                 placeholder="e.g. 8000.00"
                 style={{ width: "100%" }}
               />
-              <p style={{ fontSize: 12, color: "#b45309", marginTop: 4 }}>
-                Minimum is ₦{MINIMUM.toLocaleString()} per month.
-              </p>
+              {minimum > 0 && (
+                <p style={{ fontSize: 12, color: "#b45309", marginTop: 4 }}>
+                  Minimum is ₦{minimum.toLocaleString()} per month.
+                </p>
+              )}
             </div>
             <div>
               <label style={{ display: "block", fontSize: 12, color: "#555", marginBottom: 4 }}>

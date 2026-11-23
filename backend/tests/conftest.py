@@ -109,6 +109,20 @@ def make_member(db_session, psn="PSN-0001", name="Test Member", email="member@ex
     return member
 
 
+def make_settings(db_session, **extra):
+    """The cooperative's settings row, created on demand. Fields not named
+    keep the model defaults (no contribution floor, no default charge)."""
+    settings = db_session.query(models.Settings).first()
+    if settings is None:
+        settings = models.Settings()
+        db_session.add(settings)
+    for field, value in extra.items():
+        setattr(settings, field, value)
+    db_session.commit()
+    db_session.refresh(settings)
+    return settings
+
+
 def make_loan_type(db_session, name, interest_rate=Decimal("0.15"), tenure_months=12, **extra):
     loan_type = models.LoanType(
         name=name, interest_rate=interest_rate, tenure_months=tenure_months, **extra

@@ -4,6 +4,8 @@ import type { MembersPageModel } from "../hooks/useMembersPage";
 import NextOfKinFields from "../NextOfKinFields";
 
 export default function MemberForm({ form }: { form: MembersPageModel["form"] }) {
+  const { minimumContribution } = form.policy;
+
   return (
     <Modal
       title={form.editingId ? "Edit member" : "Add member"}
@@ -71,9 +73,13 @@ export default function MemberForm({ form }: { form: MembersPageModel["form"] })
           <input
             type="number"
             step="0.01"
-            min="5000"
+            min={minimumContribution > 0 ? minimumContribution : undefined}
             disabled={form.contributionLocked}
-            placeholder="Monthly contribution amount (min ₦5,000)"
+            placeholder={
+              minimumContribution > 0
+                ? `Monthly contribution amount (min ₦${minimumContribution.toLocaleString()})`
+                : "Monthly contribution amount"
+            }
             value={form.values.monthly_contribution_amount ?? ""}
             onChange={(e) => form.setField("monthly_contribution_amount", e.target.value ? parseFloat(e.target.value) : null)}
             style={{ width: "100%" }}

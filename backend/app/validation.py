@@ -33,10 +33,9 @@ MAX_LOGO_BYTES = 1_000_000
 MAX_LOGO_BASE64_CHARS = 1_400_000
 ALLOWED_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
-# Cooperative policy: the floor for a member's monthly contribution. Kept
-# here rather than duplicated as a SQL CHECK so there is one place to
-# change it (see scripts/manual_migration_2026_11_contribution_amounts.sql).
-MINIMUM_MONTHLY_CONTRIBUTION = Decimal("5000")
+# Cooperative policy: the floor for a member's monthly contribution is a
+# cooperative setting (settings.minimum_monthly_contribution), not a code
+# constant -- see contributions.assert_meets_minimum for where it is enforced.
 
 
 def validate_email_format(value: Optional[str]) -> Optional[str]:
@@ -83,12 +82,9 @@ def validate_positive_amount_optional(value: Optional[Decimal]) -> Optional[Deci
 
 
 def validate_contribution_amount(value: Decimal) -> Decimal:
-    value = validate_positive_amount(value)
-    if value < MINIMUM_MONTHLY_CONTRIBUTION:
-        raise ValueError(
-            f"The monthly contribution cannot be below {MINIMUM_MONTHLY_CONTRIBUTION}"
-        )
-    return value
+    """Shape only -- the cooperative floor depends on a database row, so it
+    is enforced where the session is available (contributions.assert_meets_minimum)."""
+    return validate_positive_amount(value)
 
 
 def validate_contribution_amount_optional(value: Optional[Decimal]) -> Optional[Decimal]:

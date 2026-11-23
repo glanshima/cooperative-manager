@@ -19,6 +19,7 @@ function makeForm(overrides: Record<string, unknown> = {}) {
     isOpen: true,
     busy: false,
     contributionLocked: false,
+    policy: { minimumContribution: 0, standardContribution: 0 },
     setField: vi.fn(),
     submit: vi.fn(),
     openCreate: vi.fn(),

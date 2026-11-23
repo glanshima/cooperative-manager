@@ -379,6 +379,7 @@ def create_member(
     member = models.Member(**payload_data)
     if member.monthly_contribution_amount is not None:
         contribution_rules.assert_may_have_contribution(member)
+        contribution_rules.assert_meets_minimum(db, member.monthly_contribution_amount)
         # Bootstrapping applies from the month being entered now; only an
         # approved CHANGE is pushed to a future month.
         member.contribution_effective_from = contribution_rules.month_start(date.today())
@@ -490,6 +491,7 @@ def update_member(
         contribution_rules.assert_status_may_have_contribution(
             changes.get("status", member.status)
         )
+        contribution_rules.assert_meets_minimum(db, changes["monthly_contribution_amount"])
         changes["contribution_effective_from"] = contribution_rules.month_start(date.today())
 
         pending = contribution_rules.pending_request(db, member.id)

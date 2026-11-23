@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Member } from "@/lib/api";
+import { getSettings } from "@/lib/api";
 import {
   createContributionChangeRequest,
   getMyContributionChangeRequests,
@@ -9,6 +10,10 @@ import {
 } from "@/lib/api/contributions";
 
 import ContributionCard from "./index";
+
+vi.mock("@/lib/api", () => ({
+  getSettings: vi.fn(),
+}));
 
 vi.mock("@/lib/api/contributions", () => ({
   getMyContributionChangeRequests: vi.fn(),
@@ -19,6 +24,7 @@ vi.mock("@/lib/api/contributions", () => ({
 const getRequestsMock = vi.mocked(getMyContributionChangeRequests);
 const createMock = vi.mocked(createContributionChangeRequest);
 const getSavingsMock = vi.mocked(getMySavings);
+const getSettingsMock = vi.mocked(getSettings);
 
 const financialMember = {
   id: "member-1",
@@ -37,6 +43,7 @@ describe("ContributionCard", () => {
       savings_balance: "65000.00",
       months_contributed: 13,
     });
+    getSettingsMock.mockResolvedValue({ minimum_monthly_contribution: "5000.00" } as never);
   });
 
   it("shows how much the member has contributed in total", async () => {
@@ -119,6 +126,44 @@ describe("ContributionCard", () => {
 
     await waitFor(() =>
       expect(createMock).toHaveBeenCalledWith({ requested_amount: 8000, reason: "Salary increase" })
+    );
+  });
+
+  it("refuses an amount below the cooperative's configured minimum", async () => {
+    render(<ContributionCard member={financialMember} />);
+    const requestButton = await screen.findByRole("button", { name: "Request change" });
+    await waitFor(() => expect(requestButton).not.toBeDisabled());
+
+    fireEvent.click(requestButton);
+    fireEvent.change(screen.getByPlaceholderText("e.g. 8000.00"), { target: { value: "4000" } });
+    fireEvent.change(
+      screen.getByPlaceholderText("e.g. Salary increase, need to increase savings"),
+      { target: { value: "Pay cut" } }
+    );
+    fireEvent.submit(screen.getByRole("button", { name: "Submit request" }).closest("form")!);
+
+    expect(await screen.findByText(/minimum monthly contribution is ₦5,000/i)).toBeInTheDocument();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("applies no floor when the cooperative sets none", async () => {
+    getSettingsMock.mockResolvedValue({ minimum_monthly_contribution: "0.00" } as never);
+    createMock.mockResolvedValue({} as never);
+    render(<ContributionCard member={financialMember} />);
+    const requestButton = await screen.findByRole("button", { name: "Request change" });
+    await waitFor(() => expect(requestButton).not.toBeDisabled());
+
+    fireEvent.click(requestButton);
+    expect(screen.queryByText(/Minimum is/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("e.g. 8000.00"), { target: { value: "4000" } });
+    fireEvent.change(
+      screen.getByPlaceholderText("e.g. Salary increase, need to increase savings"),
+      { target: { value: "Pay cut" } }
+    );
+    fireEvent.submit(screen.getByRole("button", { name: "Submit request" }).closest("form")!);
+
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith({ requested_amount: 4000, reason: "Pay cut" })
     );
   });
 });

@@ -5,7 +5,8 @@ The contract these tests pin down:
   - The stored amount is what payroll deducts. An officer records it ONCE
     (bootstrap, while it is unset, from the current month); every later
     change needs a request that a second officer decides.
-  - The cooperative minimum (5000) is enforced on both paths.
+  - The cooperative minimum -- a settings value, not a constant -- is
+    enforced on both paths.
   - Only financial members have a contribution -- a non-financial member
     cannot bootstrap one, apply for one, or have one approved into place.
   - Approval is never retroactive: it takes effect from the first of next
@@ -22,6 +23,8 @@ The contract these tests pin down:
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from app import contributions as contribution_rules
 from app import models
 from tests.conftest import (
@@ -30,9 +33,20 @@ from tests.conftest import (
     make_admin_user,
     make_member,
     make_member_user,
+    make_settings,
 )
 
 MINIMUM = Decimal("5000")
+
+
+@pytest.fixture(autouse=True)
+def _cooperative_floor(db_session):
+    """The cooperative the module's scenarios describe charges a 5,000 floor."""
+    make_settings(
+        db_session,
+        minimum_monthly_contribution=MINIMUM,
+        default_monthly_contribution=MINIMUM,
+    )
 
 
 def _this_month_start() -> date:
@@ -483,8 +497,7 @@ def test_the_members_toggle_gates_officers_not_self_service(client, db_session):
     member = make_member(db_session, psn="PSN-CON-22", email="con22@example.com")
     user = make_member_user(db_session, member)
 
-    db_session.add(models.Settings(members_module_enabled=False))
-    db_session.commit()
+    make_settings(db_session, members_module_enabled=False)
 
     res = client.get("/api/contribution-change-requests", headers=auth_headers(admin))
     assert res.status_code == 403, res.text

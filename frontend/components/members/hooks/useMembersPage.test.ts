@@ -5,6 +5,7 @@ import {
   createMember,
   deleteMember,
   getMemberFilterOptions,
+  getSettings,
   listMembers,
   updateMember,
   updateMemberLoginStatus,
@@ -33,6 +34,7 @@ vi.mock("@/lib/api", () => ({
   createMemberLogin: vi.fn(),
   updateMemberLoginStatus: vi.fn(),
   withdrawMember: vi.fn(),
+  getSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/api/contributions", () => ({
@@ -51,8 +53,18 @@ const loginStatusMock = vi.mocked(updateMemberLoginStatus);
 const contribListMock = vi.mocked(listContributionChangeRequests);
 const contribApproveMock = vi.mocked(approveContributionChangeRequest);
 const contribRejectMock = vi.mocked(rejectContributionChangeRequest);
+const settingsMock = vi.mocked(getSettings);
 
 const logout = vi.fn();
+
+// The cooperative's policy row; the nested beforeEach blocks below clear
+// call history, not this implementation, so every test starts with it.
+beforeEach(() => {
+  settingsMock.mockResolvedValue({
+    minimum_monthly_contribution: "5000.00",
+    default_monthly_contribution: "5000.00",
+  } as Awaited<ReturnType<typeof getSettings>>);
+});
 
 const activeMember = {
   id: "member-1",
@@ -444,5 +456,28 @@ describe("useMembersPage name fields", () => {
     });
     expect(payload).not.toHaveProperty("name");
     expect(payload).not.toHaveProperty("gender");
+  });
+});
+
+describe("useMembersPage contribution policy", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listMock.mockResolvedValue({
+      items: [activeMember],
+      total: 1,
+      skip: 0,
+      limit: 25,
+    } as MemberListResult);
+    filterMock.mockResolvedValue({ banks: [], departments: [] });
+    contribListMock.mockResolvedValue([]);
+  });
+
+  it("starts a new member at the cooperative's default contribution", async () => {
+    const rendered = await renderLoadedHook();
+    await waitFor(() => expect(rendered.result.current.form.policy.minimumContribution).toBe(5000));
+
+    act(() => rendered.result.current.form.openCreate());
+
+    expect(rendered.result.current.form.values.monthly_contribution_amount).toBe(5000);
   });
 });

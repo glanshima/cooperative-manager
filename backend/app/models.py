@@ -90,8 +90,8 @@ class Member(Base):
     membership_exit_date = Column(Date, nullable=True)
     membership_exit_reason = Column(String, nullable=True)
 
-    # The agreed monthly contribution payroll deducts (minimum 5000 --
-    # validation.MINIMUM_MONTHLY_CONTRIBUTION). NULL means "not on file
+    # The agreed monthly contribution payroll deducts (floor:
+    # settings.minimum_monthly_contribution). NULL means "not on file
     # yet", which is where every member imported from the spreadsheet
     # starts: an officer bootstraps it once, and every later change goes
     # through a ContributionChangeRequest so the deducted amount is never
@@ -1672,6 +1672,19 @@ class LoanRestrictionBehavior(str, enum.Enum):
     WARN = "warn"
 
 
+class LoanDefaultGraceMode(str, enum.Enum):
+    """When an unpaid instalment turns into a default.
+
+    NEXT_PAYROLL is the staff-cooperative rule: the member keeps the whole
+    instalment month to pay, and the shortfall only becomes a default when
+    the next payroll deduction is processed. DAYS uses a fixed window that
+    starts when the instalment's month closes.
+    """
+
+    NEXT_PAYROLL = "next_payroll"
+    DAYS = "days"
+
+
 # Branding defaults, used both as column defaults and as the public
 # branding fallback when no settings row exists yet.
 DEFAULT_COOPERATIVE_NAME = "MACT Cooperative"
@@ -1693,6 +1706,22 @@ class Settings(Base):
         CheckConstraint(
             "loan_interest_spread_months IS NULL OR loan_interest_spread_months > 0",
             name="ck_settings_loan_interest_spread_months_positive",
+        ),
+        CheckConstraint(
+            "minimum_monthly_contribution >= 0",
+            name="ck_settings_minimum_contribution_nonnegative",
+        ),
+        CheckConstraint(
+            "default_monthly_contribution >= 0",
+            name="ck_settings_default_contribution_nonnegative",
+        ),
+        CheckConstraint(
+            "loan_default_charge_pct >= 0 AND loan_default_charge_pct <= 100",
+            name="ck_settings_loan_default_charge_pct_range",
+        ),
+        CheckConstraint(
+            "loan_default_grace_days >= 0 AND loan_default_grace_days <= 365",
+            name="ck_settings_loan_default_grace_days_range",
         ),
     )
 
@@ -1717,6 +1746,23 @@ class Settings(Base):
     )
     # Cooperative-wide default for SPREAD_FIRST_MONTHS.
     loan_interest_spread_months = Column(Integer, nullable=True)
+
+    # The payroll contribution floor and the figure an officer is offered
+    # when recording a member's amount. Both were fixed in code before the
+    # cooperative-level policy slice; a cooperative that sets no floor
+    # stores 0.
+    minimum_monthly_contribution = Column(Numeric(14, 2), nullable=False, default=0)
+    default_monthly_contribution = Column(Numeric(14, 2), nullable=False, default=0)
+
+    # What happens when a member misses an instalment. The charge is raised
+    # once per missed instalment; it is never taken out of savings.
+    loan_default_charge_pct = Column(Numeric(5, 2), nullable=False, default=0)
+    loan_default_grace_mode = Column(
+        Enum(LoanDefaultGraceMode, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=LoanDefaultGraceMode.NEXT_PAYROLL,
+    )
+    loan_default_grace_days = Column(Integer, nullable=False, default=0)
 
     members_module_enabled = Column(Boolean, nullable=False, default=True)
     loans_module_enabled = Column(Boolean, nullable=False, default=True)

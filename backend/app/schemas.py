@@ -14,6 +14,7 @@ from .models import (
     PaymentVerificationStatus,
     LoanRestrictionBehavior,
     InterestDeductionMode,
+    LoanDefaultGraceMode,
     FeePaymentStatus,
     RepaymentVerificationStatus,
     ContributionChangeRequestStatus,
@@ -51,10 +52,11 @@ class MemberBase(BaseModel):
     loan_restricted: bool = False
     restriction_reason: Optional[str] = None
 
-    # The agreed monthly contribution payroll deducts (minimum 5000). An
-    # officer records it once, while it is still unset; every later change
-    # goes through a ContributionChangeRequest so the deducted figure is
-    # never edited silently -- see routers/members.py.
+    # The agreed monthly contribution payroll deducts (floored at the
+    # cooperative's settings.minimum_monthly_contribution, checked where the
+    # session is available). An officer records it once, while it is still
+    # unset; every later change goes through a ContributionChangeRequest so
+    # the deducted figure is never edited silently -- see routers/members.py.
     monthly_contribution_amount: Optional[Decimal] = None
 
     _validate_psn = field_validator("psn")(validation.validate_psn)
@@ -1315,6 +1317,11 @@ class SettingsOut(BaseModel):
     loan_form_fee: Decimal
     loan_interest_mode: InterestDeductionMode
     loan_interest_spread_months: Optional[int] = None
+    minimum_monthly_contribution: Decimal
+    default_monthly_contribution: Decimal
+    loan_default_charge_pct: Decimal
+    loan_default_grace_mode: LoanDefaultGraceMode
+    loan_default_grace_days: int
     members_module_enabled: bool
     loans_module_enabled: bool
     deductions_module_enabled: bool
@@ -1331,6 +1338,11 @@ class SettingsUpdate(BaseModel):
     loan_form_fee: Optional[Decimal] = None
     loan_interest_mode: Optional[InterestDeductionMode] = None
     loan_interest_spread_months: Optional[int] = Field(default=None, ge=1)
+    minimum_monthly_contribution: Optional[Decimal] = Field(default=None, ge=0)
+    default_monthly_contribution: Optional[Decimal] = Field(default=None, ge=0)
+    loan_default_charge_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    loan_default_grace_mode: Optional[LoanDefaultGraceMode] = None
+    loan_default_grace_days: Optional[int] = Field(default=None, ge=0, le=365)
     members_module_enabled: Optional[bool] = None
     loans_module_enabled: Optional[bool] = None
     deductions_module_enabled: Optional[bool] = None

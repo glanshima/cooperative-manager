@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from .. import audit_service, blob_storage, models, schemas, validation
+from .. import audit_service, blob_storage, cooperative_settings, models, schemas, validation
 from ..database import get_db
 from ..deps import (
     get_current_user,
@@ -28,13 +28,7 @@ BRANDING_FIELDS = {"cooperative_name", "cooperative_short_name", "cooperative_mo
 def _get_or_create_settings(db: Session) -> models.Settings:
     """Single-row table -- create the default row on first access if it
     doesn't exist yet, rather than requiring a separate seed step."""
-    settings = db.query(models.Settings).first()
-    if not settings:
-        settings = models.Settings()
-        db.add(settings)
-        db.commit()
-        db.refresh(settings)
-    return settings
+    return cooperative_settings.get_or_create(db)
 
 
 @router.get("", response_model=schemas.SettingsOut)
@@ -91,6 +85,31 @@ def update_settings(
         raise HTTPException(
             status_code=400,
             detail="A spread period only applies when interest is collected over the first months.",
+        )
+
+    # Checked against the merged state for the same reason as the spread:
+    # switching policy and its figure in one request is the normal path.
+    merged_minimum = changes.get(
+        "minimum_monthly_contribution", settings.minimum_monthly_contribution
+    )
+    merged_default = changes.get(
+        "default_monthly_contribution", settings.default_monthly_contribution
+    )
+    if merged_default and merged_minimum and merged_default < merged_minimum:
+        raise HTTPException(
+            status_code=400,
+            detail="The default monthly contribution cannot be below the minimum.",
+        )
+
+    merged_grace_mode = changes.get("loan_default_grace_mode", settings.loan_default_grace_mode)
+    merged_grace_days = changes.get("loan_default_grace_days", settings.loan_default_grace_days)
+    if merged_grace_mode == models.LoanDefaultGraceMode.NEXT_PAYROLL and merged_grace_days:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A grace period in days only applies when the grace is counted in days. "
+                "Clear it before switching to 'next payroll'."
+            ),
         )
 
     previous = {field: getattr(settings, field) for field in changes}

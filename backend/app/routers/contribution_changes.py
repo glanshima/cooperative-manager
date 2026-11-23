@@ -119,6 +119,7 @@ def _create_request(
     request: Request,
 ) -> models.ContributionChangeRequest:
     contribution_rules.assert_may_have_contribution(member)
+    contribution_rules.assert_meets_minimum(db, requested_amount)
     if (
         member.monthly_contribution_amount is not None
         and requested_amount == member.monthly_contribution_amount
@@ -351,6 +352,9 @@ def _review(
         # amount that can never be deducted must not be approved into
         # place. Rejecting it is still allowed.
         contribution_rules.assert_may_have_contribution(member)
+        # The floor may have been raised since the request was raised, so
+        # it is checked again before the amount is committed.
+        contribution_rules.assert_meets_minimum(db, row.requested_amount)
         effective_from = contribution_rules.next_month_start(date.today())
         member.monthly_contribution_amount = row.requested_amount
         member.contribution_effective_from = effective_from

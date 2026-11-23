@@ -4,7 +4,9 @@ import { PLATFORM_CREDIT } from "@/lib/branding";
 import { hasPermission } from "@/lib/permissions";
 import type { SettingsPageModel } from "../hooks/useSettingsPage";
 import BrandingSection from "../BrandingSection";
+import ContributionSettingsSection from "../ContributionSettingsSection";
 import LoanApplicationSettingsSection from "../LoanApplicationSettingsSection";
+import LoanDefaultSettingsSection from "../LoanDefaultSettingsSection";
 import ModulesSection from "../ModulesSection";
 
 export default function SettingsView({
@@ -51,6 +53,8 @@ export default function SettingsView({
       {canManageConfiguration && (
         <form onSubmit={model.saveConfiguration} style={{ display: "grid", gap: 16 }}>
           <LoanApplicationSettingsSection settings={settings} setField={model.setField} />
+          <ContributionSettingsSection settings={settings} setField={model.setField} />
+          <LoanDefaultSettingsSection settings={settings} setField={model.setField} />
           <ModulesSection settings={settings} setField={model.setField} />
           <button type="submit">Save settings</button>
         </form>

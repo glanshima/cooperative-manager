@@ -15,7 +15,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from . import models
+from . import cooperative_settings, models
 
 
 def month_start(value: date) -> date:
@@ -94,6 +94,21 @@ def amount_for_month(db: Session, member: models.Member, month: date) -> Optiona
         .first()
     )
     return superseded_by.current_amount if superseded_by else None
+
+
+def assert_meets_minimum(db: Session, value: Decimal) -> None:
+    """The cooperative's floor for a monthly contribution.
+
+    Enforced here rather than in the Pydantic schema because the floor is a
+    database setting, and a request body cannot reach the session. Zero
+    means the cooperative sets no floor.
+    """
+    minimum = cooperative_settings.minimum_monthly_contribution(db)
+    if minimum and value < minimum:
+        raise HTTPException(
+            status_code=422,
+            detail=f"The monthly contribution cannot be below {minimum:,.2f}.",
+        )
 
 
 def pending_request(

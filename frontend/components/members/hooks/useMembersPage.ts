@@ -14,6 +14,7 @@ import {
   createMemberLogin,
   updateMemberLoginStatus,
   withdrawMember,
+  getSettings,
 } from "@/lib/api";
 import {
   ContributionChangeRequest,
@@ -98,6 +99,10 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
   // contribution change request flow instead.
   const [editingContributionLocked, setEditingContributionLocked] = useState(false);
 
+  // The cooperative's contribution floor and the figure the add form
+  // starts at. Both are settings; 0 means "none set".
+  const [contributionPolicy, setContributionPolicy] = useState({ minimum: 0, standard: 0 });
+
   // `nokIsMember === null` is the "not yet answered" state -- used only
   // while adding a NEW member, so the required Yes/No question can't be
   // silently defaulted. Editing initializes it from the member's current
@@ -170,6 +175,21 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
         .then(setFilterOptions)
         .catch(() => {
           /* Non-fatal: filter dropdowns just show as empty/"All" if this fails. */
+        });
+    }
+  }, [authLoading]);
+
+  useEffect(() => {
+    if (!authLoading) {
+      getSettings()
+        .then((settings) =>
+          setContributionPolicy({
+            minimum: Number(settings.minimum_monthly_contribution),
+            standard: Number(settings.default_monthly_contribution),
+          })
+        )
+        .catch(() => {
+          /* Non-fatal: the form just shows no floor or starting figure. */
         });
     }
   }, [authLoading]);
@@ -263,6 +283,11 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
   function openCreate() {
     setError(null);
     resetForm();
+    setForm({
+      ...EMPTY_FORM,
+      monthly_contribution_amount:
+        contributionPolicy.standard > 0 ? contributionPolicy.standard : undefined,
+    });
     setFormOpen(true);
   }
 
@@ -595,6 +620,10 @@ export function useMembersPage(authLoading: boolean, logout: () => void) {
       isOpen: formOpen,
       busy: saving,
       contributionLocked: editingContributionLocked,
+      policy: {
+        minimumContribution: contributionPolicy.minimum,
+        standardContribution: contributionPolicy.standard,
+      },
       setField,
       submit: handleSubmit,
       openCreate,
