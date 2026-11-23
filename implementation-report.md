@@ -880,6 +880,7 @@ Two payroll policies were constants: a 5,000 monthly contribution floor and a lo
 
 - `tests/test_cooperative_policies.py` — 6 tests covering floor enforcement on every path and the merged grace-mode validation; full backend suite green at the time.
 - Committed as `6fe8edd` and pushed. No new permission and no environment variable.
+- **Correction (2026-11-23):** the migration was not applied to the production branch when that push deployed, so the settings row lacked the five new columns and every read of it failed — `/api/branding` returned **500** from 2026-11-23 until the ordered runner was applied to `br-rough-flower-aycl78im` during the section 29 deploy. `/api/branding` returned 200 immediately after.
 
 ## 29. Member savings ledger and exit settlement (2026-11-23)
 
@@ -928,8 +929,8 @@ Step 2 of the accounting rebuild. Built on standing double-entry principles, not
 - Frontend: full Vitest **273 passed**; `npx tsc --noEmit` clean.
 - Live browser check (2026-11-23): because the running `:8000` backend predates this code and could not be restarted, an isolated copy of the UI was served on `:3010` against a temporary backend on `:8020` (origin added to CORS); the user's own servers were left untouched. Verified end to end as `localadmin`: details modal showed 12,000 savings vs 8,000 outstanding; settling posted offset 8,000 with payout 4,000 **Pending** and allocation "Capital Loan 8,000"; the mark-paid form refused an empty reference, then recorded **Paid**, paid-on 2026-11-23, reference "CASH 0421". The zero-payout path was also exercised earlier (payout 0 settles directly as Paid).
 
-### 29.7 Deploy notes (not yet shipped)
+### 29.7 Deploy
 
-- Run `manual_migration_2026_11_savings_ledger.sql` on the production branch before deploying: it creates the two enums and three tables, and backfills ledger entries from confirmed contribution months. `create_all` cannot do either.
-- Run `scripts/seed_permissions.py` so `savings.settle` exists; existing roles keep their grants, so assign it to Treasurer (and any other officer who settles exits) on `/admin/roles` — the Treasurer *default* includes it, but defaults never rewrite a role that already exists.
-- No new environment variables. Uncommitted as of this entry.
+- Shipped as `40375a3` on 2026-11-23. Before the push, the ordered runner (`scripts/apply_manual_migrations.py --allow-remote`) was applied to production branch `br-rough-flower-aycl78im` (host `ep-rapid-feather-ay5ak2pz…`): 22 files applied, 1 already applied, server defaults restored. That run also applied `manual_migration_2026_11_cooperative_policies.sql`, which had been missed after `6fe8edd` — `/api/branding` went from 500 to 200 immediately.
+- The same branch then ran `scripts/seed_permissions.py`; all five roles already existed and kept their grants. `savings.settle` now exists in production but is **not yet granted** — assign it to Treasurer (and any other officer who settles exits) on `/admin/roles`, since the seeder never rewrites an existing role.
+- No new environment variables. Verified after deploy: `/api/health` 200, `/api/branding` 200, `/api/members/{member_id}/settlement` 401 unauthenticated, `/openapi.json` exposes `/api/members/{member_id}/settlement` and `/api/members/{member_id}/settlements/mark-paid`, frontend `/` 200.
