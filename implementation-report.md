@@ -932,7 +932,7 @@ Step 2 of the accounting rebuild. Built on standing double-entry principles, not
 ### 29.7 Deploy
 
 - Shipped as `40375a3` on 2026-11-23. Before the push, the ordered runner (`scripts/apply_manual_migrations.py --allow-remote`) was applied to production branch `br-rough-flower-aycl78im` (host `ep-rapid-feather-ay5ak2pz…`): 22 files applied, 1 already applied, server defaults restored. That run also applied `manual_migration_2026_11_cooperative_policies.sql`, which had been missed after `6fe8edd` — `/api/branding` went from 500 to 200 immediately.
-- The same branch then ran `scripts/seed_permissions.py`; all five roles already existed and kept their grants. `savings.settle` now exists in production but is **not yet granted** — assign it to Treasurer (and any other officer who settles exits) on `/admin/roles`, since the seeder never rewrites an existing role.
+- The same branch then ran `scripts/seed_permissions.py`; all five roles already existed and kept their grants. `savings.settle` exists in production; the owner granted it (with `savings.view`) to the Treasurer on `/admin/roles` on 2026-11-24. While the cashbook is closed (module off / no opening journal), settlement and payout postings to the cashbook are skipped and are not backfilled — post the opening journal first if the cooperative-side books must capture the first settlements.
 - No new environment variables. Verified after deploy: `/api/health` 200, `/api/branding` 200, `/api/members/{member_id}/settlement` 401 unauthenticated, `/openapi.json` exposes `/api/members/{member_id}/settlement` and `/api/members/{member_id}/settlements/mark-paid`, frontend `/` 200.
 
 ## 30. Cashbook: double-entry ledger with automatic postings (2026-11-24)
