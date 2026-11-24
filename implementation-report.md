@@ -934,3 +934,81 @@ Step 2 of the accounting rebuild. Built on standing double-entry principles, not
 - Shipped as `40375a3` on 2026-11-23. Before the push, the ordered runner (`scripts/apply_manual_migrations.py --allow-remote`) was applied to production branch `br-rough-flower-aycl78im` (host `ep-rapid-feather-ay5ak2pz…`): 22 files applied, 1 already applied, server defaults restored. That run also applied `manual_migration_2026_11_cooperative_policies.sql`, which had been missed after `6fe8edd` — `/api/branding` went from 500 to 200 immediately.
 - The same branch then ran `scripts/seed_permissions.py`; all five roles already existed and kept their grants. `savings.settle` now exists in production but is **not yet granted** — assign it to Treasurer (and any other officer who settles exits) on `/admin/roles`, since the seeder never rewrites an existing role.
 - No new environment variables. Verified after deploy: `/api/health` 200, `/api/branding` 200, `/api/members/{member_id}/settlement` 401 unauthenticated, `/openapi.json` exposes `/api/members/{member_id}/settlement` and `/api/members/{member_id}/settlements/mark-paid`, frontend `/` 200.
+
+## 30. Cashbook: double-entry ledger with automatic postings (2026-11-24)
+
+Step 3 of the accounting rebuild. Replaces the workbook's single-table cashbook — which mixes cash-on-hand with bank and records only one side of each movement — with a typed, balanced, immutable double-entry journal. Savings is modelled as a liability (what the cooperative owes members), not as an asset or an income.
+
+### 30.1 The journal
+
+- `cashbook_accounts` — the chart of accounts. `kind` is `asset | liability | equity | income | expense`; `system_key` marks the accounts automatic postings name (`CASH`, `BANK`, `LOAN_RECEIVABLE`, `MEMBER_SAVINGS`, `PAYOUT_PAYABLE`, `OTHER_DEDUCTIONS_PAYABLE`, `RETAINED_EARNINGS`, `INTEREST_INCOME`, `LOAN_FEE_INCOME`, `DEFAULT_CHARGE_INCOME`). System accounts cannot be deactivated; codes and kinds are fixed after creation. Other accounts can be renamed, described, added, and switched off once their balance is zero.
+- `cashbook_entries` / `cashbook_lines` — one entry has two or more lines, each line on exactly one side (`ck_cashbook_lines_one_side`), amounts non-negative, and the service refuses to post unless debits equal credits. Entries are never edited or deleted.
+- `cashbook_period_locks` — one row per locked month; `post` refuses any date inside it with 409.
+- `(source, source_id)` is unique, so an automatic posting that is retried for the same business event returns the existing entry instead of doubling the books.
+
+### 30.2 Opening balances and the module gate
+
+The books open with exactly one opening journal. `books_open` is true only when the module is enabled and an opening entry exists; `require_open_books` raises 409 for manual work before that, and every automatic posting returns `None` (a no-op) while the books are closed. That ordering matters: posting loan and payroll activity before the opening balances would double-count whatever the opening states. The module is off by default (`settings.cashbook_module_enabled`), matching the other unfinished modules.
+
+### 30.3 Reversals
+
+`reverse` posts the mirror entry (`source = reversal`, `reverses_entry_id` set) with a mandatory reason and marks the original as reversed; nothing is deleted and the audit trail keeps both. Opening and reversal entries cannot themselves be reversed, and an entry can only be reversed once.
+
+### 30.4 Automatic postings
+
+Each flow posts inside the transaction that changes the underlying record, so a failed posting aborts the money flow rather than leaving the journal behind:
+
+| Event | Debit | Credit |
+|---|---|---|
+| Payroll month confirmed | Bank (grand total) | Member savings, loans receivable (principal), interest income, other deductions payable |
+| Payroll month voided | Mirror of the above (`deduction_void`) | |
+| Loan disbursed | Loans receivable (principal) | Bank (net disbursed), interest income (interest taken at source), plus principal and interest of any older loans settled out of the payout |
+| Loan repayment verified | Bank | Loans receivable (principal), interest income |
+| Loan fee paid | Bank | Loan fee income — the fee never enters loan repayment math |
+| Exit settlement | Member savings (balance) | Loans receivable (offset), interest income (interest share), payouts payable (remainder) |
+| Exit payout marked paid | Payouts payable | Bank (or cash, per the recorded method) |
+
+`reverse_payroll_deduction` posts the mirror when a confirmed month is voided, keeping the savings subledger and the journal aligned.
+
+### 30.5 Endpoints and permissions
+
+| Endpoint | Permission |
+|---|---|
+| `GET /api/cashbook/overview`, `/accounts`, `/entries`, `/period-locks` | `accounting.view` |
+| `POST /api/cashbook/accounts`, `PATCH /api/cashbook/accounts/{id}` | `accounting.adjust` |
+| `POST /api/cashbook/opening`, `/entries` | `accounting.post` |
+| `POST /api/cashbook/entries/{id}/reverse` | `accounting.reverse` |
+| `POST /api/cashbook/period-locks`, `DELETE /api/cashbook/period-locks/{period_start}` | `accounting.reconcile` |
+| `GET /api/cashbook/reports/{trial-balance,income-expenditure,balance-sheet,cash-register,ledger/{account_id}}` | `report.financial` **or** `report.accounting` |
+
+Default grants: Treasurer holds all five `accounting.*` codes plus both report codes; Auditor holds `accounting.view` plus both report codes. Loan Officer and Secretary see nothing here.
+
+`PUT /api/loans/{id}` now refuses to change `amount_repaid` while the books are open (409 — correct it through the cashbook so the journal and the loan stay in step). Status and note edits remain allowed.
+
+### 30.6 Reports
+
+All five reports are computed from the journal, not stored: trial balance (debit/credit per account, with a `balanced` flag), income & expenditure (income and expense movement in a period, surplus/deficit), balance sheet (typed account balances with retained earnings brought forward), cash register (every movement through Cash on hand and Bank, with net movement and the Cash and Bank balances), and account ledger (opening balance, movements and closing balance per account). Reports are read-only and available to the Auditor.
+
+### 30.7 Frontend
+
+`/admin/cashbook` under the admin shell, five tabs:
+
+- **Overview** — opened state, cash and bank balances, counts, and the opening-balance form while the books are closed.
+- **Journal** — filters (date range, source, account, narration/reference search), a balanced-lines editor (`JournalLinesEditor` shows Debits · Credits and "Balanced"), paginated entry list with Dr/Cr detail rows, reversal with a required reason, "Reversed"/"Already reversed" states. While the entry form is open, a date inside a locked month shows a warning naming the month and disables **Post entry** (linked with `aria-describedby`); the server's 409 remains the final guard.
+- **Chart of accounts** — balances, add/edit, activate/deactivate, system accounts locked.
+- **Reports** — the five reports above.
+- **Period locks** — lock a month with a note, list and unlock, and a "This month is locked/open" indicator.
+
+Feedback uses the shared `StatusMessage`: errors are `role="alert"`, successes `role="status"`, both auto-clear after 6 s and carry a dismiss button.
+
+### 30.8 Verification
+
+- Backend: `tests/test_cashbook.py` — **25 passed** against the sandbox `mact_test` (balance enforcement, one-side lines, opening-first, locked months, reversal rules, idempotent automatic postings for payroll/disbursement/repayment/fee/settlement/payout, loan repaid-balance guard, reports, permissions); full backend suite **437 passed**.
+- Frontend: cashbook suites **14 passed** (journal validation, lines editor, page hook, JournalPanel lock guard); full Vitest suite **287 passed**; `npx tsc --noEmit` clean; `npm run build` succeeded.
+- Live browser walkthrough as `localadmin` (localhost, 2026-11-23/24): posted the opening journal (Dr Bank 100,000 / Cr Retained earnings); posted a manual entry (Dr Administrative expenses 2,000 / Cr Bank); reversed it — the mirror posted and the original shows **Reversed** / **Already reversed**; chart showed the system accounts locked and accepted a new expense account (5080); trial balance, income & expenditure, balance sheet, cash register and account ledger all balanced; locked 2026-11 with a note and the month flipped to "locked"; a November-dated manual post returned 409 **"November 2026 is locked; post the correction in an open month."**, shown as an alert banner and auto-clearing; unlocking flipped the month back to open ("2026-11 unlocked.") and the same entry then posted ("Entry posted."). Lock awareness was checked after re-locking November: the open entry form showed "November 2026 is locked, so this entry cannot be posted…" with **Post entry** disabled, and switching the date to December removed the warning and re-enabled the button.
+
+### 30.9 Deploy (pending — not yet committed or pushed)
+
+- Migration: `scripts/manual_migration_2026_11_cashbook.sql` (tables, enums, constraints, starter chart of 24 accounts). Production application needs a named restore point/branch and rollback SQL first, as with the earlier migrations.
+- The five `accounting.*` codes and both report codes already existed in the catalogue; this change adds `accounting.adjust` and `accounting.reverse` to the Treasurer's default set. The seeder never rewrites an existing role, so check `/admin/roles` after deploy and grant the Treasurer whichever accounting codes are missing (`adjust` and `reverse` are the new ones). The Auditor already has `accounting.view` and `report.accounting`.
+- The cashbook module remains **off** by default. Turn it on in Settings only after the officer is ready to post the opening balances; automatic postings stay no-ops until that opening journal exists.

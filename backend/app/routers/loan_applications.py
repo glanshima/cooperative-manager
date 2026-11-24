@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas, audit_service, notification_service
+from .. import cashbook, models, schemas, audit_service, notification_service
 from ..database import get_db
 from ..deps import (
     get_current_user,
@@ -708,6 +708,19 @@ def disburse_application(
         exclude_loan_ids=[old_loan.id for old_loan in loans_to_deduct],
     )
 
+    # What the offset is made of, computed while the old balances are
+    # still intact: the cashbook settles those loans' principal and
+    # recognises the interest they had accrued.
+    offset_principal = cashbook.ZERO
+    offset_interest = cashbook.ZERO
+    for old_loan in loans_to_deduct:
+        outstanding = cashbook.money(old_loan.total_repayable - old_loan.amount_repaid)
+        portion = cashbook.loan_interest_for_payment(
+            old_loan, outstanding, repaid_before=old_loan.amount_repaid
+        )
+        offset_interest += portion
+        offset_principal += outstanding - portion
+
     # Close out offset loans before inserting the new row: the partial
     # unique index on (member_id, loan_type_id) WHERE status='active'
     # would otherwise see the old same-type loan still ACTIVE and reject
@@ -749,6 +762,17 @@ def disburse_application(
             (old_loan.notes + " " if old_loan.notes else "")
             + f"Closed out via offset against new loan {loan.id} disbursed {disbursement_date}."
         )
+
+    try:
+        cashbook.post_loan_disbursement(
+            db,
+            loan,
+            offset_principal=offset_principal,
+            offset_interest=offset_interest,
+            actor_id=current_user.id,
+        )
+    except cashbook.CashbookError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
     application.resulting_loan_id = loan.id
 

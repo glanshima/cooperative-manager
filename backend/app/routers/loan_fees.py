@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas, audit_service, notification_service
+from .. import cashbook, models, schemas, audit_service, notification_service
 from ..database import get_db
 from ..deps import (
     get_current_user,
@@ -305,6 +305,10 @@ def verify_fee_payment(
             ),
             link_path="/dashboard",
         )
+        try:
+            cashbook.post_loan_fee(db, payment, actor_id=current_user.id)
+        except cashbook.CashbookError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail)
         db.commit()
         db.refresh(payment)
         audit_service.log_event(

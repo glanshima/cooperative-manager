@@ -78,6 +78,13 @@ export function useAdminNav(permissions: string[]) {
     items.push({ kind: "link", href: "/admin/deductions", label: "Payroll deductions" });
   }
 
+  // The cashbook screen's overview and journal are gated on
+  // accounting.view server-side; the reports inside additionally require
+  // report.financial or report.accounting.
+  if (settings && isModuleEnabled(settings, "cashbook") && can("accounting.view")) {
+    items.push({ kind: "link", href: "/admin/cashbook", label: "Cashbook" });
+  }
+
   const settingsChildren: AdminNavLink[] = [];
   if (can("admin.user_manage")) {
     settingsChildren.push({ href: "/admin/users", label: "Staff / Admin users" });

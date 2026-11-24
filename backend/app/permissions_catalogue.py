@@ -119,6 +119,8 @@ DEFAULT_ROLES = {
             "savings.settle",
             "accounting.view",
             "accounting.post",
+            "accounting.adjust",
+            "accounting.reverse",
             "accounting.reconcile",
             "report.financial",
             "report.accounting",

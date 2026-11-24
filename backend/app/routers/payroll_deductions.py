@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from .. import (
     audit_service,
+    cashbook,
     deduction_expectations,
     models,
     notification_service,
@@ -419,6 +420,12 @@ def _transition_confirm(
     # applies in full or not at all.
     loans = _load_loans_for_lines(db, deduction.member_id, deduction.lines, lock=True)
 
+    # Posted before the loan balances move: the interest share is derived
+    # from what was outstanding when the money arrived.
+    _post_cashbook(
+        lambda: cashbook.post_payroll_deduction(db, deduction, actor_id=current_user.id)
+    )
+
     for line in deduction.lines:
         if line.loan_id is None:
             continue
@@ -533,11 +540,28 @@ def _transition_void(
             actor_id=current_user.id,
             note=f"Reversal: {deduction.deduction_month:%Y-%m} deduction voided",
         )
+        _post_cashbook(
+            lambda: cashbook.reverse_payroll_deduction(
+                db,
+                deduction,
+                reason=reason,
+                actor_id=current_user.id,
+            )
+        )
 
     deduction.status = models.PayrollDeductionStatus.VOID
     deduction.voided_by_user_id = current_user.id
     deduction.voided_at = datetime.utcnow()
     deduction.void_reason = reason
+
+
+def _post_cashbook(action) -> None:
+    """Run an automatic cashbook posting, translating its guard into an
+    HTTP error so one bad posting aborts the whole money flow."""
+    try:
+        action()
+    except cashbook.CashbookError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
 def _http_detail_text(exc: HTTPException) -> str:

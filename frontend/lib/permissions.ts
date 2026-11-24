@@ -25,3 +25,7 @@ export const SETTINGS_PAGE_PERMISSIONS = [
   "branding.view",
   "branding.manage",
 ];
+
+// The financial statements in the cashbook are gated separately from the
+// journal itself (which needs accounting.view).
+export const REPORT_PERMISSIONS = ["report.financial", "report.accounting"];

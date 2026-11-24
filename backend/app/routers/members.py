@@ -872,8 +872,10 @@ def mark_settlement_paid(
             db,
             settlement,
             member=member,
+            actor=current_user,
             paid_on=payload.paid_on,
             reference=payload.reference,
+            paid_from=payload.paid_from,
         )
     except settlement_service.SettlementError as err:
         raise HTTPException(status_code=err.status_code, detail=err.detail)
@@ -893,6 +895,7 @@ def mark_settlement_paid(
             "payout_status": settlement.payout_status.value,
             "paid_on": settlement.paid_on.isoformat() if settlement.paid_on else None,
             "paid_reference": settlement.paid_reference,
+            "paid_from": settlement.paid_from.value if settlement.paid_from else None,
             "note": payload.note,
         },
         request=request,

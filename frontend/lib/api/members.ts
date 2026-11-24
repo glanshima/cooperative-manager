@@ -191,6 +191,10 @@ export async function withdrawMember(
 
 export type SettlementPayoutStatus = "pending" | "paid";
 
+// Which account the payout left from. When the cashbook is open this decides
+// the journal entry (payout payable -> cash or bank).
+export type SettlementPaymentMethod = "cash" | "bank";
+
 export interface SettlementAllocation {
   loan_id: string;
   amount: string;
@@ -212,6 +216,7 @@ export interface MemberSettlement {
   paid_on?: string | null;
   paid_at?: string | null;
   paid_reference?: string | null;
+  paid_from?: SettlementPaymentMethod | null;
   note?: string | null;
   allocations: SettlementAllocation[];
 }
@@ -240,13 +245,14 @@ export async function settleMemberExit(
 
 export async function markSettlementPaid(
   id: string,
-  input: { paid_on?: string; reference: string; note?: string }
+  input: { paid_on?: string; reference: string; paid_from: SettlementPaymentMethod; note?: string }
 ): Promise<MemberSettlement> {
   return apiFetch<MemberSettlement>(`/api/members/${id}/settlements/mark-paid`, {
     method: "POST",
     body: {
       paid_on: input.paid_on ?? null,
       reference: input.reference,
+      paid_from: input.paid_from,
       note: input.note ?? null,
     },
   });

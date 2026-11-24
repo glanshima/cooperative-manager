@@ -23,6 +23,9 @@ from .models import (
     DeductionWorklistEntryState,
     AccountStatus,
     SettlementPayoutStatus,
+    SettlementPaymentMethod,
+    CashbookAccountKind,
+    CashbookEntrySource,
 )
 from . import validation
 
@@ -353,6 +356,7 @@ class MemberSettlementOut(BaseModel):
     paid_on: Optional[date] = None
     paid_at: Optional[datetime] = None
     paid_reference: Optional[str] = None
+    paid_from: Optional[SettlementPaymentMethod] = None
     note: Optional[str] = None
     allocations: List[SettlementAllocationOut] = []
 
@@ -376,6 +380,9 @@ class MemberSettleRequest(BaseModel):
 class MemberSettlementPaidRequest(BaseModel):
     paid_on: Optional[date] = None
     reference: str = Field(min_length=1, max_length=120)
+    # Which account the money left: the cashbook posts the payout payable
+    # to cash on hand or the bank, so this decides the journal entry.
+    paid_from: SettlementPaymentMethod
     note: Optional[str] = Field(default=None, max_length=500)
 
     @field_validator("reference")
@@ -1440,3 +1447,260 @@ class LogoUploadIn(BaseModel):
 
     _validate_logo_type = field_validator("content_type")(validation.validate_logo_content_type)
     _validate_logo_b64 = field_validator("image_base64")(validation.validate_logo_base64)
+
+
+# ---------------------------------------------------------------------------
+# Cashbook
+# ---------------------------------------------------------------------------
+
+class CashbookAccountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    code: str
+    name: str
+    kind: CashbookAccountKind
+    system_key: Optional[str] = None
+    is_active: bool
+    description: Optional[str] = None
+
+
+class CashbookAccountBalanceOut(CashbookAccountOut):
+    """An account plus its balance as of the report date, on its normal
+    side (assets and expenses debit-positive, the rest credit-positive)."""
+
+    debit: Decimal
+    credit: Decimal
+    balance: Decimal
+
+
+class CashbookAccountCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=16)
+    name: str = Field(min_length=1, max_length=120)
+    kind: CashbookAccountKind
+    description: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("code", "name", "description")
+    @classmethod
+    def _clean_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        collapsed = " ".join(value.split())
+        if not collapsed:
+            raise ValueError("must not be blank")
+        return collapsed
+
+
+class CashbookAccountUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+
+    @field_validator("name", "description")
+    @classmethod
+    def _clean_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        collapsed = " ".join(value.split())
+        if not collapsed:
+            raise ValueError("must not be blank")
+        return collapsed
+
+
+class CashbookLineIn(BaseModel):
+    account_id: uuid.UUID
+    debit: Decimal = Field(default=Decimal("0"), ge=0)
+    credit: Decimal = Field(default=Decimal("0"), ge=0)
+
+
+class CashbookEntryCreate(BaseModel):
+    entry_date: date
+    narration: str = Field(min_length=1, max_length=255)
+    reference: Optional[str] = Field(default=None, max_length=64)
+    lines: List[CashbookLineIn] = Field(min_length=2)
+
+    @field_validator("narration", "reference")
+    @classmethod
+    def _clean_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        collapsed = " ".join(value.split())
+        if not collapsed:
+            raise ValueError("must not be blank")
+        return collapsed
+
+    @model_validator(mode="after")
+    def _needs_two_sides(self):
+        has_debit = any(line.debit > 0 for line in self.lines)
+        has_credit = any(line.credit > 0 for line in self.lines)
+        if not (has_debit and has_credit):
+            raise ValueError("An entry needs at least one debit and one credit")
+        return self
+
+
+class CashbookOpeningCreate(BaseModel):
+    as_of: date
+    note: Optional[str] = Field(default=None, max_length=255)
+    lines: List[CashbookLineIn] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def _needs_two_sides(self):
+        has_debit = any(line.debit > 0 for line in self.lines)
+        has_credit = any(line.credit > 0 for line in self.lines)
+        if not (has_debit and has_credit):
+            raise ValueError("An opening journal needs at least one debit and one credit")
+        return self
+
+
+class CashbookLineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    account_id: uuid.UUID
+    account_code: str
+    account_name: str
+    debit: Decimal
+    credit: Decimal
+
+
+class CashbookEntryOut(BaseModel):
+    id: uuid.UUID
+    entry_date: date
+    narration: str
+    reference: Optional[str] = None
+    source: CashbookEntrySource
+    source_id: Optional[uuid.UUID] = None
+    reverses_entry_id: Optional[uuid.UUID] = None
+    reversal_reason: Optional[str] = None
+    posted_by_user_id: Optional[uuid.UUID] = None
+    posted_at: Optional[datetime] = None
+    lines: List[CashbookLineOut] = []
+
+
+class CashbookEntryPageOut(BaseModel):
+    items: List[CashbookEntryOut]
+    total: int
+    skip: int
+    limit: int
+
+
+class CashbookReversalRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+    entry_date: Optional[date] = None
+
+    @field_validator("reason")
+    @classmethod
+    def _clean_reason(cls, value: str) -> str:
+        collapsed = " ".join(value.split())
+        if not collapsed:
+            raise ValueError("must not be blank")
+        return collapsed
+
+
+class CashbookPeriodLockOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    period_start: date
+    locked_by_user_id: Optional[uuid.UUID] = None
+    locked_at: Optional[datetime] = None
+    note: Optional[str] = None
+
+
+class CashbookPeriodLockRequest(BaseModel):
+    period_start: date
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class CashbookTrialBalanceRowOut(BaseModel):
+    account_id: uuid.UUID
+    code: str
+    name: str
+    kind: CashbookAccountKind
+    debit: Decimal
+    credit: Decimal
+
+
+class CashbookTrialBalanceOut(BaseModel):
+    as_of: Optional[date] = None
+    rows: List[CashbookTrialBalanceRowOut]
+    total_debit: Decimal
+    total_credit: Decimal
+    balanced: bool
+
+
+class CashbookMovementRowOut(BaseModel):
+    account_id: uuid.UUID
+    code: str
+    name: str
+    amount: Decimal
+
+
+class CashbookIncomeStatementOut(BaseModel):
+    start: Optional[date] = None
+    end: Optional[date] = None
+    income: List[CashbookMovementRowOut]
+    expenses: List[CashbookMovementRowOut]
+    total_income: Decimal
+    total_expenses: Decimal
+    surplus: Decimal
+
+
+class CashbookBalanceSheetOut(BaseModel):
+    as_of: Optional[date] = None
+    assets: List[CashbookMovementRowOut]
+    liabilities: List[CashbookMovementRowOut]
+    equity: List[CashbookMovementRowOut]
+    surplus: Decimal
+    total_assets: Decimal
+    total_liabilities: Decimal
+    total_equity: Decimal
+    balanced: bool
+
+
+class CashbookLedgerRowOut(BaseModel):
+    entry_date: date
+    narration: str
+    reference: Optional[str] = None
+    debit: Decimal
+    credit: Decimal
+    balance: Decimal
+
+
+class CashbookAccountLedgerOut(BaseModel):
+    account: CashbookAccountOut
+    start: Optional[date] = None
+    end: Optional[date] = None
+    opening_balance: Decimal
+    rows: List[CashbookLedgerRowOut]
+    closing_balance: Decimal
+
+
+class CashbookRegisterRowOut(BaseModel):
+    entry_date: date
+    narration: str
+    reference: Optional[str] = None
+    account_code: str
+    account_name: str
+    amount: Decimal
+
+
+class CashbookRegisterOut(BaseModel):
+    start: Optional[date] = None
+    end: Optional[date] = None
+    rows: List[CashbookRegisterRowOut]
+    total: Decimal
+    cash_balance: Decimal
+    bank_balance: Decimal
+
+
+class CashbookOverviewOut(BaseModel):
+    enabled: bool
+    opened: bool
+    opening_entry_id: Optional[uuid.UUID] = None
+    opening_date: Optional[date] = None
+    account_count: int
+    entry_count: int
+    cash_balance: Decimal
+    bank_balance: Decimal
+    current_month_locked: bool
+    locked_periods: List[date] = []

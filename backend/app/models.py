@@ -1859,6 +1859,11 @@ class SettlementPayoutStatus(str, enum.Enum):
     PAID = "paid"
 
 
+class SettlementPaymentMethod(str, enum.Enum):
+    CASH = "cash"
+    BANK = "bank"
+
+
 class MemberSettlement(Base):
     """
     One member's exit settlement: their savings first offset their active
@@ -1867,8 +1872,8 @@ class MemberSettlement(Base):
     The figures are snapshots of the moment of settlement, not derived
     later -- a payroll correction cannot rewrite what the office settled.
     The ledger is debited in full at settlement; marking the payout paid
-    records that the office handed the money over. The cashbook will post
-    the actual cash movement when it exists.
+    records that the office handed the money over, and the cashbook posts
+    the matching journal entry for each step.
     """
 
     __tablename__ = "member_settlements"
@@ -1903,6 +1908,13 @@ class MemberSettlement(Base):
     paid_on = Column(Date, nullable=True)
     paid_at = Column(DateTime, nullable=True)
     paid_reference = Column(String, nullable=True)
+    paid_from = Column(
+        Enum(
+            SettlementPaymentMethod,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=True,
+    )
     note = Column(Text, nullable=True)
 
     member = relationship("Member")
@@ -1940,3 +1952,142 @@ class SettlementAllocation(Base):
         """Exposed so the settlement breakdown can say which loan the
         offset went to without the client fetching each loan."""
         return self.loan.loan_type.name if self.loan and self.loan.loan_type else None
+
+
+class CashbookAccountKind(str, enum.Enum):
+    ASSET = "asset"
+    LIABILITY = "liability"
+    EQUITY = "equity"
+    INCOME = "income"
+    EXPENSE = "expense"
+
+
+class CashbookEntrySource(str, enum.Enum):
+    """What produced the entry. ``source_id`` points at the originating row
+    so a re-run can never post the same event twice."""
+
+    MANUAL = "manual"
+    OPENING = "opening"
+    REVERSAL = "reversal"
+    PAYROLL_DEDUCTION = "payroll_deduction"
+    PAYROLL_DEDUCTION_VOID = "payroll_deduction_void"
+    LOAN_DISBURSEMENT = "loan_disbursement"
+    LOAN_REPAYMENT = "loan_repayment"
+    LOAN_FEE = "loan_fee"
+    SETTLEMENT = "settlement"
+    SETTLEMENT_PAYOUT = "settlement_payout"
+
+
+class CashbookAccount(Base):
+    """One line of the chart of accounts.
+
+    ``kind`` decides everything the workbook decided from the sign of an
+    amount: whether a balance sits on the balance sheet or in the surplus,
+    and on which side. ``system_key`` marks the accounts the automatic
+    postings target (bank, cash, member savings, ...); those are protected
+    from deactivation because a posting rule names them.
+    """
+
+    __tablename__ = "cashbook_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    code = Column(String(16), nullable=False, unique=True)
+    name = Column(String(120), nullable=False)
+    kind = Column(
+        Enum(CashbookAccountKind, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+    )
+    system_key = Column(String(40), nullable=True, unique=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    description = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CashbookEntry(Base):
+    """A balanced journal entry. Posted entries are immutable; a mistake is
+    corrected with a reversing entry that names the original."""
+
+    __tablename__ = "cashbook_entries"
+    __table_args__ = (
+        Index(
+            "uq_cashbook_entries_source",
+            "source",
+            "source_id",
+            unique=True,
+            postgresql_where=text("source_id IS NOT NULL"),
+        ),
+        Index("ix_cashbook_entries_entry_date", "entry_date"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    entry_date = Column(Date, nullable=False)
+    narration = Column(String(255), nullable=False)
+    reference = Column(String(64), nullable=True)
+
+    source = Column(
+        Enum(CashbookEntrySource, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=CashbookEntrySource.MANUAL,
+    )
+    source_id = Column(UUID(as_uuid=True), nullable=True)
+
+    reverses_entry_id = Column(
+        UUID(as_uuid=True), ForeignKey("cashbook_entries.id"), nullable=True
+    )
+    reversal_reason = Column(Text, nullable=True)
+
+    posted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    posted_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    lines = relationship(
+        "CashbookLine",
+        back_populates="entry",
+        cascade="all, delete-orphan",
+        order_by="CashbookLine.created_at",
+    )
+    reverses = relationship("CashbookEntry", remote_side=[id], uselist=False)
+
+
+class CashbookLine(Base):
+    """One side of a journal entry: exactly one of debit/credit is set."""
+
+    __tablename__ = "cashbook_lines"
+    __table_args__ = (
+        CheckConstraint(
+            "(debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0)",
+            name="ck_cashbook_lines_one_side",
+        ),
+        Index("ix_cashbook_lines_account_id", "account_id"),
+        Index("ix_cashbook_lines_entry_id", "entry_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    entry_id = Column(
+        UUID(as_uuid=True), ForeignKey("cashbook_entries.id", ondelete="CASCADE"), nullable=False
+    )
+    account_id = Column(UUID(as_uuid=True), ForeignKey("cashbook_accounts.id"), nullable=False)
+    debit = Column(Numeric(14, 2), nullable=False, default=0)
+    credit = Column(Numeric(14, 2), nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    entry = relationship("CashbookEntry", back_populates="lines")
+    account = relationship("CashbookAccount")
+
+
+class CashbookPeriodLock(Base):
+    """A closed month. Entries dated inside it are refused; corrections
+    land in the open month as reversing entries."""
+
+    __tablename__ = "cashbook_period_locks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    period_start = Column(Date, nullable=False, unique=True)
+    locked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    locked_at = Column(DateTime, default=datetime.utcnow)
+    note = Column(Text, nullable=True)

@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas, audit_service
+from .. import cashbook, models, schemas, audit_service
 from ..database import get_db
 from ..deps import (
     require_admin,
@@ -24,6 +24,7 @@ from ..loan_rules import (
     assert_member_may_borrow,
     assert_no_other_active_loan_of_type,
     commit_or_conflict,
+    flush_or_conflict,
 )
 from ..self_conflict import (
     get_conflicted_member_ids,
@@ -246,6 +247,11 @@ def create_loan(
         notes=payload.notes,
     )
     db.add(loan)
+    flush_or_conflict(db)
+    try:
+        cashbook.post_loan_disbursement(db, loan, actor_id=current_user.id)
+    except cashbook.CashbookError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
     commit_or_conflict(db)
     db.refresh(loan)
 
@@ -298,6 +304,18 @@ def update_loan(
     )
 
     changes = payload.model_dump(exclude_unset=True)
+    if (
+        "amount_repaid" in changes
+        and changes["amount_repaid"] != loan.amount_repaid
+        and cashbook.books_open(db)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This loan's repaid balance is part of the cashbook. Correct it with "
+                "a cashbook adjustment so the journal and the loan stay in step."
+            ),
+        )
     previous = {field: getattr(loan, field) for field in changes}
 
     # Auto-complete a loan once it's fully repaid, unless the caller

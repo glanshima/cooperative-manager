@@ -8,6 +8,7 @@ import { formatMoney } from "@/components/deductions/labels";
 import {
   Member,
   MemberSettlementPreview,
+  SettlementPaymentMethod,
   getMemberSettlement,
   markSettlementPaid,
   settleMemberExit,
@@ -53,6 +54,7 @@ export default function MemberSettlementPanel({
 
   const [paidOpen, setPaidOpen] = useState(false);
   const [paidOn, setPaidOn] = useState(todayIso());
+  const [paidFrom, setPaidFrom] = useState<SettlementPaymentMethod>("bank");
   const [reference, setReference] = useState("");
   const [paidNote, setPaidNote] = useState("");
 
@@ -79,6 +81,7 @@ export default function MemberSettlementPanel({
     setActionError(null);
     setSettledOn(todayIso());
     setPaidOn(todayIso());
+    setPaidFrom("bank");
     setReference("");
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -120,11 +123,13 @@ export default function MemberSettlementPanel({
       await markSettlementPaid(member.id, {
         paid_on: paidOn || undefined,
         reference: reference.trim(),
+        paid_from: paidFrom,
         note: paidNote.trim() || undefined,
       });
       setPaidOpen(false);
       setReference("");
       setPaidNote("");
+      setPaidFrom("bank");
       await load();
     } catch (err: unknown) {
       setActionError(describeError(err));
@@ -248,6 +253,10 @@ export default function MemberSettlementPanel({
                   <dt>Reference</dt>
                   <dd>{settlement.paid_reference ?? "—"}</dd>
                 </div>
+                <div>
+                  <dt>Paid from</dt>
+                  <dd>{settlement.paid_from === "cash" ? "Cash" : settlement.paid_from === "bank" ? "Bank" : "—"}</dd>
+                </div>
               </>
             )}
             {settlement.note && (
@@ -295,6 +304,17 @@ export default function MemberSettlementPanel({
                       onChange={(e) => setPaidOn(e.target.value)}
                       required
                     />
+                  </label>
+                  <label style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                    Paid from
+                    <select
+                      aria-label="Paid from"
+                      value={paidFrom}
+                      onChange={(e) => setPaidFrom(e.target.value as SettlementPaymentMethod)}
+                    >
+                      <option value="bank">Bank</option>
+                      <option value="cash">Cash</option>
+                    </select>
                   </label>
                   <input
                     aria-label="Payment reference"

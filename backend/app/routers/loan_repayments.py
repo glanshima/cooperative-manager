@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas, audit_service, notification_service, validation
+from .. import cashbook, models, schemas, audit_service, notification_service, validation
 from ..database import get_db
 from ..deps import (
     get_current_user,
@@ -248,7 +248,19 @@ def verify_repayment(
         repayment.status = models.RepaymentVerificationStatus.VERIFIED
 
         loan = repayment.loan
-        loan.amount_repaid = loan.amount_repaid + repayment.amount_claimed
+        repaid_before = loan.amount_repaid
+        try:
+            cashbook.post_loan_repayment(
+                db,
+                repayment,
+                loan,
+                repaid_before=repaid_before,
+                actor_id=current_user.id,
+            )
+        except cashbook.CashbookError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+        loan.amount_repaid = repaid_before + repayment.amount_claimed
         if loan.amount_repaid >= loan.total_repayable:
             loan.status = models.LoanStatus.COMPLETED
 

@@ -6,6 +6,7 @@ export * from "./applications";
 export * from "./repayments";
 export * from "./loan-fees";
 export * from "./deductions";
+export * from "./cashbook";
 export * from "./contributions";
 export * from "./settings";
 export * from "./branding";

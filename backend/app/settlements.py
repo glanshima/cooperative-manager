@@ -11,10 +11,10 @@ confirmed:
   3. marking that payout paid records the handover (date + reference).
 
 The member-level books are posted here: the savings ledger is debited in
-full at settlement. The cooperative-level cash movement is NOT posted --
-the cashbook does not exist yet -- so a pending payout is a recorded claim
-against the office, not a cashbook entry. When the cashbook lands it posts
-the cash at mark-paid.
+full at settlement. The cooperative-level books are posted too, when the
+cashbook is open: the settlement credits the loan and interest it cleared
+and credits a payout payable, and marking the payout paid moves that
+liability to cash or the bank -- the method the office recorded.
 
 Figures on the settlement are snapshots. A later payroll correction cannot
 rewrite what the office settled with the member.
@@ -26,7 +26,7 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session, joinedload
 
-from . import models, notification_service, savings
+from . import cashbook, models, notification_service, savings
 
 ZERO = Decimal("0")
 
@@ -198,6 +198,10 @@ def settle(
     db.flush()
 
     savings.post_settlement_entries(db, settlement, actor_id=actor.id)
+    try:
+        cashbook.post_settlement(db, settlement, actor_id=actor.id)
+    except cashbook.CashbookError as exc:
+        raise SettlementError(exc.status_code, exc.detail)
 
     if payout_amount > ZERO:
         body = (
@@ -222,16 +226,21 @@ def mark_paid(
     settlement: models.MemberSettlement,
     *,
     member: models.Member,
+    actor: models.User,
     paid_on: Optional[date] = None,
     reference: str,
+    paid_from: Optional[models.SettlementPaymentMethod] = None,
 ) -> models.MemberSettlement:
-    """Record that the office handed the payout over. The ledger is not
-    touched -- the member's savings were already spent at settlement;
-    this is the evidence of the handover."""
+    """Record that the office handed the payout over. The savings ledger
+    is not touched -- the member's savings were already spent at
+    settlement. The cashbook moves the payout liability to the cash or
+    bank account the money actually left from."""
     if settlement.payout_status == models.SettlementPayoutStatus.PAID:
         raise SettlementError(409, "This settlement's payout is already recorded as paid.")
     if settlement.payout_amount <= ZERO:
         raise SettlementError(409, "There is no payout to mark paid.")
+    if paid_from is None:
+        raise SettlementError(400, "Record whether the payout was paid from cash or the bank")
 
     paid_on = paid_on or date.today()
     if paid_on > date.today():
@@ -243,6 +252,12 @@ def mark_paid(
     settlement.paid_on = paid_on
     settlement.paid_at = datetime.utcnow()
     settlement.paid_reference = reference
+    settlement.paid_from = paid_from
+
+    try:
+        cashbook.post_settlement_payout(db, settlement, actor_id=actor.id)
+    except cashbook.CashbookError as exc:
+        raise SettlementError(exc.status_code, exc.detail)
 
     notification_service.notify_member(
         db,

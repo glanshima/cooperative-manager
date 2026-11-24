@@ -248,7 +248,7 @@ def test_mark_paid_records_the_handover_and_is_not_repeatable(client, db_session
 
     res = client.post(
         f"/api/members/{member.id}/settlements/mark-paid",
-        json={"paid_on": "2026-11-15", "reference": "  CASH  0421 "},
+        json={"paid_on": "2026-11-15", "reference": "  CASH  0421 ", "paid_from": "cash"},
         headers=auth_headers(admin),
     )
     assert res.status_code == 200, res.text
@@ -256,10 +256,11 @@ def test_mark_paid_records_the_handover_and_is_not_repeatable(client, db_session
     assert body["payout_status"] == "paid"
     assert body["paid_on"] == "2026-11-15"
     assert body["paid_reference"] == "CASH 0421"
+    assert body["paid_from"] == "cash"
 
     again = client.post(
         f"/api/members/{member.id}/settlements/mark-paid",
-        json={"reference": "CASH 0422"},
+        json={"reference": "CASH 0422", "paid_from": "cash"},
         headers=auth_headers(admin),
     )
     assert again.status_code == 409, again.text
@@ -278,7 +279,7 @@ def test_payout_cannot_be_dated_before_the_settlement(client, db_session):
 
     res = client.post(
         f"/api/members/{member.id}/settlements/mark-paid",
-        json={"paid_on": "2026-11-01", "reference": "CASH 1"},
+        json={"paid_on": "2026-11-01", "reference": "CASH 1", "paid_from": "bank"},
         headers=auth_headers(admin),
     )
     assert res.status_code == 400, res.text
@@ -374,7 +375,7 @@ def test_settlement_and_payout_are_audited(client, db_session):
     assert _settle(client, admin, member).status_code == 200
     assert client.post(
         f"/api/members/{member.id}/settlements/mark-paid",
-        json={"reference": "BANK 77"},
+        json={"reference": "BANK 77", "paid_from": "bank"},
         headers=auth_headers(admin),
     ).status_code == 200
 
