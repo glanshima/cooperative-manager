@@ -20,7 +20,7 @@ Figures on the settlement are snapshots. A later payroll correction cannot
 rewrite what the office settled with the member.
 """
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import List, Optional, Tuple
 
@@ -163,7 +163,12 @@ def settle(
 
     remaining = balance
     allocations: List[models.SettlementAllocation] = []
-    for loan in loans:
+    # Timestamps are nudged apart so the relationship's created_at order
+    # reproduces the allocation order: the system clock can tie two rows
+    # written in the same millisecond, leaving "oldest loan first" to
+    # chance when the settlement is read back.
+    allocated_at = datetime.utcnow()
+    for index, loan in enumerate(loans):
         if remaining <= ZERO:
             break
         applied = min(remaining, loan.total_repayable - loan.amount_repaid)
@@ -173,7 +178,13 @@ def settle(
         if loan.amount_repaid >= loan.total_repayable:
             loan.status = models.LoanStatus.COMPLETED
         remaining -= applied
-        allocations.append(models.SettlementAllocation(loan_id=loan.id, amount=applied))
+        allocations.append(
+            models.SettlementAllocation(
+                loan_id=loan.id,
+                amount=applied,
+                created_at=allocated_at + timedelta(microseconds=index),
+            )
+        )
 
     offset_total = balance - remaining
     payout_amount = remaining
