@@ -29,6 +29,9 @@ export const SOURCE_LABELS: Record<CashbookEntrySource, string> = {
   loan_fee: "Loan fee",
   settlement: "Exit settlement",
   settlement_payout: "Settlement payout",
+  year_close: "Year close",
+  dividend_declaration: "Dividend declaration",
+  dividend_payment: "Dividend payout",
 };
 
 export function todayIso(): string {

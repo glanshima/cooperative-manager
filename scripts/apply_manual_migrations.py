@@ -78,6 +78,7 @@ ORDERED_MIGRATIONS = [
     "manual_migration_2026_11_cooperative_policies.sql",
     "manual_migration_2026_11_savings_ledger.sql",
     "manual_migration_2026_11_cashbook.sql",
+    "manual_migration_2026_11_dividends.sql",
 ]
 
 # Postgres SQLSTATEs meaning "this object already exists" -- treated as
@@ -121,6 +122,18 @@ SERVER_DEFAULT_FIXUPS = [
     ("cashbook_entries", "source", "'manual'"),
     ("cashbook_lines", "debit", "0"),
     ("cashbook_lines", "credit", "0"),
+    ("settings", "fiscal_year_start_month", "1"),
+    ("settings", "dividend_basis", "'none'"),
+    ("settings", "dividend_pool_mode", "'net_income_share'"),
+    ("settings", "dividend_reserve_pct", "4.70"),
+    ("settings", "dividend_honorarium_pct", "3.00"),
+    ("settings", "dividend_payout_pct", "92.30"),
+    ("settings", "dividend_hybrid_savings_pct", "50.00"),
+    ("settings", "dividend_min_membership_months", "0"),
+    ("settings", "dividend_include_exited", "false"),
+    ("settings", "dividend_rounding", "'two_dp'"),
+    ("settings", "dividend_withholding_pct", "0"),
+    ("settings", "dividend_payment_method", "'bank'"),
 ]
 
 

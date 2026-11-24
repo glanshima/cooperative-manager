@@ -787,6 +787,7 @@ def _totals_by_account(
     *,
     start: Optional[date] = None,
     end: Optional[date] = None,
+    exclude_sources: Sequence[models.CashbookEntrySource] = (),
 ) -> Dict[uuid.UUID, AccountTotal]:
     query = (
         db.query(
@@ -801,6 +802,8 @@ def _totals_by_account(
         query = query.filter(models.CashbookEntry.entry_date >= start)
     if end is not None:
         query = query.filter(models.CashbookEntry.entry_date <= end)
+    if exclude_sources:
+        query = query.filter(models.CashbookEntry.source.notin_(exclude_sources))
 
     accounts = {
         account.id: account for account in db.query(models.CashbookAccount).all()
@@ -847,7 +850,15 @@ def trial_balance(db: Session, *, as_of: Optional[date] = None) -> TrialBalance:
 def income_statement(
     db: Session, *, start: Optional[date] = None, end: Optional[date] = None
 ) -> IncomeStatement:
-    totals = _totals_by_account(db, start=start, end=end)
+    # Closing entries move the year's income and expenditure into retained
+    # earnings. They are not income or expense themselves, so the report
+    # excludes them -- a closed year still shows what it earned and spent.
+    totals = _totals_by_account(
+        db,
+        start=start,
+        end=end,
+        exclude_sources=(models.CashbookEntrySource.YEAR_CLOSE,),
+    )
     income: List[MovementRow] = []
     expenses: List[MovementRow] = []
     total_income = ZERO

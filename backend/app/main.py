@@ -23,6 +23,7 @@ from .routers import (
     branding,
     notifications,
     cashbook,
+    dividends,
 )
 
 load_dotenv()
@@ -60,6 +61,7 @@ app.include_router(contribution_changes.router)
 app.include_router(branding.router)
 app.include_router(notifications.router)
 app.include_router(cashbook.router)
+app.include_router(dividends.router)
 
 
 @app.get("/api/health")

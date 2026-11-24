@@ -85,6 +85,10 @@ export function useAdminNav(permissions: string[]) {
     items.push({ kind: "link", href: "/admin/cashbook", label: "Cashbook" });
   }
 
+  if (settings && isModuleEnabled(settings, "dividends") && can("dividend.view")) {
+    items.push({ kind: "link", href: "/admin/dividends", label: "Dividends" });
+  }
+
   const settingsChildren: AdminNavLink[] = [];
   if (can("admin.user_manage")) {
     settingsChildren.push({ href: "/admin/users", label: "Staff / Admin users" });

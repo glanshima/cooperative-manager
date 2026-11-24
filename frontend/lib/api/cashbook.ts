@@ -15,7 +15,10 @@ export type CashbookEntrySource =
   | "loan_repayment"
   | "loan_fee"
   | "settlement"
-  | "settlement_payout";
+  | "settlement_payout"
+  | "year_close"
+  | "dividend_declaration"
+  | "dividend_payment";
 
 export interface CashbookAccount {
   id: string;

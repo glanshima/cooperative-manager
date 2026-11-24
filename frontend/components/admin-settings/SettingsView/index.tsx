@@ -5,6 +5,7 @@ import { hasPermission } from "@/lib/permissions";
 import type { SettingsPageModel } from "../hooks/useSettingsPage";
 import BrandingSection from "../BrandingSection";
 import ContributionSettingsSection from "../ContributionSettingsSection";
+import DividendSettingsSection from "../DividendSettingsSection";
 import LoanApplicationSettingsSection from "../LoanApplicationSettingsSection";
 import LoanDefaultSettingsSection from "../LoanDefaultSettingsSection";
 import ModulesSection from "../ModulesSection";
@@ -55,6 +56,7 @@ export default function SettingsView({
           <LoanApplicationSettingsSection settings={settings} setField={model.setField} />
           <ContributionSettingsSection settings={settings} setField={model.setField} />
           <LoanDefaultSettingsSection settings={settings} setField={model.setField} />
+          <DividendSettingsSection settings={settings} setField={model.setField} />
           <ModulesSection settings={settings} setField={model.setField} />
           <button type="submit">Save settings</button>
         </form>

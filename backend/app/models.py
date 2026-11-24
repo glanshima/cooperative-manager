@@ -1693,6 +1693,51 @@ DEFAULT_COOPERATIVE_SHORT_NAME = "MACT"
 DEFAULT_COOPERATIVE_MONOGRAM = "M"
 
 
+class DividendBasis(str, enum.Enum):
+    """What a member's share of the pool is proportional to.
+
+    ``share_capital`` is part of the agreed policy vocabulary but has no
+    member ledger behind it yet, so a run refuses it instead of guessing.
+    """
+
+    NONE = "none"
+    NET_SAVINGS_CLOSING = "net_savings_closing"
+    NET_SAVINGS_AVERAGE = "net_savings_average"
+    DECLARED_RATE_ON_SAVINGS = "declared_rate_on_savings"
+    SHARE_CAPITAL = "share_capital"
+    PATRONAGE = "patronage"
+    EQUAL = "equal"
+    HYBRID = "hybrid"
+
+
+class DividendPoolMode(str, enum.Enum):
+    NET_INCOME_SHARE = "net_income_share"
+    SAVINGS_PERCENT = "savings_percent"
+    FIXED_AMOUNT = "fixed_amount"
+
+
+class DividendRunStatus(str, enum.Enum):
+    DRAFT = "draft"
+    DECLARED = "declared"
+    PAID = "paid"
+
+
+class DividendRounding(str, enum.Enum):
+    TWO_DP = "two_dp"
+    WHOLE_CURRENCY = "whole_currency"
+
+
+class DividendPayoutMethod(str, enum.Enum):
+    CASH = "cash"
+    BANK = "bank"
+
+
+class DividendPaymentPolicy(str, enum.Enum):
+    BANK = "bank"
+    CASH = "cash"
+    EITHER = "either"
+
+
 class Settings(Base):
     """
     Single-row table of admin-configurable toggles. Read on every relevant
@@ -1723,6 +1768,22 @@ class Settings(Base):
         CheckConstraint(
             "loan_default_grace_days >= 0 AND loan_default_grace_days <= 365",
             name="ck_settings_loan_default_grace_days_range",
+        ),
+        CheckConstraint(
+            "fiscal_year_start_month >= 1 AND fiscal_year_start_month <= 12",
+            name="ck_settings_fiscal_year_start_month",
+        ),
+        CheckConstraint(
+            "dividend_reserve_pct >= 0 AND dividend_reserve_pct <= 100"
+            " AND dividend_honorarium_pct >= 0 AND dividend_honorarium_pct <= 100"
+            " AND dividend_payout_pct >= 0 AND dividend_payout_pct <= 100"
+            " AND dividend_hybrid_savings_pct >= 0 AND dividend_hybrid_savings_pct <= 100"
+            " AND dividend_withholding_pct >= 0 AND dividend_withholding_pct <= 100",
+            name="ck_settings_dividend_pct_ranges",
+        ),
+        CheckConstraint(
+            "dividend_min_membership_months >= 0",
+            name="ck_settings_dividend_min_months",
         ),
     )
 
@@ -1773,6 +1834,53 @@ class Settings(Base):
     # than as a roadmap. Flip them here when the modules land.
     cashbook_module_enabled = Column(Boolean, nullable=False, default=False)
     dividends_module_enabled = Column(Boolean, nullable=False, default=False)
+
+    # Dividend policy. A dividend appropriates surplus that has already
+    # been earned -- reserve, honorarium and payout slices are percentages
+    # of the year's surplus and are expected to add up to 100; the service
+    # enforces that sum, the columns only bound each slice.
+    fiscal_year_start_month = Column(Integer, nullable=False, default=1)
+    dividend_basis = Column(
+        Enum(DividendBasis, name="dividendbasis", values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=DividendBasis.NONE,
+    )
+    dividend_pool_mode = Column(
+        Enum(
+            DividendPoolMode,
+            name="dividendpoolmode",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        default=DividendPoolMode.NET_INCOME_SHARE,
+    )
+    dividend_reserve_pct = Column(Numeric(5, 2), nullable=False, default=Decimal("4.70"))
+    dividend_honorarium_pct = Column(Numeric(5, 2), nullable=False, default=Decimal("3.00"))
+    dividend_payout_pct = Column(Numeric(5, 2), nullable=False, default=Decimal("92.30"))
+    dividend_declared_rate_pct = Column(Numeric(5, 2), nullable=True)
+    dividend_fixed_pool_amount = Column(Numeric(14, 2), nullable=True)
+    dividend_hybrid_savings_pct = Column(Numeric(5, 2), nullable=False, default=Decimal("50.00"))
+    dividend_min_membership_months = Column(Integer, nullable=False, default=0)
+    dividend_include_exited = Column(Boolean, nullable=False, default=False)
+    dividend_rounding = Column(
+        Enum(
+            DividendRounding,
+            name="dividendrounding",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        default=DividendRounding.TWO_DP,
+    )
+    dividend_withholding_pct = Column(Numeric(5, 2), nullable=False, default=0)
+    dividend_payment_method = Column(
+        Enum(
+            DividendPaymentPolicy,
+            name="dividendpaymentpolicy",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        default=DividendPaymentPolicy.BANK,
+    )
 
     # The cooperative's own identity, editable from the Settings screen.
     # Defaults mirror the values the frontend shipped with, so a fresh row
@@ -1976,6 +2084,9 @@ class CashbookEntrySource(str, enum.Enum):
     LOAN_FEE = "loan_fee"
     SETTLEMENT = "settlement"
     SETTLEMENT_PAYOUT = "settlement_payout"
+    YEAR_CLOSE = "year_close"
+    DIVIDEND_DECLARATION = "dividend_declaration"
+    DIVIDEND_PAYMENT = "dividend_payment"
 
 
 class CashbookAccount(Base):
@@ -2091,3 +2202,162 @@ class CashbookPeriodLock(Base):
     locked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     locked_at = Column(DateTime, default=datetime.utcnow)
     note = Column(Text, nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Dividends
+#
+# A declared dividend is an appropriation of surplus already earned, never
+# an expense: the year is closed into retained earnings, then the pool,
+# reserve and honorarium are credited out of it. A run snapshots every
+# policy figure and every member's basis at declaration time, so a later
+# settings change can never rewrite a declared dividend.
+# ---------------------------------------------------------------------------
+
+class DividendRun(Base):
+    __tablename__ = "dividend_runs"
+    __table_args__ = (
+        CheckConstraint("period_start <= period_end", name="ck_dividend_runs_no_self_period"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fiscal_year = Column(Integer, nullable=False, unique=True)
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+    status = Column(
+        Enum(DividendRunStatus, name="dividendrunstatus", values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+        default=DividendRunStatus.DRAFT,
+    )
+    basis = Column(
+        Enum(DividendBasis, name="dividendbasis", values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=False,
+    )
+    pool_mode = Column(
+        Enum(
+            DividendPoolMode,
+            name="dividendpoolmode",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+    )
+
+    surplus = Column(Numeric(14, 2), nullable=False, default=0)
+    reserve_pct = Column(Numeric(5, 2), nullable=False, default=0)
+    reserve_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    honorarium_pct = Column(Numeric(5, 2), nullable=False, default=0)
+    honorarium_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    payout_pct = Column(Numeric(5, 2), nullable=False, default=0)
+    pool_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    declared_rate_pct = Column(Numeric(5, 2), nullable=True)
+    fixed_pool_amount = Column(Numeric(14, 2), nullable=True)
+    hybrid_savings_pct = Column(Numeric(5, 2), nullable=False, default=50)
+    withholding_pct = Column(Numeric(5, 2), nullable=False, default=0)
+    rounding = Column(
+        Enum(
+            DividendRounding,
+            name="dividendrounding",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        default=DividendRounding.TWO_DP,
+    )
+    min_membership_months = Column(Integer, nullable=False, default=0)
+    include_exited = Column(Boolean, nullable=False, default=False)
+
+    closed_income_total = Column(Numeric(14, 2), nullable=False, default=0)
+    closed_expense_total = Column(Numeric(14, 2), nullable=False, default=0)
+    total_basis_amount = Column(Numeric(18, 6), nullable=False, default=0)
+    total_gross = Column(Numeric(14, 2), nullable=False, default=0)
+    total_withholding = Column(Numeric(14, 2), nullable=False, default=0)
+    total_net = Column(Numeric(14, 2), nullable=False, default=0)
+    rounding_residual = Column(Numeric(14, 2), nullable=False, default=0)
+    eligible_member_count = Column(Integer, nullable=False, default=0)
+
+    note = Column(Text, nullable=True)
+    declared_on = Column(Date, nullable=True)
+    declared_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    allocations = relationship(
+        "DividendAllocation",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="DividendAllocation.created_at",
+    )
+    payouts = relationship(
+        "DividendPayout",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="DividendPayout.paid_on",
+    )
+
+
+class DividendPayout(Base):
+    """One payment batch. The cashbook entry is keyed to this row, so the
+    same batch can never leave the bank twice."""
+
+    __tablename__ = "dividend_payouts"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_dividend_payouts_amount_positive"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(
+        UUID(as_uuid=True), ForeignKey("dividend_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    paid_on = Column(Date, nullable=False)
+    method = Column(
+        Enum(
+            DividendPayoutMethod,
+            name="dividendpayoutmethod",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+    )
+    reference = Column(String(64), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    note = Column(Text, nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    run = relationship("DividendRun", back_populates="payouts")
+    allocations = relationship("DividendAllocation", back_populates="payout")
+
+
+class DividendAllocation(Base):
+    __tablename__ = "dividend_allocations"
+    __table_args__ = (
+        UniqueConstraint("run_id", "member_id", name="uq_dividend_allocations_member"),
+        CheckConstraint(
+            "basis_amount >= 0 AND gross_amount >= 0"
+            " AND withholding_amount >= 0 AND net_amount >= 0",
+            name="ck_dividend_allocations_amounts_nonnegative",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(
+        UUID(as_uuid=True), ForeignKey("dividend_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    member_id = Column(
+        UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False
+    )
+    # Money bases store naira; the hybrid basis stores a dimensionless
+    # weighted score, so six decimals rather than two.
+    basis_amount = Column(Numeric(18, 6), nullable=False, default=0)
+    share_ratio = Column(Numeric(18, 12), nullable=False, default=0)
+    gross_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    withholding_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    net_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    rounding_adjustment = Column(Numeric(14, 2), nullable=False, default=0)
+    payout_id = Column(
+        UUID(as_uuid=True), ForeignKey("dividend_payouts.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    run = relationship("DividendRun", back_populates="allocations")
+    member = relationship("Member")
+    payout = relationship("DividendPayout", back_populates="allocations")

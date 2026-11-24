@@ -1,6 +1,7 @@
 import base64
 import logging
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -111,6 +112,42 @@ def update_settings(
                 "Clear it before switching to 'next payroll'."
             ),
         )
+
+    # Dividend policy is checked as a merged whole for the same reason:
+    # the split, the pool mode and its figure are normally set together.
+    split = (
+        Decimal(changes.get("dividend_reserve_pct", settings.dividend_reserve_pct))
+        + Decimal(changes.get("dividend_honorarium_pct", settings.dividend_honorarium_pct))
+        + Decimal(changes.get("dividend_payout_pct", settings.dividend_payout_pct))
+    )
+    if abs(split - Decimal("100")) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=400,
+            detail="Reserve, honorarium and dividend payout percentages must add up to 100.",
+        )
+
+    merged_basis = changes.get("dividend_basis", settings.dividend_basis)
+    if merged_basis == models.DividendBasis.SHARE_CAPITAL:
+        raise HTTPException(
+            status_code=400,
+            detail="Share capital has no member ledger yet, so it cannot be the dividend basis.",
+        )
+
+    merged_pool_mode = changes.get("dividend_pool_mode", settings.dividend_pool_mode)
+    if merged_pool_mode == models.DividendPoolMode.SAVINGS_PERCENT:
+        rate = changes.get("dividend_declared_rate_pct", settings.dividend_declared_rate_pct)
+        if rate is None:
+            raise HTTPException(
+                status_code=400,
+                detail="A declared rate is required when the pool is a percentage of savings.",
+            )
+    if merged_pool_mode == models.DividendPoolMode.FIXED_AMOUNT:
+        amount = changes.get("dividend_fixed_pool_amount", settings.dividend_fixed_pool_amount)
+        if amount is None:
+            raise HTTPException(
+                status_code=400,
+                detail="A fixed amount is required when the pool is a set figure.",
+            )
 
     previous = {field: getattr(settings, field) for field in changes}
     for field, value in changes.items():

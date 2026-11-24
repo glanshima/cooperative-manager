@@ -26,6 +26,12 @@ from .models import (
     SettlementPaymentMethod,
     CashbookAccountKind,
     CashbookEntrySource,
+    DividendBasis,
+    DividendPoolMode,
+    DividendRunStatus,
+    DividendRounding,
+    DividendPayoutMethod,
+    DividendPaymentPolicy,
 )
 from . import validation
 
@@ -1392,6 +1398,20 @@ class SettingsOut(BaseModel):
     deductions_module_enabled: bool
     cashbook_module_enabled: bool
     dividends_module_enabled: bool
+    fiscal_year_start_month: int
+    dividend_basis: DividendBasis
+    dividend_pool_mode: DividendPoolMode
+    dividend_reserve_pct: Decimal
+    dividend_honorarium_pct: Decimal
+    dividend_payout_pct: Decimal
+    dividend_declared_rate_pct: Optional[Decimal] = None
+    dividend_fixed_pool_amount: Optional[Decimal] = None
+    dividend_hybrid_savings_pct: Decimal
+    dividend_min_membership_months: int
+    dividend_include_exited: bool
+    dividend_rounding: DividendRounding
+    dividend_withholding_pct: Decimal
+    dividend_payment_method: DividendPaymentPolicy
     cooperative_name: str
     cooperative_short_name: str
     cooperative_monogram: str
@@ -1413,6 +1433,20 @@ class SettingsUpdate(BaseModel):
     deductions_module_enabled: Optional[bool] = None
     cashbook_module_enabled: Optional[bool] = None
     dividends_module_enabled: Optional[bool] = None
+    fiscal_year_start_month: Optional[int] = Field(default=None, ge=1, le=12)
+    dividend_basis: Optional[DividendBasis] = None
+    dividend_pool_mode: Optional[DividendPoolMode] = None
+    dividend_reserve_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    dividend_honorarium_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    dividend_payout_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    dividend_declared_rate_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    dividend_fixed_pool_amount: Optional[Decimal] = Field(default=None, ge=0)
+    dividend_hybrid_savings_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    dividend_min_membership_months: Optional[int] = Field(default=None, ge=0)
+    dividend_include_exited: Optional[bool] = None
+    dividend_rounding: Optional[DividendRounding] = None
+    dividend_withholding_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    dividend_payment_method: Optional[DividendPaymentPolicy] = None
     cooperative_name: Optional[str] = Field(default=None, max_length=120)
     cooperative_short_name: Optional[str] = Field(default=None, max_length=32)
     cooperative_monogram: Optional[str] = Field(default=None, max_length=8)
@@ -1704,3 +1738,151 @@ class CashbookOverviewOut(BaseModel):
     bank_balance: Decimal
     current_month_locked: bool
     locked_periods: List[date] = []
+
+
+# ---------------------------------------------------------------------------
+# Dividends
+# ---------------------------------------------------------------------------
+
+class DividendRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    fiscal_year: int
+    period_start: date
+    period_end: date
+    status: DividendRunStatus
+    basis: DividendBasis
+    pool_mode: DividendPoolMode
+    surplus: Decimal
+    reserve_pct: Decimal
+    reserve_amount: Decimal
+    honorarium_pct: Decimal
+    honorarium_amount: Decimal
+    payout_pct: Decimal
+    pool_amount: Decimal
+    declared_rate_pct: Optional[Decimal] = None
+    fixed_pool_amount: Optional[Decimal] = None
+    hybrid_savings_pct: Decimal
+    withholding_pct: Decimal
+    rounding: DividendRounding
+    min_membership_months: int
+    include_exited: bool
+    closed_income_total: Decimal
+    closed_expense_total: Decimal
+    total_basis_amount: Decimal
+    total_gross: Decimal
+    total_withholding: Decimal
+    total_net: Decimal
+    rounding_residual: Decimal
+    eligible_member_count: int
+    note: Optional[str] = None
+    declared_on: Optional[date] = None
+    declared_by_user_id: Optional[uuid.UUID] = None
+    created_at: Optional[datetime] = None
+
+
+class DividendAllocationOut(BaseModel):
+    id: uuid.UUID
+    member_id: uuid.UUID
+    psn: str
+    name: str
+    bank_name: Optional[str] = None
+    account_number: Optional[str] = None
+    basis_amount: Decimal
+    share_ratio: Decimal
+    gross_amount: Decimal
+    withholding_amount: Decimal
+    net_amount: Decimal
+    rounding_adjustment: Decimal
+    payout_id: Optional[uuid.UUID] = None
+
+
+class DividendAllocationPageOut(BaseModel):
+    items: List[DividendAllocationOut]
+    total: int
+    skip: int
+    limit: int
+
+
+class DividendPayoutOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    paid_on: date
+    method: DividendPayoutMethod
+    reference: str
+    amount: Decimal
+    note: Optional[str] = None
+    created_by_user_id: Optional[uuid.UUID] = None
+    created_at: Optional[datetime] = None
+
+
+class DividendRunDetailOut(BaseModel):
+    run: DividendRunOut
+    payouts: List[DividendPayoutOut]
+    paid_allocations: int
+    pending_allocations: int
+
+
+class DividendRunCreate(BaseModel):
+    fiscal_year: int = Field(ge=2000, le=2100)
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class DividendRunUpdate(BaseModel):
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class DividendDeclareRequest(BaseModel):
+    declared_on: Optional[date] = None
+
+
+class DividendPayoutRequest(BaseModel):
+    paid_on: Optional[date] = None
+    method: DividendPayoutMethod
+    reference: str = Field(min_length=1, max_length=64)
+    note: Optional[str] = Field(default=None, max_length=1000)
+    allocation_ids: Optional[List[uuid.UUID]] = None
+
+
+class DividendManifestRowOut(BaseModel):
+    psn: str
+    name: str
+    bank_name: Optional[str] = None
+    account_number: Optional[str] = None
+    gross_amount: Decimal
+    withholding_amount: Decimal
+    net_amount: Decimal
+    payout_id: Optional[uuid.UUID] = None
+
+
+class DividendManifestOut(BaseModel):
+    fiscal_year: int
+    reference: str
+    rows: List[DividendManifestRowOut]
+    total_gross: Decimal
+    total_withholding: Decimal
+    total_net: Decimal
+
+
+class DividendSummaryOut(BaseModel):
+    fiscal_year_start_month: int
+    basis: DividendBasis
+    pool_mode: DividendPoolMode
+    reserve_pct: Decimal
+    honorarium_pct: Decimal
+    payout_pct: Decimal
+    declared_rate_pct: Optional[Decimal] = None
+    fixed_pool_amount: Optional[Decimal] = None
+    hybrid_savings_pct: Decimal
+    min_membership_months: int
+    include_exited: bool
+    rounding: DividendRounding
+    withholding_pct: Decimal
+    payment_method: DividendPaymentPolicy
+    cashbook_module_enabled: bool
+    cashbook_open: bool
+    last_declared_year: Optional[int] = None
+    suggested_fiscal_year: int

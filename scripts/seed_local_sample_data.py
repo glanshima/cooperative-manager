@@ -8,7 +8,9 @@ Next-of-Kin conflict check, and 26 login-less members owing a
 contribution so the payroll deduction Enter queue runs past one page,
 plus one login-less member whose loan is behind schedule so the queue
 pre-fills an arrears catch-up line, and one exited member with savings and
-an open loan so the exit-settlement flow can be run by hand.
+an open loan so the exit-settlement flow can be run by hand, plus a closed
+2025 fiscal year (interest income and three members' savings balances) so
+the dividends declare-and-pay flow can be run by hand.
 
 THIS SCRIPT IS LOCAL-ONLY. It refuses to run unless DATABASE_URL points
 at the sandbox Postgres (127.0.0.1:55432, see scripts/local_db.py).
@@ -26,7 +28,7 @@ The same command works after starting the sandbox with:
 """
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from urllib.parse import urlparse
 
@@ -72,6 +74,10 @@ from app.auth import hash_password  # noqa: E402
 from app.loan_calc import compute_expected_end_date  # noqa: E402
 from app.models import (  # noqa: E402
     AccountStatus,
+    CashbookAccount,
+    CashbookEntry,
+    CashbookEntrySource,
+    CashbookLine,
     Gender,
     Loan,
     LoanStatus,
@@ -141,6 +147,28 @@ SETTLEMENT_FIXTURE_PSN = "QLEXIT"
 SETTLEMENT_FIXTURE_SAVINGS = Decimal("12000.00")
 SETTLEMENT_FIXTURE_LOAN = Decimal("8000.00")
 SETTLEMENT_FIXTURE_EXIT_DATE = date(2026, 10, 31)
+
+# Fixture for the dividends flow. A dividend is only declared after its
+# fiscal year has ended, and everything else in the sandbox is dated 2026,
+# so the 2025 year gets a closed, positive result here: interest income on
+# the books and three members with 2025 savings balances (50 / 33.33 /
+# 16.67% of the pool). That is what lets drafting, declaring and paying the
+# 2025 run be exercised by hand without hand-entered rows. MCT-0002 and
+# MCT-0005 also hold 2026 contributions, so their 2025 closing balances
+# differ from what the members page shows today -- that is the point of a
+# year-end cutoff.
+DIVIDEND_FIXTURE_INCOME = Decimal("240000.00")
+DIVIDEND_FIXTURE_INCOME_DATE = date(2025, 12, 20)
+DIVIDEND_FIXTURE_INCOME_NARRATION = "Sample: interest income for the 2025 fiscal year"
+DIVIDEND_FIXTURE_SAVINGS_NOTE = "Sample: 2025 savings balance for the dividend fixture"
+# Eligibility treats members.created_at as the join date, so the fixture
+# members have to have existed before the 2025 year end.
+DIVIDEND_FIXTURE_JOINED = datetime(2025, 1, 10, 9, 0)
+DIVIDEND_FIXTURE_SAVINGS = [
+    ("MCT-0002", Decimal("36000.00"), datetime(2025, 3, 31, 12, 0)),
+    ("MCT-0004", Decimal("24000.00"), datetime(2025, 6, 30, 12, 0)),
+    ("MCT-0005", Decimal("12000.00"), datetime(2025, 9, 30, 12, 0)),
+]
 
 SAMPLE_MEMBERS = [
     # (psn, name, gender, department, phone, email, status, bank, account_no,
@@ -479,6 +507,72 @@ def seed_settlement_fixture(session):
         print(f"Settlement fixture: {SETTLEMENT_FIXTURE_SAVINGS} of savings on the ledger.")
 
 
+def seed_dividend_fixture(session):
+    """A closed 2025 fiscal year with a surplus and savings to share it.
+
+    Declaring is left for the officer to run in the UI, as with the
+    settlement fixture: seeding the declaration would skip the year
+    close, the surplus split and the payout this fixture exists to show.
+    Posting the opening balances in the cashbook is still a manual, one-off
+    step (declare refuses until they exist)."""
+    progressed = []
+    for psn, amount, posted_at in DIVIDEND_FIXTURE_SAVINGS:
+        member = session.execute(select(Member).where(Member.psn == psn)).scalar_one()
+        member.created_at = DIVIDEND_FIXTURE_JOINED
+        existing = session.execute(
+            select(SavingsEntry).where(
+                SavingsEntry.member_id == member.id,
+                SavingsEntry.note == DIVIDEND_FIXTURE_SAVINGS_NOTE,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            progressed.append(f"{psn} already on the ledger")
+            continue
+        session.add(SavingsEntry(
+            member_id=member.id,
+            entry_type=SavingsEntryType.CONTRIBUTION,
+            amount=amount,
+            posted_at=posted_at,
+            note=DIVIDEND_FIXTURE_SAVINGS_NOTE,
+        ))
+        progressed.append(f"{psn} {amount} posted {posted_at.date()}")
+    print("Dividend fixture savings: " + "; ".join(progressed) + ".")
+
+    existing_entry = session.execute(
+        select(CashbookEntry).where(
+            CashbookEntry.source == CashbookEntrySource.MANUAL,
+            CashbookEntry.narration == DIVIDEND_FIXTURE_INCOME_NARRATION,
+        )
+    ).scalar_one_or_none()
+    if existing_entry is not None:
+        print("Dividend fixture: 2025 interest income already on the books.")
+        return
+
+    bank = session.execute(
+        select(CashbookAccount).where(CashbookAccount.code == "1010")
+    ).scalar_one()
+    interest_income = session.execute(
+        select(CashbookAccount).where(CashbookAccount.code == "4000")
+    ).scalar_one()
+    entry = CashbookEntry(
+        entry_date=DIVIDEND_FIXTURE_INCOME_DATE,
+        narration=DIVIDEND_FIXTURE_INCOME_NARRATION,
+        reference="DIV-FIXTURE",
+        source=CashbookEntrySource.MANUAL,
+    )
+    entry.lines = [
+        CashbookLine(account_id=bank.id, debit=DIVIDEND_FIXTURE_INCOME, credit=Decimal("0.00")),
+        CashbookLine(
+            account_id=interest_income.id, debit=Decimal("0.00"), credit=DIVIDEND_FIXTURE_INCOME
+        ),
+    ]
+    session.add(entry)
+    print(
+        f"Dividend fixture: {DIVIDEND_FIXTURE_INCOME} interest income posted "
+        f"{DIVIDEND_FIXTURE_INCOME_DATE}."
+    )
+
+
 def seed_loan_types(session):
     created = 0
     for name, description, rate, tenure, flat, open_for_app in SAMPLE_LOAN_TYPES:
@@ -534,6 +628,7 @@ def main():
         seed_queue_paging_fixture(session)
         seed_arrears_fixture(session)
         seed_settlement_fixture(session)
+        seed_dividend_fixture(session)
 
         m1 = session.execute(select(Member).where(Member.psn == "MCT-0001")).scalar_one()
         m3 = session.execute(select(Member).where(Member.psn == "MCT-0003")).scalar_one()

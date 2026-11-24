@@ -42,7 +42,9 @@ from app.auth import hash_password, create_access_token  # noqa: E402
 from app.permissions_catalogue import PERMISSION_CATALOGUE  # noqa: E402
 
 engine = create_engine(os.environ["DATABASE_URL"])
-TestSessionLocal = sessionmaker(bind=engine)
+# Mirror app.database.SessionLocal: with autoflush on, queries inside a
+# service see unflushed changes and hide bugs the real app would hit.
+TestSessionLocal = sessionmaker(bind=engine, autoflush=False)
 
 
 @pytest.fixture(scope="session", autouse=True)
