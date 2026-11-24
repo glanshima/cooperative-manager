@@ -1015,3 +1015,51 @@ Feedback uses the shared `StatusMessage`: errors are `role="alert"`, successes `
 - Verification: `/api/health` 200, `/api/branding` 200, `/api/cashbook/accounts` and `/api/cashbook/overview` 401 (auth-gated, no schema error), `https://koperra.sidgakstech.me/login` 200. Row-level checks of the seeded accounts are not available to the agent; the runner's applied count is the evidence.
 - The five `accounting.*` codes and both report codes already existed in the catalogue; this change adds `accounting.adjust` and `accounting.reverse` to the Treasurer's default set. The seeder never rewrites an existing role, so check `/admin/roles` after deploy and grant the Treasurer whichever accounting codes are missing (`adjust` and `reverse` are the new ones). The Auditor already has `accounting.view` and `report.accounting`.
 - The cashbook module remains **off** by default. Turn it on in Settings only after the officer is ready to post the opening balances; automatic postings stay no-ops until that opening journal exists.
+
+---
+
+## 31. Dividends: appropriating a closed year's surplus (2026-11-24)
+
+Step 4 of the accounting rebuild. Dividends are a distribution of surplus that has already been earned, so they are modelled as an appropriation of retained earnings, not as an expense, and every movement goes through the double-entry cashbook built in step 3.
+
+### 31.1 Lifecycle and postings
+
+Runs move **draft → declared → paid**, and the figures that make up a declaration are snapshotted on the run so a later settings change cannot rewrite it.
+
+- **Draft** — computes the year's surplus from ledger postings dated on or before the year end, applies the policy split, and writes one allocation per eligible member (basis, share, gross, withholding, net, rounding adjustment). A draft can be recomputed against current settings, deleted, or re-noted; it posts nothing.
+- **Declare** — one step, two postings. First it closes the year at `period_end` (income to retained earnings, expenses out of it). Then at the declaration date it appropriates the pool: Dr retained earnings (3000), Cr reserve (3010), honorarium payable (2040) and dividends payable (2030). The split must add up to 100%.
+- **Payout** — one batch (cash or bank) for all pending allocations or a selected subset: Dr dividends payable (2030), Cr bank (1010) or cash (1000), with any withholding credited to withholding tax payable (2050). The batch row is what the cashbook entry is keyed to, and the run flips to paid once nothing is left outstanding.
+
+Guards: a declared run cannot be recomputed or deleted; declaring requires the cashbook to be open (module enabled and the opening journal posted) and a declaration date between the year end and today; the UI keeps **Declare** disabled, with an explanation, until the fiscal year has ended. The income statement now excludes `year_close` entries, so a closed year still reports what it earned and spent instead of showing zero.
+
+### 31.2 Policy and eligibility
+
+The policy lives in settings, not in code: fiscal year start month (January), basis, pool mode and figure, reserve/honorarium/payout split, rounding, withholding percentage, payment method, minimum membership months and the exited-member toggle. `share_capital` is accepted as vocabulary but refused (no member ledger behind it yet); `savings_percent` requires a declared rate; `fixed_amount` requires an amount.
+
+Eligibility is members who were financial at the year end, have a nonzero basis, and had not exited on or before the cutoff — unless `dividend_include_exited` is on. Membership length is measured from `members.created_at`, minus `dividend_min_membership_months`. Rounding is applied per member and the residual is carried on the allocations so they add up to the pool exactly.
+
+### 31.3 API and UI
+
+| Endpoints | Permission |
+|---|---|
+| `GET /api/dividends/summary`, `/runs`, `/runs/{id}`, `/runs/{id}/allocations`, `/runs/{id}/manifest` | `dividend.view` |
+| `POST /api/dividends/runs`, `/runs/{id}/recompute`, `/runs/{id}/declare`, `DELETE /api/dividends/runs/{id}` | `dividend.declare` |
+| `POST /api/dividends/runs/{id}/payouts` | `dividend.pay` |
+
+The admin page at `/admin/dividends` lists runs, shows the current policy, and drives draft → declare → payout with a payout manifest (PSN, name, bank details, gross/withholding/net) for the office to pay from. Settings gains a Dividends section with the same fields, validated server-side as a merged whole.
+
+### 31.4 Verification
+
+- Backend: `tests/test_dividends.py` — **29 passed** against the sandbox `mact_test` (pool modes and rounding, refusal of share capital, eligibility/exited/min-months, declare postings and guards, payout batches and subsets, manifest, permissions). Full backend suite **466 passed**.
+- The test session now mirrors `SessionLocal(..., autoflush=False)`; with it, the payout tests fail if the `payout_id` assignments are not flushed before the "remaining to pay" count (verified by temporarily removing the `db.flush()` — 2 failures — then restoring it). The previous autoflush-on fixture had masked exactly that bug: a fully-paid run stayed `declared`.
+- Frontend: `npx tsc --noEmit` clean; full Vitest suite **298 passed** across 46 files; `npm run build` succeeded and emits `/admin/dividends`.
+- Local walkthrough (localhost, sandbox seed with a closed 2025 year): draft showed surplus ₦240,000, reserve ₦11,280, honorarium ₦7,200, pool ₦221,520 over 3 eligible members (the exited member was excluded); declare closed the year and posted the appropriation; payout `DIV-2025-001` ₦221,520 cleared all allocations and flipped the run to paid; the year-close, declaration and payment entries were each checked for balance in SQL.
+
+### 31.5 Deploy (2026-11-24)
+
+- Code: `b7b2537` (dividends) and `b196bd5` (deterministic settlement allocation order — same-millisecond `created_at` ties made "oldest loan first" a coin toss) pushed to `main`. Backend alias began serving `/api/dividends/*` within the first poll; `/admin/dividends` is live on the frontend.
+- Restore point: owner-created Neon branch from `production` (`br-rough-flower-aycl78im`) immediately before the migration. An earlier attempt mistakenly targeted a branch endpoint (`ep-lively-fog-…`, a copy) rather than production; production was untouched by it, and that branch is not a valid pre-migration snapshot — the fresh branch was taken from `production` before the successful run.
+- Migration: `scripts/manual_migration_2026_11_dividends.sql` applied to `production` with `apply_manual_migrations.py --allow-remote` — target label `[REMOTE (ep-rapid-feather-ay5ak2pz-pooler.c-5.us-east-2.aws.neon.tech)]`, **24 file(s) applied, 1 already applied**, including the three dividend tables, the settings columns, the three payables and `RESERVE` as a system account. Rollback: `scripts/rollback_2026_11_dividends.sql` (drops the tables, settings columns and the three payable accounts; only safe before anything has posted).
+- Verification: `/api/health` 200, `/api/branding` 200, `/api/dividends/summary` **401** (route deployed, auth-gated, no schema error), `https://koperra.sidgakstech.me/login` 200 and `/admin/dividends` 200.
+- Permissions: adds `dividend.view`, `dividend.declare`, `dividend.pay`, included in the Treasurer defaults (declare/pay) and view-only for Secretary and Auditor. The seeder never rewrites an existing role, so confirm on `/admin/roles` that the Treasurer has all three and Secretary/Auditor have `dividend.view`.
+- The dividends module remains **off** by default. Enabling it is not enough to declare: the cashbook must also be open, and the year being declared must have ended.
