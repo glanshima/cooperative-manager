@@ -1102,4 +1102,6 @@ The three parameterised destinations read their preset from the query string aft
 
 ### 32.4 Status
 
-Not committed or deployed. It adds no migration; the dashboard is read-only and the only schema-adjacent change is the members list filter. Modules that are off stay absent from the screen, so enabling cashbook/dividends is what makes those sections appear.
+Committed as `1b3851f`, pushed to `main`; both Vercel builds (`cooperative-manager`, `cooperative-manager-boi2`) reported success and the frontend serves the new build (`/login`, `/admin/dashboard` 200 on both aliases). The backend alias was already returning 500 `FUNCTION_INVOCATION_FAILED` on every route — including unknown paths and `/api/health` — before this commit, with no backend deploy since 2026-11-24T10:44Z, so it is unrelated to the dashboard. Diagnosis so far: the function dies before reaching the database (Neon compute stays idle on every failed request), while the same Neon credentials and endpoint connect successfully from outside (verified with a bare connect at 2026-11-25T14:59Z, which woke the compute). The remaining suspects are Vercel-side: a missing/stale `DATABASE_URL` or `SECRET_KEY` in the backend project's Production environment, or a runtime import failure — both only visible in the project's Runtime Logs.
+
+It adds no migration; the dashboard is read-only and the only schema-adjacent change is the members list filter. Modules that are off stay absent from the screen, so enabling cashbook/dividends is what makes those sections appear.
