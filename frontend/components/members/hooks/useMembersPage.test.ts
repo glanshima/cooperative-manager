@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createMember,
@@ -479,5 +479,51 @@ describe("useMembersPage contribution policy", () => {
     act(() => rendered.result.current.form.openCreate());
 
     expect(rendered.result.current.form.values.monthly_contribution_amount).toBe(5000);
+  });
+});
+
+describe("useMembersPage settlement preset", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listMock.mockResolvedValue({
+      items: [activeMember],
+      total: 1,
+      skip: 0,
+      limit: 25,
+    } as MemberListResult);
+    filterMock.mockResolvedValue({ banks: [], departments: [] });
+    contribListMock.mockResolvedValue([]);
+    window.history.replaceState(null, "", "/");
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("loads only pending exit settlements when the dashboard links here", async () => {
+    window.history.replaceState(null, "", "/members?settlement=pending");
+    const { result } = await renderLoadedHook();
+
+    expect(listMock).toHaveBeenCalledWith(
+      expect.objectContaining({ settlement: "pending" })
+    );
+    expect(result.current.filters.hasActive).toBe(true);
+    expect(result.current.filters.descriptions).toContain(
+      "Exit settlement: awaiting payout"
+    );
+  });
+
+  it("drops the preset when filters are cleared", async () => {
+    window.history.replaceState(null, "", "/members?settlement=pending");
+    const { result } = await renderLoadedHook();
+
+    act(() => result.current.filters.onClear());
+
+    await waitFor(() =>
+      expect(listMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ settlement: undefined })
+      )
+    );
+    expect(result.current.filters.hasActive).toBe(false);
   });
 });

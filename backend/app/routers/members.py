@@ -209,6 +209,10 @@ def list_members(
     bank_name: Optional[str] = Query(None, description="Exact match against Member.bank_name"),
     department: Optional[str] = Query(None, description="Exact match against Member.department"),
     status: Optional[models.MemberStatus] = None,
+    settlement: Optional[models.SettlementPayoutStatus] = Query(
+        default=None,
+        description="Only members whose exit settlement has this payout status",
+    ),
     skip: int = 0,
     limit: int = 100,
     current_user: models.User = Depends(require_permission("member.view")),
@@ -286,6 +290,18 @@ def list_members(
 
     if status:
         query = query.filter(models.Member.status == status)
+
+    if settlement:
+        # A settlement is the exit record the dashboard counts; matching on
+        # that record's payout state also keeps the list count equal to the
+        # queue's count on the dashboard.
+        query = query.filter(
+            models.Member.id.in_(
+                db.query(models.MemberSettlement.member_id).filter(
+                    models.MemberSettlement.payout_status == settlement
+                )
+            )
+        )
 
     total = query.count()
     members = query.order_by(models.Member.name).offset(skip).limit(limit).all()

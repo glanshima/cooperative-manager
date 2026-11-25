@@ -13,3 +13,4 @@ export * from "./settings";
 export * from "./branding";
 export * from "./notifications";
 export * from "./admin";
+export * from "./dashboard";

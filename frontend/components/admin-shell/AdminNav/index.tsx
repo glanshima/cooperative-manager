@@ -101,7 +101,18 @@ export default function AdminNav() {
             aria-label={drawerOpen ? "Close admin navigation" : "Open admin navigation"}
             onClick={() => setDrawerOpen((current) => !current)}
           >
-            Menu
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              width="20"
+              height="20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
           </button>
         </div>
       </header>

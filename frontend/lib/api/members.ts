@@ -130,6 +130,7 @@ export interface MemberListParams {
   bank_name?: string;
   department?: string;
   status?: MemberStatus;
+  settlement?: SettlementPayoutStatus;
   skip?: number;
   limit?: number;
 }
@@ -141,6 +142,7 @@ export async function listMembers(params: MemberListParams = {}): Promise<Member
       bank_name: params.bank_name || undefined,
       department: params.department || undefined,
       status: params.status || undefined,
+      settlement: params.settlement || undefined,
       skip: params.skip !== undefined ? String(params.skip) : undefined,
       limit: params.limit !== undefined ? String(params.limit) : undefined,
     },

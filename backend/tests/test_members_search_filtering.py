@@ -224,3 +224,54 @@ def test_filter_options_requires_member_view_permission(client, db_session, seed
     admin = make_admin_user(db_session, username="msf_admin_no_perm")
     res = client.get("/api/members/filter-options", headers=auth_headers(admin))
     assert res.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# The dashboard's settlement queue links here (exit payout state)
+# ---------------------------------------------------------------------------
+
+def test_settlement_filter_returns_only_members_with_that_payout_status(
+    client, db_session, seed_permissions
+):
+    from datetime import date
+    from decimal import Decimal
+
+    from app import models
+
+    pending = make_member(db_session, psn="MSF-030", email="msf30@example.com")
+    paid = make_member(db_session, psn="MSF-031", email="msf31@example.com")
+    unrelated = make_member(db_session, psn="MSF-032", email="msf32@example.com")
+    for member, payout_status in (
+        (pending, models.SettlementPayoutStatus.PENDING),
+        (paid, models.SettlementPayoutStatus.PAID),
+    ):
+        db_session.add(
+            models.MemberSettlement(
+                member_id=member.id,
+                settled_on=date(2026, 10, 1),
+                savings_balance=Decimal("500.00"),
+                offset_total=Decimal("0.00"),
+                payout_amount=Decimal("500.00"),
+                payout_status=payout_status,
+            )
+        )
+    db_session.commit()
+    admin = _viewer(db_session, "msf_admin_settlement")
+
+    res = client.get(
+        "/api/members", params={"settlement": "pending"}, headers=auth_headers(admin)
+    )
+    body = res.json()
+
+    assert res.status_code == 200
+    assert body["total"] == 1
+    assert body["items"][0]["psn"] == pending.psn
+    assert unrelated.psn not in {item["psn"] for item in body["items"]}
+
+
+def test_settlement_filter_rejects_unknown_state(client, db_session, seed_permissions):
+    admin = _viewer(db_session, "msf_admin_settlement_bad")
+    res = client.get(
+        "/api/members", params={"settlement": "someday"}, headers=auth_headers(admin)
+    )
+    assert res.status_code == 422

@@ -6,12 +6,12 @@ import PageSkeleton from "@/components/ui/PageSkeleton";
 import { useAuth } from "@/lib/useAuth";
 
 export default function AdminDashboard() {
-  const { user, loading: authLoading, logout } = useAuth({
+  const { user, loading: authLoading } = useAuth({
     requireAuth: true,
     requirePasswordChanged: true,
     requireRole: "admin",
   });
-  const model = useAdminDashboardPage(authLoading, user, logout);
+  const model = useAdminDashboardPage(authLoading, user);
 
   if (authLoading || model.loading) return <PageSkeleton />;
 

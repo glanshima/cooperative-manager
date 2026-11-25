@@ -14,12 +14,15 @@ export function useLoanRepaymentsPage(authLoading: boolean, logout: () => void) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  // The dashboard's verification queue links here; "all" is the history.
+  const [awaitingOnly, setAwaitingOnly] = useState(false);
+  const [filterReady, setFilterReady] = useState(false);
 
   async function refresh() {
     setLoading(true);
     setError(null);
     try {
-      setRepayments(await listAllRepayments());
+      setRepayments(await listAllRepayments(awaitingOnly ? "awaiting_verification" : undefined));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -28,9 +31,17 @@ export function useLoanRepaymentsPage(authLoading: boolean, logout: () => void) 
   }
 
   useEffect(() => {
-    if (!authLoading) refresh();
+    // The query string is only readable in the browser, so the first fetch
+    // waits for it rather than loading the history first.
+    const requested = new URLSearchParams(window.location.search).get("status");
+    setAwaitingOnly(requested === "awaiting_verification");
+    setFilterReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!authLoading && filterReady) refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading]);
+  }, [authLoading, filterReady, awaitingOnly]);
 
   async function handleExpand(id: string) {
     setError(null);
@@ -58,6 +69,10 @@ export function useLoanRepaymentsPage(authLoading: boolean, logout: () => void) 
     auth: { logout },
     feedback: { error },
     loading,
+    filter: {
+      awaitingOnly,
+      clear: () => setAwaitingOnly(false),
+    },
     table: { items: repayments, onReview: handleExpand },
     review: {
       repayment: expanded,

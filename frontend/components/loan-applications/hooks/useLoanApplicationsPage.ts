@@ -10,11 +10,23 @@ import {
   LoanApplicationWithReceipt,
 } from "@/lib/api";
 
+export type ApplicationQueueFilter = "review" | "payment" | null;
+
+function readQueueFilter(): ApplicationQueueFilter {
+  if (typeof window === "undefined") return null;
+  const requested = new URLSearchParams(window.location.search).get("queue");
+  return requested === "review" || requested === "payment" ? requested : null;
+}
+
 export function useLoanApplicationsPage(authLoading: boolean, logout: () => void) {
   const [applications, setApplications] = useState<LoanApplication[]>([]);
   const [expanded, setExpanded] = useState<LoanApplicationWithReceipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The dashboard's queues link here with the queue they count, so the page
+  // opens on exactly those rows instead of the whole application history.
+  const [queueFilter, setQueueFilter] = useState<ApplicationQueueFilter>(null);
+  const [filterReady, setFilterReady] = useState(false);
 
   const [approvedAmount, setApprovedAmount] = useState("");
   const [approvedTenureMonths, setApprovedTenureMonths] = useState("");
@@ -27,7 +39,15 @@ export function useLoanApplicationsPage(authLoading: boolean, logout: () => void
     setLoading(true);
     setError(null);
     try {
-      setApplications(await listLoanApplications());
+      setApplications(
+        await listLoanApplications(
+          queueFilter === "review"
+            ? { status: "pending", payment_status: "verified" }
+            : queueFilter === "payment"
+              ? { payment_status: "awaiting_verification" }
+              : undefined
+        )
+      );
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -36,9 +56,17 @@ export function useLoanApplicationsPage(authLoading: boolean, logout: () => void
   }
 
   useEffect(() => {
-    if (!authLoading) refresh();
+    // The query string is only readable in the browser, so the first fetch
+    // waits for it; otherwise the whole history would flash before the
+    // filtered set replaces it.
+    setQueueFilter(readQueueFilter());
+    setFilterReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!authLoading && filterReady) refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading]);
+  }, [authLoading, filterReady, queueFilter]);
 
   async function handleExpand(id: string) {
     setError(null);
@@ -106,6 +134,10 @@ export function useLoanApplicationsPage(authLoading: boolean, logout: () => void
     auth: { logout },
     feedback: { error },
     loading,
+    filter: {
+      current: queueFilter,
+      clear: () => setQueueFilter(null),
+    },
     table: {
       items: applications,
       onReview: handleExpand,

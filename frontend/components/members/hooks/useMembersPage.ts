@@ -6,6 +6,7 @@ import {
   MemberInput,
   MemberFilterOptions,
   MemberStatus,
+  SettlementPayoutStatus,
   listMembers,
   getMemberFilterOptions,
   createMember,
@@ -78,6 +79,10 @@ export function useMembersPage(
   const [bankFilter, setBankFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<MemberStatus | "">("");
+  // The dashboard's settlement queue links here; the member list then holds
+  // only people whose exit payout is still pending.
+  const [settlementFilter, setSettlementFilter] = useState<SettlementPayoutStatus | "">("");
+  const [settlementReady, setSettlementReady] = useState(false);
   const [filterOptions, setFilterOptions] = useState<MemberFilterOptions>({
     banks: [],
     departments: [],
@@ -147,6 +152,7 @@ export function useMembersPage(
         bank_name: bankFilter || undefined,
         department: departmentFilter || undefined,
         status: statusFilter || undefined,
+        settlement: settlementFilter || undefined,
         skip: effectiveSkip,
         limit: PAGE_SIZE,
       });
@@ -166,13 +172,21 @@ export function useMembersPage(
     }
   }
 
+  useEffect(() => {
+    // The query string is only readable in the browser, so the first list
+    // load waits for it instead of showing every member first.
+    const requested = new URLSearchParams(window.location.search).get("settlement");
+    setSettlementFilter(requested === "pending" || requested === "paid" ? requested : "");
+    setSettlementReady(true);
+  }, []);
+
   // Any filter change resets to page 1 and refetches immediately. Search
   // is deliberately NOT a dependency (it refetches only on Enter/Search/
   // Clear) so typing doesn't trigger this effect on every keystroke.
   useEffect(() => {
-    if (!authLoading) refresh({ skip: 0 });
+    if (!authLoading && settlementReady) refresh({ skip: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, bankFilter, departmentFilter, statusFilter]);
+  }, [authLoading, settlementReady, bankFilter, departmentFilter, statusFilter, settlementFilter]);
 
   useEffect(() => {
     if (!authLoading) {
@@ -214,6 +228,7 @@ export function useMembersPage(
     setBankFilter("");
     setDepartmentFilter("");
     setStatusFilter("");
+    setSettlementFilter("");
     // The filter resets above trigger the effect's refetch at skip=0
     // already; refresh with an empty search too, in case only `search`
     // had a value (which isn't watched by that effect).
@@ -224,7 +239,14 @@ export function useMembersPage(
   if (bankFilter) activeFilterDescriptions.push(`Bank: ${bankFilter}`);
   if (departmentFilter) activeFilterDescriptions.push(`Department: ${departmentFilter}`);
   if (statusFilter) activeFilterDescriptions.push(`Status: ${statusFilter === "financial" ? "Financial" : "Non-financial"}`);
-  const hasActiveFilters = Boolean(search || bankFilter || departmentFilter || statusFilter);
+  if (settlementFilter) {
+    activeFilterDescriptions.push(
+      settlementFilter === "pending" ? "Exit settlement: awaiting payout" : "Exit settlement: paid"
+    );
+  }
+  const hasActiveFilters = Boolean(
+    search || bankFilter || departmentFilter || statusFilter || settlementFilter
+  );
 
   function setField<K extends keyof MemberInput>(key: K, value: MemberInput[K]) {
     setForm((current) => ({ ...current, [key]: value }) as MemberInput);

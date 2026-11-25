@@ -1,3 +1,4 @@
+import FilterNotice from "@/components/ui/FilterNotice";
 import StatusMessage from "@/components/ui/StatusMessage";
 import PageSkeleton from "@/components/ui/PageSkeleton";
 import type { LoanRepaymentsPageModel } from "../hooks/useLoanRepaymentsPage";
@@ -14,6 +15,12 @@ export default function LoanRepaymentsView({ model }: { model: LoanRepaymentsPag
       <div className="page-header">
         <h1>Loan Repayments</h1>
       </div>
+
+      {model.filter.awaitingOnly && (
+        <FilterNotice onClear={model.filter.clear}>
+          Showing repayments awaiting verification.
+        </FilterNotice>
+      )}
 
       {model.feedback.error && (
         <StatusMessage tone="error">{model.feedback.error}</StatusMessage>

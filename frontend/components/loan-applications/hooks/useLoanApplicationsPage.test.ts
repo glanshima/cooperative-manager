@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   decideApplication,
@@ -149,5 +149,45 @@ describe("useLoanApplicationsPage", () => {
     });
 
     expect(disburseMock).toHaveBeenCalledWith("app-1");
+  });
+});
+
+describe("useLoanApplicationsPage queue presets", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listMock.mockResolvedValue([summary]);
+    window.history.replaceState(null, "", "/");
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("opens the review queue on verified, pending applications", async () => {
+    window.history.replaceState(null, "", "/admin/loan-applications?queue=review");
+    const { result } = await renderLoadedHook();
+
+    expect(listMock).toHaveBeenCalledWith({
+      status: "pending",
+      payment_status: "verified",
+    });
+    expect(result.current.filter.current).toBe("review");
+  });
+
+  it("opens the fee verification queue", async () => {
+    window.history.replaceState(null, "", "/admin/loan-applications?queue=payment");
+    const { result } = await renderLoadedHook();
+
+    expect(listMock).toHaveBeenCalledWith({ payment_status: "awaiting_verification" });
+    expect(result.current.filter.current).toBe("payment");
+  });
+
+  it("clears the preset and reloads the full list", async () => {
+    window.history.replaceState(null, "", "/admin/loan-applications?queue=review");
+    const { result } = await renderLoadedHook();
+
+    act(() => result.current.filter.clear());
+
+    await waitFor(() => expect(listMock).toHaveBeenLastCalledWith(undefined));
   });
 });

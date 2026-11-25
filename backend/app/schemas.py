@@ -1886,3 +1886,100 @@ class DividendSummaryOut(BaseModel):
     cashbook_open: bool
     last_declared_year: Optional[int] = None
     suggested_fiscal_year: int
+
+
+# ---------------------------------------------------------------------------
+# Admin dashboard aggregates
+# ---------------------------------------------------------------------------
+
+class DashboardPeriodOut(BaseModel):
+    key: str
+    label: str
+    start: date
+    end: date
+
+
+class DashboardMembersOut(BaseModel):
+    total: int
+    financial: int
+    non_financial: int
+    exited: int
+    joined: int
+
+
+class DashboardSavingsOut(BaseModel):
+    total: Decimal
+    collected: Decimal
+    paid_out: Decimal
+
+
+class DashboardRepaymentsOut(BaseModel):
+    count: int
+    amount: Decimal
+
+
+class DashboardLoansOut(BaseModel):
+    active_count: int
+    outstanding: Decimal
+    defaulted_count: int
+    disbursed_count: int
+    disbursed: Decimal
+    repayments: Optional[DashboardRepaymentsOut] = None
+
+
+class DashboardDeductionsOut(BaseModel):
+    confirmed_total: Decimal
+    confirmed_members: int
+    draft_count: int
+    submitted_count: int
+
+
+class DashboardCashbookOut(BaseModel):
+    books_open: bool
+    cash: Optional[Decimal] = None
+    bank: Optional[Decimal] = None
+    total: Optional[Decimal] = None
+
+
+class DashboardDividendsOut(BaseModel):
+    last_declared_year: Optional[int] = None
+    last_declared_on: Optional[date] = None
+    last_pool: Optional[Decimal] = None
+    unpaid_net: Decimal
+    paid_net: Decimal
+
+
+class DashboardQueueOut(BaseModel):
+    key: str
+    label: str
+    count: int
+    amount: Optional[Decimal] = None
+    href: Optional[str] = None
+
+
+class DashboardActivityOut(BaseModel):
+    event_type: str
+    action: str
+    actor: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    timestamp: datetime
+
+
+class DashboardTrendOut(BaseModel):
+    months: List[str]
+    savings: Optional[List[Decimal]] = None
+    repayments: Optional[List[Decimal]] = None
+
+
+class AdminDashboardOut(BaseModel):
+    period: DashboardPeriodOut
+    members: Optional[DashboardMembersOut] = None
+    savings: Optional[DashboardSavingsOut] = None
+    loans: Optional[DashboardLoansOut] = None
+    deductions: Optional[DashboardDeductionsOut] = None
+    cashbook: Optional[DashboardCashbookOut] = None
+    dividends: Optional[DashboardDividendsOut] = None
+    queues: List[DashboardQueueOut]
+    activity: Optional[List[DashboardActivityOut]] = None
+    trend: Optional[DashboardTrendOut] = None

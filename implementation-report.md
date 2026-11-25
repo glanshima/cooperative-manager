@@ -1063,3 +1063,43 @@ The admin page at `/admin/dividends` lists runs, shows the current policy, and d
 - Verification: `/api/health` 200, `/api/branding` 200, `/api/dividends/summary` **401** (route deployed, auth-gated, no schema error), `https://koperra.sidgakstech.me/login` 200 and `/admin/dividends` 200.
 - Permissions: adds `dividend.view`, `dividend.declare`, `dividend.pay`, included in the Treasurer defaults (declare/pay) and view-only for Secretary and Auditor. The seeder never rewrites an existing role, so confirm on `/admin/roles` that the Treasurer has all three and Secretary/Auditor have `dividend.view`.
 - The dividends module remains **off** by default. Enabling it is not enough to declare: the cashbook must also be open, and the year being declared must have ended.
+
+## 32. Administrative dashboard (2026-11-25)
+
+The landing dashboard answers "how is the cooperative doing, and what needs me" without becoming a second set of books. It is a single read-only aggregate over the same tables each module page reads, and every section is permission- and module-gated: a section the caller cannot open on its own page is returned as `null`, never as zero, so the dashboard cannot disclose a figure the module itself would hide.
+
+### 32.1 The single aggregate
+
+| Endpoint | Permission |
+|---|---|
+| `GET /api/admin/dashboard?period=this_month\|last_month\|this_year\|last_year` | admin; sections filtered by their own codes |
+
+One request returns the whole screen. `backend/app/dashboard.py` computes it on demand — nothing is cached or stored, so it cannot drift from the authoritative records. The period is a preset over the cooperative's fiscal-year start month; snapshot figures (balances, outstanding loans, unpaid dividends, queues) ignore the window, movement figures (collected, paid out, disbursed, verified, confirmed, joined) are summed inside it, and each card says which kind it is. Repayment totals exist only with `repayment.view`; the cashbook section returns `books_open: false` (figures `null`) until the opening journal is posted; activity needs `audit.view`; the trend needs `savings.view` or `repayment.view`.
+
+The "Needs attention" queues mirror the workflow states exactly and are gated by the action permission, not the view permission. Each links to the queue it counts:
+
+| Queue | Link |
+|---|---|
+| Applications awaiting review | `/admin/loan-applications?queue=review` |
+| Application fees awaiting verification | `/admin/loan-applications?queue=payment` |
+| Approved loans awaiting disbursement | `/admin/disbursements` (already scoped) |
+| Repayments awaiting verification | `/admin/loan-repayments?status=awaiting_verification` |
+| Loan fees awaiting verification | `/admin/loan-fees` (opens on its queue) |
+| Exit settlements awaiting payout | `/members?settlement=pending` |
+| Dividend allocations awaiting payout | `/admin/dividends` |
+
+The three parameterised destinations read their preset from the query string after mount (the server render cannot see it), hold their first fetch until it is known, and show a notice with **Show all** to return to the full list. `GET /api/members` gained an optional `settlement=pending|paid` filter matching the member's settlement record, so the list total equals the queue's count.
+
+### 32.2 UI
+
+`/admin/dashboard` is one client mount (`useAuth` → `useAdminDashboardPage`) with the existing nav; the "Menu" text button is now a hamburger icon (accessible label unchanged). Layout: at-a-glance cards, queues, the selected period's movement cards, a six-month inline-SVG trend (savings contributions and verified repayments, no chart library, with a visually hidden data table), and recent audit activity. Loading uses the shared page skeleton; a failed first load offers **Try again**; a failed refresh keeps the previous figures and says so; the error banner is dismissible. Period switching keeps the current figures on screen and marks the selector "Updating…". Responsive: one column on phones, two on tablets, three on wide screens for the movement cards; the chart is capped at 760px so it does not dominate a desktop.
+
+### 32.3 Verification
+
+- Backend: `tests/test_admin_dashboard.py` — **11 passed** (sections absent without permission, member/savings/loan/deduction/cashbook/dividend figures against real rows, snapshot-vs-period semantics, queues gated by action permissions and their `href`s, settlement queue, activity and trend gating, unknown period → 422). `tests/test_members_search_filtering.py` — settlement filter and invalid-value → 422. Both files **27 passed**.
+- Frontend: `npx tsc --noEmit` clean; full Vitest suite **312 passed**; `npm run build` succeeded. `AdminDashboardView` has 20 tests covering both slices; the applications/repayments/members hooks gained preset tests (mapping, banner, clear → unfiltered reload).
+- Local walkthrough against the sandbox seed (35 members, ₦91,500 savings, ₦168,000 outstanding, ₦116,880 cash & bank, 15 fees + 1 disbursement + 1 repayment + 1 deduction awaiting): screenshots at 390×844, 768×1024 and 1440×900 show no horizontal overflow; "Last month" switches and reports `aria-pressed`; the drill-downs land with their notices and clear back to the full list. The dashboard and its tests were exercised on a preview pair (backend :8005, frontend :3007) built from this working tree.
+
+### 32.4 Status
+
+Not committed or deployed. It adds no migration; the dashboard is read-only and the only schema-adjacent change is the members list filter. Modules that are off stay absent from the screen, so enabling cashbook/dividends is what makes those sections appear.
