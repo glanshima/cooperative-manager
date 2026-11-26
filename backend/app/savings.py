@@ -60,7 +60,7 @@ def post_contribution(
         amount=line.amount,
         deduction_line_id=line.id,
         posted_by_user_id=actor_id,
-        note=f"{deduction.deduction_month:%Y-%m} payroll contribution",
+        note=f"{deduction.deduction_month:%Y-%m} payroll savings",
     )
     db.add(entry)
     return entry

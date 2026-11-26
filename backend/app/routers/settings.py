@@ -99,7 +99,7 @@ def update_settings(
     if merged_default and merged_minimum and merged_default < merged_minimum:
         raise HTTPException(
             status_code=400,
-            detail="The default monthly contribution cannot be below the minimum.",
+            detail="The default monthly savings cannot be below the minimum.",
         )
 
     merged_grace_mode = changes.get("loan_default_grace_mode", settings.loan_default_grace_mode)

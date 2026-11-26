@@ -66,14 +66,14 @@ export default function ContributionReviewPanel({
     <>
       <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: 16, marginBottom: 24 }}>
         <div className="page-header">
-          <h2 style={{ margin: 0 }}>Contribution change requests</h2>
+          <h2 style={{ margin: 0 }}>Savings change requests</h2>
           <button onClick={onRefresh} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
 
         {ordered.length === 0 && (
-          <p style={{ color: "#666", marginBottom: 0 }}>No contribution change requests yet.</p>
+          <p style={{ color: "#666", marginBottom: 0 }}>No savings change requests yet.</p>
         )}
 
         {ordered.map((r) => {
@@ -148,13 +148,13 @@ export default function ContributionReviewPanel({
 
       {decision && deciding && (
         <ConfirmDialog
-          title={decision.approve ? "Approve contribution change?" : "Reject contribution change?"}
+          title={decision.approve ? "Approve savings change?" : "Reject savings change?"}
           message={
             decision.approve
-              ? `Set ${deciding.member_name ?? "this member"}'s monthly contribution to ${money(
+              ? `Set ${deciding.member_name ?? "this member"}'s monthly savings to ${money(
                   deciding.requested_amount
                 )}. The approved amount applies from the first of next month, never retroactively.`
-              : `Reject ${deciding.member_name ?? "this member"}'s request to set their monthly contribution to ${money(
+              : `Reject ${deciding.member_name ?? "this member"}'s request to set their monthly savings to ${money(
                   deciding.requested_amount
                 )}. Reason: ${reasons[deciding.id] ?? ""}`
           }

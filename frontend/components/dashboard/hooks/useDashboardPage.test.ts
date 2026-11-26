@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   fileToBase64,
+  getMemberLoanBalance,
+  getMyDeductions,
   getMyMemberRecord,
+  getMySavings,
+  getNotifications,
   getSettings,
   listLoanApplications,
   listLoans,
   listLoanTypes,
+  listRepaymentsForLoan,
   submitRepayment,
 } from "@/lib/api";
 import type { CurrentUser, Loan, Settings } from "@/lib/api";
@@ -16,7 +21,12 @@ import { useDashboardPage } from "./useDashboardPage";
 
 vi.mock("@/lib/api", () => ({
   getMyMemberRecord: vi.fn(),
+  getMySavings: vi.fn(),
+  getMyDeductions: vi.fn(),
+  getMemberLoanBalance: vi.fn(),
+  getNotifications: vi.fn(),
   getSettings: vi.fn(),
+  listRepaymentsForLoan: vi.fn(),
   listLoanApplications: vi.fn(),
   listLoans: vi.fn(),
   listLoanTypes: vi.fn(),
@@ -29,7 +39,12 @@ vi.mock("@/lib/api", () => ({
 }));
 
 const getMyMemberRecordMock = vi.mocked(getMyMemberRecord);
+const getMySavingsMock = vi.mocked(getMySavings);
+const getMyDeductionsMock = vi.mocked(getMyDeductions);
+const getMemberLoanBalanceMock = vi.mocked(getMemberLoanBalance);
+const getNotificationsMock = vi.mocked(getNotifications);
 const getSettingsMock = vi.mocked(getSettings);
+const listRepaymentsForLoanMock = vi.mocked(listRepaymentsForLoan);
 const listLoanApplicationsMock = vi.mocked(listLoanApplications);
 const listLoansMock = vi.mocked(listLoans);
 const listLoanTypesMock = vi.mocked(listLoanTypes);
@@ -92,10 +107,31 @@ describe("useDashboardPage module gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getMyMemberRecordMock.mockResolvedValue({ id: "member-1" } as any);
+    getMySavingsMock.mockResolvedValue({
+      member_id: "member-1",
+      savings_balance: "0.00",
+      months_contributed: 0,
+    });
+    getMyDeductionsMock.mockResolvedValue({
+      month: "2026-11-01",
+      status: null,
+      contribution: "0.00",
+      loan_repayment: "0.00",
+      other: "0.00",
+      total: "0.00",
+    });
+    getMemberLoanBalanceMock.mockResolvedValue({
+      member_id: "member-1",
+      active_loan_count: 0,
+      total_outstanding_balance: "0.00",
+      conflicted: false,
+    });
+    getNotificationsMock.mockResolvedValue({ items: [], total: 0, unread_count: 0 });
     getSettingsMock.mockResolvedValue(settings);
     listLoanApplicationsMock.mockResolvedValue([]);
     listLoansMock.mockResolvedValue([]);
     listLoanTypesMock.mockResolvedValue([]);
+    listRepaymentsForLoanMock.mockResolvedValue([]);
   });
 
   it("loads loan data when the Loans module is enabled", async () => {
@@ -106,6 +142,10 @@ describe("useDashboardPage module gating", () => {
     expect(listLoanApplicationsMock).toHaveBeenCalledTimes(1);
     expect(listLoansMock).toHaveBeenCalledTimes(1);
     expect(listLoanTypesMock).toHaveBeenCalledTimes(1);
+    expect(getMySavingsMock).toHaveBeenCalledTimes(1);
+    expect(getMyDeductionsMock).toHaveBeenCalledTimes(1);
+    expect(getMemberLoanBalanceMock).toHaveBeenCalledWith("member-1");
+    expect(getNotificationsMock).toHaveBeenCalledTimes(1);
     expect(result.current.loansEnabled).toBe(true);
   });
 
@@ -119,11 +159,25 @@ describe("useDashboardPage module gating", () => {
     expect(listLoanApplicationsMock).not.toHaveBeenCalled();
     expect(listLoansMock).not.toHaveBeenCalled();
     expect(listLoanTypesMock).not.toHaveBeenCalled();
+    expect(getMemberLoanBalanceMock).not.toHaveBeenCalled();
+    expect(listRepaymentsForLoanMock).not.toHaveBeenCalled();
     expect(result.current.loansEnabled).toBe(false);
     expect(result.current.applications.items).toEqual([]);
     expect(result.current.loans.items).toEqual([]);
     expect(result.current.apply.applyableTypes).toEqual([]);
     expect(result.current.feedback.error).toBeNull();
+  });
+
+  it("skips the deduction read when the Deductions module is disabled", async () => {
+    getSettingsMock.mockResolvedValue({ ...settings, deductions_module_enabled: false });
+
+    const { result } = renderHook(() => useDashboardPage(false, user, logout));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(getMyDeductionsMock).not.toHaveBeenCalled();
+    expect(result.current.deductionsEnabled).toBe(false);
+    expect(result.current.summary.deductions).toBeNull();
   });
 });
 

@@ -1121,3 +1121,44 @@ It adds no migration; the dashboard is read-only and the only schema-adjacent ch
 - **Run:** `scripts/seed_permissions.py` against the production branch with the connection string resolved by the Neon CLI and passed inline (never printed or persisted). The resolved host was checked first — `ep-rapid-feather-ay5ak2pz.c-5.us-east-2.aws.neon.tech`, the production compute — and the run would have aborted on any other host. Output: **Seeded/updated 48 permissions**; all five default roles already existed and kept their grants untouched.
 - **Probes after the seed:** `/api/health` 200, `/api/branding` 200, `/api/dividends/summary` 401, `/api/roles` 401 — the backend is serving and the new routes are auth-gated. Row-level confirmation of the three inserted rows is not available to the agent; the seeder's own count is the evidence.
 - **Remaining, owner-side:** grant `accounting.adjust`, `accounting.reverse`, `dividend.view`, `dividend.declare`, `dividend.pay` to the Treasurer and `dividend.view` to the Auditor (optionally the Secretary) on `/admin/roles`; then enable the Cashbook module in Settings and post the opening journal before enabling Dividends.
+- **Enablement (2026-11-25):** the owner granted the role codes, enabled the module toggles and posted the opening journal. The toggles are verifiable from outside without credentials because the module gate runs before authentication: `/api/cashbook/overview` and `/api/cashbook/accounts` now answer **401** (`Could not validate credentials`) where a disabled module answers **403** (`The Cashbook module is disabled by an administrator.`), and `/api/dividends/summary` likewise answers **401** — so both routers are past their module gates and **both** modules read as enabled. `/api/health` 200 and `/api/branding` 200 alongside them. The opening journal and the role grants sit behind authentication, so they are recorded here as owner-confirmed, not independently re-checked. Automatic postings (loans, repayments, fees, deductions, settlements) now write to the ledger from the opening date onward; nothing before it is backfilled, and dividends still refuse to declare until a fiscal year has actually ended.
+
+## 35. Responsive member dashboard and Savings terminology (2026-11-26)
+
+### 35.1 Scope and data contract
+
+- **Branch:** `feature/member-dashboard`; implemented and verified locally, not committed, pushed or deployed.
+- **New endpoint:** `GET /api/members/me/deductions?month=YYYY-MM` in `backend/app/routers/members.py`, with `MemberDeductionsOut` in `backend/app/schemas.py`. It is member-scoped, requires the Deductions module, defaults to the current month, excludes voided deductions and returns zero-valued components with `status: null` when no record exists. Loan repayment includes loan arrears; savings, loan and other lines remain separate.
+- **Existing reads reused:** `/api/members/me`, `/api/settings`, `/api/members/me/savings`, `/api/loans/member/{id}/balance`, `/api/notifications`, `/api/loan-applications`, `/api/loans`, `/api/loan-types` and `/api/loans/{id}/repayments`. Savings, loan balance and deduction totals are server reads; the frontend does not re-derive financial balances.
+- **Module behavior:** loan requests and balance reads are skipped when Loans is disabled; the deduction read is skipped when Deductions is disabled. Savings remains independent of the Members-module toggle.
+- **Schema:** no migration and no database/API field rename. The response field `contribution`, columns such as `monthly_contribution_amount`, enum values, event types and notification category values remain stable.
+
+### 35.2 Dashboard implementation
+
+- `frontend/components/dashboard/MemberShell` provides the fixed navy desktop sidebar, sticky identity/notification bar and four-item mobile bottom navigation. Section anchors are `#overview`, `#savings`, `#loans`, `#activity` and `#notifications`.
+- `SummaryCards` shows total savings, outstanding loan and the current-month deduction. `AccountOverview`, `MembershipCard`, `RecentActivity`, `QuickLinks` and `NotificationsCard` provide the accepted information hierarchy without inventing financial history.
+- `useDashboardPage` loads each summary read independently: one failed card becomes **Unavailable**, not zero, and does not blank the other cards. It also builds recent activity only from authoritative applications, disbursed loans and repayment claims.
+- Existing savings-change, loan application/repayment, notification-preference and restriction flows remain in the page. The loan form now uses the shared responsive `form-grid` and a `min-width: 0` section, fixing the 390px horizontal overflow found during verification.
+- Loading, empty, disabled-module, unavailable-card and missing-member states are explicit. Browser fault injection confirmed the loading screen and independent savings/loan/deduction/notification failure states.
+
+### 35.3 Visible terminology: Contribution → Savings
+
+- Navigation, headings, buttons, tables, printed schedules, officer copy, validation messages, notifications, audit descriptions, permission descriptions and ledger notes now say **Savings**.
+- Dashboard links and anchors use `#savings`; internal component/module names and API identifiers remain unchanged to preserve existing records and accounting behavior.
+- Tests covering the renamed labels, dialogs, notification title and deduction copy were updated.
+
+### 35.4 Mockup omissions
+
+The following mockup elements are intentionally not implemented because the app has no authoritative data source or destination for them: savings growth percentage, historical donut chart, statements/history/profile links and next-payment date. The account overview uses labelled comparison tracks rather than presenting them as a financial ratio, and quick actions lead only to real in-page flows.
+
+### 35.5 Verification
+
+- **Backend:** scoped member-deduction + notification tests **29 passed**; full `pytest` suite **485 passed** on `mact_test` (SQLAlchemy/Python datetime deprecation warnings only).
+- **Frontend:** `npx tsc --noEmit` passed; `npm test` passed **47 files / 315 tests**; `npm run build` compiled and generated all 25 static pages successfully. The build retains the existing Next 16/React 18 deprecation warning, and Vitest reports the existing Vite config-loader warning.
+- **Browser:** local `http://localhost:3000` with the seeded member at 1440×1000, 768×1024 and 390×844. `scrollWidth === clientWidth` at every width; desktop sidebar/three-column summary and mobile/tablet bottom navigation rendered as intended. The loan quick action opened the form at `#loans`, the notification dialog showed its empty state, and mobile Activity navigation landed at `top: 84`.
+- **Fault injection:** delayed/failed summary reads showed `Loading...`, then three **Unavailable** cards plus the notification-specific error; no global error or console exception was produced. Final normal reload recovered, with `consoleErrors: []` and `failedRequests: []`.
+- **Screenshots:** `.local/member-dashboard-desktop.png`, `.local/member-dashboard-tablet.png` and `.local/member-dashboard-mobile.png`; the repeatable check is `.local/dashboard-browser-check.cjs`. These are local verification artifacts, not production data or committed assets.
+
+### 35.6 Status
+
+All requested dashboard and terminology work is complete and locally verified. Remaining work is limited to the deliberately omitted mockup items above, if the owner later supplies their data sources/destinations. No production database or deployment was performed; the commit and push are recorded in git history.

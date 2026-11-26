@@ -113,7 +113,7 @@ export default function DeductionsTable({
             />
           </th>
           <th style={cellStyle}>Member</th>
-          <th style={cellStyle}>Contribution</th>
+          <th style={cellStyle}>Savings</th>
           <th style={cellStyle}>Loans</th>
           <th style={cellStyle}>Arrears</th>
           <th style={cellStyle}>Other</th>

@@ -36,7 +36,7 @@ const SEGMENTS: {
 
 const EMPTY_COPY: Record<DeductionWorklistEntryState, (month: string) => string> = {
   pending: (label) =>
-    `Nothing left to enter for ${label}. Every member who owes a contribution or loan instalment has been entered.`,
+    `Nothing left to enter for ${label}. Every member who owes savings or a loan instalment has been entered.`,
   entered: (label) => `Nothing has been entered for ${label} yet.`,
   all: (label) => `Nothing is due for ${label}.`,
 };
@@ -47,7 +47,7 @@ function ExpectedLines({ item }: { item: DeductionWorklistItem }) {
       {item.lines.map((line, index) => (
         <li key={index} style={{ padding: "2px 0" }}>
           {line.category === "monthly_contribution" && (
-            <span>Contribution ₦{formatMoney(line.amount)}</span>
+            <span>Savings ₦{formatMoney(line.amount)}</span>
           )}
           {(line.category === "loan_repayment" || line.category === "loan_arrears") && (
             <span style={line.category === "loan_arrears" ? { color: "#b45309" } : undefined}>

@@ -213,7 +213,7 @@ def _assert_contribution_line_matches_membership(
     raise HTTPException(
         status_code=400,
         detail=(
-            "The monthly contribution applies to financial members only. "
+            "Monthly savings applies to financial members only. "
             "Record an amount owed by a non-financial member as an 'other' deduction."
         ),
     )

@@ -18,7 +18,7 @@ PERMISSION_CATALOGUE = [
     ("member.update", "Members", "Edit an existing member record"),
     ("member.deactivate", "Members", "Deactivate or reactivate a member record"),
     # Savings (foundation only -- full savings engine is Phase 4)
-    ("savings.view", "Savings", "View savings/contribution records"),
+    ("savings.view", "Savings", "View savings records"),
     ("savings.request_change", "Savings", "Request a savings amount change"),
     ("savings.approve_change", "Savings", "Approve a savings amount change request"),
     ("savings.reject_change", "Savings", "Reject a savings amount change request"),

@@ -18,7 +18,7 @@ function makeItem(overrides: Partial<DeductionWorklistItem> = {}): DeductionWork
     member_psn: "PSN-1",
     member_status: "financial",
     membership_exit_date: null,
-    due_reasons: ["Monthly contribution due"],
+    due_reasons: ["Monthly savings due"],
     lines: [
       { category: "monthly_contribution", amount: "5000.00", arrears: "0.00", months_behind: 0 },
       {
@@ -120,7 +120,7 @@ describe("DeductionWorklist", () => {
     const { openItem } = renderWorklist({ items: [item] });
 
     expect(screen.getByText(/Test Member · PSN PSN-1/)).toBeInTheDocument();
-    expect(screen.getByText(/Contribution/)).toBeInTheDocument();
+    expect(screen.getByText(/Savings/)).toBeInTheDocument();
     expect(screen.getByText(/Regular loan/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Enter" }));

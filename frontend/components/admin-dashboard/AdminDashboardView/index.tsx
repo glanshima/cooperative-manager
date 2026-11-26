@@ -158,7 +158,7 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
                   <StatCard
                     label="Savings balance"
                     value={money(data.savings.total)}
-                    hint="Confirmed contributions less reversals and exit payouts"
+                    hint="Confirmed savings less reversals and exit payouts"
                   />
                 )}
                 {data.loans && (
@@ -251,7 +251,7 @@ export default function AdminDashboardView({ model }: { model: AdminDashboardPag
                     <StatCard
                       label="Savings collected"
                       value={money(data.savings.collected)}
-                      hint="Confirmed contributions posted in this period"
+                      hint="Confirmed savings posted in this period"
                     />
                     <StatCard
                       label="Savings paid out"

@@ -126,13 +126,13 @@ def _create_request(
     ):
         raise HTTPException(
             status_code=400,
-            detail="That is already this member's monthly contribution",
+            detail="That is already this member's monthly savings",
         )
 
     if contribution_rules.pending_request(db, member.id) is not None:
         raise HTTPException(
             status_code=409,
-            detail="This member already has a contribution change request awaiting a decision",
+            detail="This member already has a savings change request awaiting a decision",
         )
 
     row = models.ContributionChangeRequest(
@@ -154,7 +154,7 @@ def _create_request(
         # index is the guarantee behind it.
         raise HTTPException(
             status_code=409,
-            detail="This member already has a contribution change request awaiting a decision",
+            detail="This member already has a savings change request awaiting a decision",
         )
 
     row = _fetch(db, row.id)
@@ -173,7 +173,7 @@ def _create_request(
 
 def _own_member(db: Session, current_user: models.User) -> models.Member:
     if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
-        raise HTTPException(status_code=403, detail="Only members have a contribution to change")
+        raise HTTPException(status_code=403, detail="Only members have savings to change")
     member = db.query(models.Member).filter(models.Member.id == current_user.member_id).first()
     if member is None:
         raise HTTPException(status_code=404, detail="Member record not found")
@@ -257,7 +257,7 @@ def list_contribution_requests(
         db,
         current_user,
         conflicted_count=flagged,
-        action_description="browsed contribution change requests",
+        action_description="browsed savings change requests",
         entity_type="contribution_change_request",
         request=request,
     )
@@ -286,7 +286,7 @@ def raise_contribution_request(
         db,
         current_user,
         member,
-        action_description="raise a contribution change request for this member",
+        action_description="raise a savings change request for this member",
         permission_code="savings.request_change",
         entity_type="member",
         entity_id=str(member.id),
@@ -314,7 +314,7 @@ def _review(
 ):
     row = _fetch_locked(db, request_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Contribution change request not found")
+        raise HTTPException(status_code=404, detail="Savings change request not found")
 
     member = (
         db.query(models.Member)
@@ -327,7 +327,7 @@ def _review(
         current_user,
         member,
         action_description=(
-            "approve this contribution change" if approve else "reject this contribution change"
+            "approve this savings change" if approve else "reject this savings change"
         ),
         permission_code=permission_code,
         entity_type="contribution_change_request",
@@ -365,9 +365,9 @@ def _review(
             db,
             member,
             category=models.NotificationCategory.CONTRIBUTION,
-            title="Contribution change approved",
+            title="Savings change approved",
             body=(
-                f"Your monthly contribution is now {row.requested_amount}, effective "
+                f"Your monthly savings is now {row.requested_amount}, effective "
                 f"from {effective_from}."
             ),
             link_path="/dashboard",
@@ -379,9 +379,9 @@ def _review(
             db,
             member,
             category=models.NotificationCategory.CONTRIBUTION,
-            title="Contribution change not approved",
+            title="Savings change not approved",
             body=(
-                "Your monthly contribution change request was not approved."
+                "Your monthly savings change request was not approved."
                 + (f" Reason: {reason}" if reason else "")
             ),
             link_path="/dashboard",
@@ -447,7 +447,7 @@ def reject_contribution_request(
     reason = (payload.reason or "").strip()
     if not reason:
         raise HTTPException(
-            status_code=422, detail="A reason is required when rejecting a contribution change"
+            status_code=422, detail="A reason is required when rejecting a savings change"
         )
     return _review(
         db,
