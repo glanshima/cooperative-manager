@@ -46,10 +46,10 @@ describe("ContributionCard", () => {
     getSettingsMock.mockResolvedValue({ minimum_monthly_contribution: "5000.00" } as never);
   });
 
-  it("shows how much the member has contributed in total", async () => {
+  it("shows how much the member has saved in total", async () => {
     render(<ContributionCard member={financialMember} />);
 
-    const line = await screen.findByText(/contributed so far/i);
+    const line = await screen.findByText(/saved so far/i);
     expect(line).toHaveTextContent("₦65,000.00");
     expect(line).toHaveTextContent("across 13 months");
   });
@@ -70,7 +70,7 @@ describe("ContributionCard", () => {
     render(<ContributionCard member={financialMember} />);
 
     expect(await screen.findByText(/is pending review/i)).toBeInTheDocument();
-    expect(screen.queryByText(/contributed so far/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/saved so far/i)).not.toBeInTheDocument();
   });
 
   it("shows a financial member's amount and loads their requests on mount", async () => {
@@ -115,7 +115,7 @@ describe("ContributionCard", () => {
     await waitFor(() => expect(getRequestsMock).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("button", { name: "Request change" }));
-    expect(screen.getByText("Request contribution change")).toBeInTheDocument();
+    expect(screen.getByText("Request savings change")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("e.g. 8000.00"), { target: { value: "8000" } });
     fireEvent.change(
@@ -142,7 +142,7 @@ describe("ContributionCard", () => {
     );
     fireEvent.submit(screen.getByRole("button", { name: "Submit request" }).closest("form")!);
 
-    expect(await screen.findByText(/minimum monthly contribution is ₦5,000/i)).toBeInTheDocument();
+    expect(await screen.findByText(/minimum monthly savings is ₦5,000/i)).toBeInTheDocument();
     expect(createMock).not.toHaveBeenCalled();
   });
 

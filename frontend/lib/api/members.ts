@@ -157,6 +157,29 @@ export async function getMyMemberRecord(): Promise<Member> {
   return apiFetch<Member>("/api/members/me");
 }
 
+export type MemberDeductionStatus = "draft" | "submitted" | "confirmed" | "not_deducted";
+
+/**
+ * The member's own payroll deduction for one month. Contribution and loan
+ * lines are separate on purpose: the figure payroll held back for savings is
+ * not the figure it held back for loans. `status` says whether the money
+ * actually left the paycheck -- draft and submitted are intent.
+ */
+export interface MemberDeductions {
+  month: string;
+  status: MemberDeductionStatus | null;
+  contribution: string;
+  loan_repayment: string;
+  other: string;
+  total: string;
+}
+
+export async function getMyDeductions(month?: string): Promise<MemberDeductions> {
+  return apiFetch<MemberDeductions>("/api/members/me/deductions", {
+    searchParams: month ? { month } : undefined,
+  });
+}
+
 export async function createMember(input: MemberInput): Promise<Member> {
   return apiFetch<Member>("/api/members", { method: "POST", body: input });
 }

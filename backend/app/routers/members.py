@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
@@ -161,6 +161,73 @@ def get_my_savings(
         member_id=member.id,
         savings_balance=savings_service.balance(db, member.id),
         months_contributed=int(months or 0),
+    )
+
+
+@router.get(
+    "/me/deductions",
+    response_model=schemas.MemberDeductionsOut,
+    dependencies=[Depends(require_module_enabled("deductions"))],
+)
+def get_my_deductions(
+    month: Optional[str] = Query(
+        default=None, description="Payroll month in YYYY-MM format; defaults to the current month"
+    ),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The member's own payroll deduction for one month -- what payroll held
+    back, with contributions, loan repayments and anything else kept apart.
+
+    Self-service like /me and /me/savings: no permission code, but it stops
+    at the caller's member_id. A month with no record, or only a voided one,
+    answers zeroes with status null rather than 404 -- "nothing deducted" is
+    a real answer for a dashboard card."""
+    if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
+        raise HTTPException(status_code=403, detail="Only members have a member record")
+
+    if month is None:
+        month_start = date.today().replace(day=1)
+    else:
+        try:
+            month_start = datetime.strptime(month, "%Y-%m").date()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="month must be in YYYY-MM format")
+
+    record = (
+        db.query(models.PayrollDeduction)
+        .filter(
+            models.PayrollDeduction.member_id == current_user.member_id,
+            models.PayrollDeduction.deduction_month == month_start,
+            models.PayrollDeduction.status != models.PayrollDeductionStatus.VOID,
+        )
+        .first()
+    )
+    if record is None:
+        return schemas.MemberDeductionsOut(month=month_start)
+
+    sums = {category: Decimal("0") for category in models.PayrollDeductionLineCategory}
+    lines = (
+        db.query(models.PayrollDeductionLine)
+        .filter(models.PayrollDeductionLine.deduction_id == record.id)
+        .all()
+    )
+    for line in lines:
+        sums[line.category] += line.amount
+
+    contribution = sums[models.PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION]
+    loan_repayment = (
+        sums[models.PayrollDeductionLineCategory.LOAN_REPAYMENT]
+        + sums[models.PayrollDeductionLineCategory.LOAN_ARREARS]
+    )
+    other = sums[models.PayrollDeductionLineCategory.OTHER]
+    return schemas.MemberDeductionsOut(
+        month=month_start,
+        status=record.status,
+        contribution=contribution,
+        loan_repayment=loan_repayment,
+        other=other,
+        total=contribution + loan_repayment + other,
     )
 
 
@@ -489,7 +556,7 @@ def update_member(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "The monthly contribution cannot be cleared. A non-financial member "
+                    "Monthly savings cannot be cleared. A non-financial member "
                     "simply stops being deducted one; the stored figure stays as history."
                 ),
             )
@@ -497,8 +564,8 @@ def update_member(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "This member's monthly contribution is already on file. A change to an "
-                    "agreed amount goes through a contribution change request, which another "
+                    "This member's monthly savings is already on file. A change to an "
+                    "agreed amount goes through a savings change request, which another "
                     "officer approves."
                 ),
             )

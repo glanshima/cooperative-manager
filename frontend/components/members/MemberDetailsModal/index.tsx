@@ -89,11 +89,11 @@ export default function MemberDetailsModal({
           <dd>{shown(member.account_number)}</dd>
         </div>
         <div>
-          <dt>Monthly contribution</dt>
+          <dt>Monthly savings</dt>
           <dd>{money(member.monthly_contribution_amount)}</dd>
         </div>
         <div>
-          <dt>Contribution effective from</dt>
+          <dt>Savings effective from</dt>
           <dd>{shown(member.contribution_effective_from)}</dd>
         </div>
         <div>

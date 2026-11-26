@@ -1,72 +1,140 @@
-import CooperativeBrand from "@/components/branding/CooperativeBrand";
 import PlatformAttribution from "@/components/branding/PlatformAttribution";
-import NotificationBell from "@/components/notifications/NotificationBell";
 import StatusMessage from "@/components/ui/StatusMessage";
-import DashboardHeader from "@/components/ui/DashboardHeader";
-import { lastNameFirst, userDisplayName } from "@/lib/names";
+import { lastNameFirst } from "@/lib/names";
 import type { DashboardPageModel } from "../hooks/useDashboardPage";
+import AccountOverview from "../AccountOverview";
 import ApplicationsSection from "../ApplicationsSection";
 import ApplyForLoan from "../ApplyForLoan";
 import ContributionCard from "../ContributionCard";
 import LoansSection from "../LoansSection";
+import MembershipCard from "../MembershipCard";
+import MemberShell from "../MemberShell";
 import NotificationPreferencesCard from "../NotificationPreferences";
+import NotificationsCard from "../NotificationsCard";
+import QuickLinks from "../QuickLinks";
+import RecentActivity from "../RecentActivity";
 import RestrictionBanner from "../RestrictionBanner";
+import SummaryCards from "../SummaryCards";
+import DashboardIcon from "../icons";
 
-import styles from "./DashboardView.module.css";
+import styles from "../dashboard.module.css";
 
 export default function DashboardView({ model }: { model: DashboardPageModel }) {
-  const displayName = model.member ? lastNameFirst(model.member.name) : null;
+  const { member, summary, auth } = model;
+  const displayName = member ? lastNameFirst(member.name) : null;
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 
   return (
-    <main className="page page--900">
-      <div className={styles.brandBar}>
-        <CooperativeBrand />
-      </div>
+    <MemberShell member={member} user={auth.user} onLogout={auth.logout}>
+      <main className={styles.content}>
+        <div id="overview" className={`${styles.welcome} ${styles.anchor}`}>
+          <div>
+            <h1 className={styles.welcomeTitle}>
+              {displayName ? `Welcome, ${displayName}` : "My Dashboard"}
+            </h1>
+            <p className={styles.welcomeNote}>
+              Your savings, loans and payroll deductions at a glance.
+            </p>
+          </div>
+          <span className={styles.dateChip}>
+            <DashboardIcon name="calendar" size={16} />
+            {today}
+          </span>
+        </div>
 
-      <DashboardHeader
-        name={displayName}
-        fallbackTitle="My Dashboard"
-        identity={model.member?.name ?? userDisplayName(model.auth.user)}
-        onLogout={model.auth.logout}
-        actions={<NotificationBell />}
-      />
+        {model.feedback.error && <StatusMessage tone="error">{model.feedback.error}</StatusMessage>}
+        {model.feedback.success && (
+          <StatusMessage tone="success">{model.feedback.success}</StatusMessage>
+        )}
 
-      {model.member && (
-        <p style={{ color: "#555" }}>PSN {model.member.psn?.replace("MCT-", "") ?? ""}</p>
-      )}
+        {member && (
+          <>
+            <SummaryCards
+              savings={summary.savings}
+              loanBalance={summary.loanBalance}
+              deductions={summary.deductions}
+              loansEnabled={model.loansEnabled}
+              deductionsEnabled={model.deductionsEnabled}
+            />
 
-      {model.member && <ContributionCard member={model.member} />}
+            <div className={styles.split}>
+              <div className={styles.stack}>
+                <AccountOverview
+                  savings={summary.savings}
+                  loanBalance={summary.loanBalance}
+                  loansEnabled={model.loansEnabled}
+                />
+                <RecentActivity items={summary.activity} />
+              </div>
+              <div className={styles.stack}>
+                <MembershipCard member={member} />
+                <QuickLinks
+                  loansEnabled={model.loansEnabled}
+                  onApplyForLoan={() => {
+                    if (!model.apply.showForm) model.apply.toggle();
+                  }}
+                />
+                <NotificationsCard page={summary.notifications} />
+              </div>
+            </div>
+          </>
+        )}
 
-      {model.member?.loan_restricted && model.loansEnabled && (
-        <RestrictionBanner settings={model.settings} />
-      )}
+        {member?.loan_restricted && model.loansEnabled && (
+          <RestrictionBanner settings={model.settings} />
+        )}
 
-      {model.feedback.error && <StatusMessage tone="error">{model.feedback.error}</StatusMessage>}
-      {model.feedback.success && (
-        <StatusMessage tone="success">{model.feedback.success}</StatusMessage>
-      )}
-
-      {model.loansEnabled ? (
-        <>
-          <ApplyForLoan apply={model.apply} member={model.member} settings={model.settings} />
-          <ApplicationsSection applications={model.applications} />
-          <LoansSection loans={model.loans} />
-        </>
-      ) : (
-        <section style={{ marginTop: 24, padding: 16, border: "1px solid var(--border)" }}>
-          <h2>Loans module disabled</h2>
-          <p>
-            The Loans module has been disabled by an administrator. Loan applications and
-            repayments are unavailable until it is re-enabled.
-          </p>
+        <section id="savings" className={`${styles.section} ${styles.anchor}`}>
+          {member ? (
+            <ContributionCard member={member} />
+          ) : (
+            <p className={styles.empty}>Your member record could not be loaded.</p>
+          )}
         </section>
-      )}
 
-      {model.member && <NotificationPreferencesCard />}
+        <section id="loans" className={`${styles.section} ${styles.anchor}`}>
+          <h2 className={styles.sectionTitle}>Loans</h2>
+          {model.loansEnabled ? (
+            <>
+              <ApplyForLoan apply={model.apply} member={member} settings={model.settings} />
+              <ApplicationsSection applications={model.applications} />
+              <LoansSection loans={model.loans} />
+            </>
+          ) : (
+            <div className={styles.disabledPanel}>
+              <h2>Loans module disabled</h2>
+              <p>
+                The Loans module has been disabled by an administrator. Loan applications and
+                repayments are unavailable until it is re-enabled.
+              </p>
+            </div>
+          )}
+        </section>
 
-      <footer className={styles.footer}>
-        <PlatformAttribution />
-      </footer>
-    </main>
+        {member && (
+          <section id="preferences" className={`${styles.section} ${styles.anchor}`}>
+            <NotificationPreferencesCard />
+          </section>
+        )}
+
+        {!member && (
+          <div className={styles.panel} style={{ marginTop: 22 }}>
+            <h2 className={styles.panelTitle}>Member record unavailable</h2>
+            <p className={styles.panelNote}>
+              We could not load your membership details. Refresh the page or contact the office.
+            </p>
+          </div>
+        )}
+
+        <footer className={styles.footer}>
+          <PlatformAttribution />
+        </footer>
+      </main>
+    </MemberShell>
   );
 }

@@ -275,7 +275,7 @@ def test_a_contribution_approval_notifies_the_member_login(client, db_session):
     rows = _feed(db_session, user)
     assert len(rows) == 1
     assert rows[0].category == models.NotificationCategory.CONTRIBUTION
-    assert rows[0].title == "Contribution change approved"
+    assert rows[0].title == "Savings change approved"
     assert "8000.00" in rows[0].body
 
 

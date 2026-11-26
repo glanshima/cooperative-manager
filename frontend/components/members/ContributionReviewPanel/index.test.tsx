@@ -42,7 +42,7 @@ describe("ContributionReviewPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(handlers.onApprove).not.toHaveBeenCalled();
 
-    const dialog = screen.getByRole("dialog", { name: "Approve contribution change?" });
+    const dialog = screen.getByRole("dialog", { name: "Approve savings change?" });
     expect(dialog).toHaveTextContent("₦8,000.00");
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
@@ -63,7 +63,7 @@ describe("ContributionReviewPanel", () => {
     );
     await userEvent.click(reject);
 
-    const dialog = screen.getByRole("dialog", { name: "Reject contribution change?" });
+    const dialog = screen.getByRole("dialog", { name: "Reject savings change?" });
     expect(dialog).toHaveTextContent("Above the agreed cap");
     expect(handlers.onReject).not.toHaveBeenCalled();
 

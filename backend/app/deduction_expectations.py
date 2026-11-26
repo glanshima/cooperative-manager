@@ -271,7 +271,7 @@ def _price_member(
         if expectation.contribution_amount is None:
             expectation.due_reasons.append(DUE_CONTRIBUTION_AMOUNT_MISSING)
             expectation.warnings.append(
-                "No monthly contribution on file for this month — record the agreed amount on the member first."
+                "No monthly savings on file for this month — record the agreed amount on the member first."
             )
         elif expectation.contribution_amount > ZERO:
             expectation.due_reasons.append(DUE_CONTRIBUTION)

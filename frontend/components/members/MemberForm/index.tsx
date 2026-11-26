@@ -77,21 +77,21 @@ export default function MemberForm({ form }: { form: MembersPageModel["form"] })
             disabled={form.contributionLocked}
             placeholder={
               minimumContribution > 0
-                ? `Monthly contribution amount (min ₦${minimumContribution.toLocaleString()})`
-                : "Monthly contribution amount"
+                ? `Monthly savings amount (min ₦${minimumContribution.toLocaleString()})`
+                : "Monthly savings amount"
             }
             value={form.values.monthly_contribution_amount ?? ""}
             onChange={(e) => form.setField("monthly_contribution_amount", e.target.value ? parseFloat(e.target.value) : null)}
             style={{ width: "100%" }}
             title={
               form.contributionLocked
-                ? "Already on file — changes go through a contribution change request."
+                ? "Already on file — changes go through a savings change request."
                 : undefined
             }
           />
           {form.contributionLocked && (
             <p style={{ fontSize: 11, color: "#666", margin: "4px 0 0 0" }}>
-              On file. Changes go through a contribution change request.
+              On file. Changes go through a savings change request.
             </p>
           )}
         </div>

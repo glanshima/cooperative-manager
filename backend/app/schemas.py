@@ -323,6 +323,23 @@ class MemberSavingsOut(BaseModel):
     months_contributed: int
 
 
+class MemberDeductionsOut(BaseModel):
+    """The caller's own payroll deduction for one month, for their dashboard.
+
+    Contribution and loan lines are reported apart (arrears folded into the
+    loan figure) so a savings number can never read as a repayment or the
+    reverse. `status` says whether payroll actually held the money back:
+    draft and submitted are intent, confirmed is money, not_deducted means
+    payroll skipped the month."""
+
+    month: date
+    status: Optional[PayrollDeductionStatus] = None
+    contribution: Decimal = Decimal("0")
+    loan_repayment: Decimal = Decimal("0")
+    other: Decimal = Decimal("0")
+    total: Decimal = Decimal("0")
+
+
 class MemberWithdrawalOut(BaseModel):
     """What a membership exit means financially, in one response: the
     savings the member takes with them, what they still owe, and how much
@@ -1166,7 +1183,7 @@ def _validate_line_set(lines: List[PayrollDeductionLineInput]) -> List[PayrollDe
         line for line in lines if line.category == PayrollDeductionLineCategory.MONTHLY_CONTRIBUTION
     ]
     if len(contributions) > 1:
-        raise ValueError("A monthly deduction can only have one contribution line")
+        raise ValueError("A monthly deduction can only have one savings line")
     return lines
 
 

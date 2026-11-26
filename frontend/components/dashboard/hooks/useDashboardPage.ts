@@ -6,7 +6,12 @@ import {
   submitLoanApplication,
   listLoanTypes,
   listLoans,
+  listRepaymentsForLoan,
+  getMemberLoanBalance,
   getMyMemberRecord,
+  getMySavings,
+  getMyDeductions,
+  getNotifications,
   getSettings,
   fileToBase64,
   submitRepayment,
@@ -17,11 +22,16 @@ import {
   LoanApplication,
   LoanType,
   Loan,
+  LoanRepayment,
   Member,
+  MemberDeductions,
+  MemberLoanBalance,
+  MemberSavings,
+  NotificationPage,
   Settings,
   CurrentUser,
 } from "@/lib/api";
-import { currentMonth } from "@/lib/month";
+import { currentMonth, monthLabel } from "@/lib/month";
 import { computeLoanPreview, resolveTypeInterestTerms } from "@/lib/loanMath";
 
 export type LoanApplicationFormValues = {
@@ -35,6 +45,20 @@ export type LoanApplicationFormValues = {
   alternate_account_number: string;
   member_notes: string;
   payment_reference: string;
+};
+
+/** One row of the dashboard's recent-activity list, built only from
+ *  authoritative records: a loan's own disbursement, an application's own
+ *  request, a repayment's own claim. Never a running balance -- the member
+ *  side has no ledger series to derive one from. */
+export type DashboardActivityItem = {
+  id: string;
+  date: string;
+  title: string;
+  detail: string | null;
+  amount: string;
+  direction: "received" | "paid" | "requested";
+  status: string | null;
 };
 
 export const EMPTY_APPLICATION_FORM: LoanApplicationFormValues = {
@@ -55,7 +79,13 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
   const [applications, setApplications] = useState<LoanApplication[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loanTypes, setLoanTypes] = useState<LoanType[]>([]);
+  const [repayments, setRepayments] = useState<LoanRepayment[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+
+  const [savings, setSavings] = useState<MemberSavings | null>(null);
+  const [deductions, setDeductions] = useState<MemberDeductions | null>(null);
+  const [loanBalance, setLoanBalance] = useState<MemberLoanBalance | null>(null);
+  const [notifications, setNotifications] = useState<NotificationPage | null>(null);
 
   const [form, setForm] = useState<LoanApplicationFormValues>(EMPTY_APPLICATION_FORM);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -87,7 +117,22 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
       setMember(memberData);
       setSettings(settingsData);
 
-      if (settingsData.loans_module_enabled) {
+      const loansEnabledNow = Boolean(settingsData.loans_module_enabled);
+      const deductionsEnabledNow = Boolean(settingsData.deductions_module_enabled);
+
+      // Each dashboard figure is its own read: a failed savings lookup must
+      // not blank the loan card, and vice versa. Null renders as an
+      // unavailable state, never as zero.
+      setSavings(await getMySavings().catch(() => null));
+      setNotifications(await getNotifications({ limit: 3 }).catch(() => null));
+      setDeductions(
+        deductionsEnabledNow ? await getMyDeductions(currentMonth()).catch(() => null) : null
+      );
+      setLoanBalance(
+        loansEnabledNow ? await getMemberLoanBalance(memberData.id).catch(() => null) : null
+      );
+
+      if (loansEnabledNow) {
         const [appsData, loansData, typesData] = await Promise.all([
           listLoanApplications(),
           listLoans(),
@@ -96,10 +141,15 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
         setApplications(appsData);
         setLoans(loansData);
         setLoanTypes(typesData);
+        const repaymentLists = await Promise.all(
+          loansData.map((loan) => listRepaymentsForLoan(loan.id).catch(() => []))
+        );
+        setRepayments(repaymentLists.flat());
       } else {
         setApplications([]);
         setLoans([]);
         setLoanTypes([]);
+        setRepayments([]);
       }
     } catch (e: any) {
       setError(e.message);
@@ -304,11 +354,45 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
     selectedType ? parseFloat(selectedType.flat_charge) : 0
   );
 
+  const activity: DashboardActivityItem[] = [
+    ...applications.map((app) => ({
+      id: `application-${app.id}`,
+      date: app.created_at,
+      title: "Loan application",
+      detail: app.requested_tenure_months ? `${app.requested_tenure_months} months` : null,
+      amount: app.requested_amount,
+      direction: "requested" as const,
+      status: app.status,
+    })),
+    ...loans.map((loan) => ({
+      id: `loan-${loan.id}`,
+      date: loan.disbursement_date,
+      title: "Loan disbursed",
+      detail: loan.loan_type_name ?? null,
+      amount: loan.net_disbursed,
+      direction: "received" as const,
+      status: null,
+    })),
+    ...repayments.map((repayment) => ({
+      id: `repayment-${repayment.id}`,
+      date: repayment.created_at,
+      title: "Loan repayment",
+      detail: repayment.payment_month ? monthLabel(repayment.payment_month) : null,
+      amount: repayment.amount_claimed,
+      direction: "paid" as const,
+      status: repayment.status,
+    })),
+  ]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 6);
+
   return {
     auth: { user, logout },
     loading,
     member,
     settings,
+    deductionsEnabled: settings ? settings.deductions_module_enabled : false,
+    summary: { savings, deductions, loanBalance, notifications, activity },
     loansEnabled: settings ? settings.loans_module_enabled : true,
     feedback: { error, success },
     apply: {

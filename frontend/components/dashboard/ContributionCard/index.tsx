@@ -67,8 +67,8 @@ export default function ContributionCard({ member }: { member: Member }) {
   // only -- the figure they can reconcile against their own payslips.
   const savingsSummary = savings ? (
     <p style={{ margin: "0 0 12px", fontSize: 14 }}>
-      <strong style={{ fontSize: 20 }}>₦{formatMoney(savings.savings_balance)}</strong> contributed
-      so far
+      <strong style={{ fontSize: 20 }}>₦{formatMoney(savings.savings_balance)}</strong> saved so
+      far
       {savings.months_contributed > 0 && (
         <span style={{ color: "#666" }}>
           {" "}
@@ -82,11 +82,11 @@ export default function ContributionCard({ member }: { member: Member }) {
     e.preventDefault();
     const value = parseFloat(requestedAmount);
     if (!Number.isFinite(value) || value <= 0) {
-      setError("Enter the monthly amount you want to contribute.");
+      setError("Enter the monthly amount you want to save.");
       return;
     }
     if (minimum > 0 && value < minimum) {
-      setError(`The minimum monthly contribution is ₦${minimum.toLocaleString()}.`);
+      setError(`The minimum monthly savings is ₦${minimum.toLocaleString()}.`);
       return;
     }
     if (!reason.trim()) {
@@ -113,10 +113,10 @@ export default function ContributionCard({ member }: { member: Member }) {
   if (!isFinancial) {
     return (
       <section style={cardStyle}>
-        <h2 style={{ marginTop: 0 }}>Monthly contribution</h2>
+        <h2 style={{ marginTop: 0 }}>Monthly savings</h2>
         {savingsSummary}
         <p style={{ color: "#666", marginBottom: 0 }}>
-          Non-financial members don&apos;t have a monthly contribution. Anything you owe is
+          Non-financial members don&apos;t have a monthly savings amount. Anything you owe is
           recorded by an officer as a separate deduction.
         </p>
       </section>
@@ -126,10 +126,10 @@ export default function ContributionCard({ member }: { member: Member }) {
   if (!amount) {
     return (
       <section style={cardStyle}>
-        <h2 style={{ marginTop: 0 }}>Monthly contribution</h2>
+        <h2 style={{ marginTop: 0 }}>Monthly savings</h2>
         {savingsSummary}
         <p style={{ color: "#666", marginBottom: 0 }}>
-          Your contribution amount is not yet set. Contact an officer to record it.
+          Your savings amount is not yet set. Contact an officer to record it.
         </p>
       </section>
     );
@@ -137,7 +137,7 @@ export default function ContributionCard({ member }: { member: Member }) {
 
   return (
     <section style={cardStyle}>
-      <h2 style={{ marginTop: 0 }}>Monthly contribution</h2>
+      <h2 style={{ marginTop: 0 }}>Monthly savings</h2>
       {savingsSummary}
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
         <span style={{ fontSize: 24, fontWeight: 600 }}>₦{formatMoney(amount)}</span>
@@ -178,14 +178,14 @@ export default function ContributionCard({ member }: { member: Member }) {
 
       {showRequestModal && (
         <Modal
-          title="Request contribution change"
+          title="Request savings change"
           onClose={() => setShowRequestModal(false)}
           busy={loading}
-          closeLabel="Close contribution request"
+          closeLabel="Close savings request"
           maxWidth={400}
         >
           <p style={{ color: "#666", marginBottom: 16 }}>
-            Your current contribution is ₦{formatMoney(amount)}. Enter a new amount and a reason.
+            Your current monthly savings is ₦{formatMoney(amount)}. Enter a new amount and a reason.
           </p>
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div>

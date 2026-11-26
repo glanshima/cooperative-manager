@@ -326,9 +326,9 @@ export default function DeductionForm({
 
       {isFinancial ? (
         <>
-          <h3 style={{ marginBottom: 4 }}>Monthly contribution</h3>
+          <h3 style={{ marginBottom: 4 }}>Monthly savings</h3>
           <input
-            aria-label="Monthly contribution"
+            aria-label="Monthly savings"
             data-initial-focus={editing || prefill ? "true" : undefined}
             type="number"
             min="0"
@@ -341,7 +341,7 @@ export default function DeductionForm({
         </>
       ) : (
         <p style={{ color: "#666", fontSize: 14 }}>
-          Non-financial member — no monthly contribution. Anything they still
+          Non-financial member — no monthly savings. Anything they still
           owes goes under other deductions below.
         </p>
       )}

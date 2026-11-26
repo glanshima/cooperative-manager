@@ -44,7 +44,7 @@ def assert_status_may_have_contribution(status: models.MemberStatus) -> None:
     raise HTTPException(
         status_code=400,
         detail=(
-            "Only financial members have a monthly contribution. Record anything "
+            "Only financial members have monthly savings. Record anything "
             "a non-financial member owes as an 'other' deduction."
         ),
     )
@@ -107,7 +107,7 @@ def assert_meets_minimum(db: Session, value: Decimal) -> None:
     if minimum and value < minimum:
         raise HTTPException(
             status_code=422,
-            detail=f"The monthly contribution cannot be below {minimum:,.2f}.",
+            detail=f"The monthly savings cannot be below {minimum:,.2f}.",
         )
 
 

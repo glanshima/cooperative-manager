@@ -101,7 +101,7 @@ describe("DeductionForm queue prefill", () => {
     const { save } = renderForm({ prefill: makePrefill() });
 
     expect(screen.getByRole("heading", { name: "Enter deduction — Test Member" })).toBeInTheDocument();
-    expect((screen.getByLabelText("Monthly contribution") as HTMLInputElement).value).toBe("5000.00");
+    expect((screen.getByLabelText("Monthly savings") as HTMLInputElement).value).toBe("5000.00");
     expect((screen.getByLabelText("Repayment for Regular loan") as HTMLInputElement).value).toBe("1000.00");
     // The queue fixes the member and month; the officer records, not picks.
     expect(screen.getByLabelText("Member")).toBeDisabled();
@@ -125,7 +125,7 @@ describe("DeductionForm queue prefill", () => {
     const user = userEvent.setup();
     const { save } = renderForm({ prefill: makePrefill({ conflicted: true }) });
 
-    expect(screen.getByLabelText("Monthly contribution")).toBeDisabled();
+    expect(screen.getByLabelText("Monthly savings")).toBeDisabled();
     expect(screen.getByLabelText("Repayment for Regular loan")).toBeDisabled();
     // Discretionary 'other' lines are a money override -- hidden entirely.
     expect(screen.queryByRole("button", { name: "Add other deduction" })).not.toBeInTheDocument();
@@ -145,12 +145,12 @@ describe("DeductionForm queue prefill", () => {
     );
   });
 
-  it("hides the contribution field for a non-financial member", () => {
+  it("hides the savings field for a non-financial member", () => {
     renderForm({
       prefill: makePrefill({ memberStatus: "non_financial", contribution: "" }),
     });
 
-    expect(screen.queryByLabelText("Monthly contribution")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Monthly savings")).not.toBeInTheDocument();
     expect(screen.getByText(/Non-financial member/)).toBeInTheDocument();
     // They can still owe a loan instalment from before they exited.
     expect((screen.getByLabelText("Repayment for Regular loan") as HTMLInputElement).value).toBe("1000.00");
@@ -346,7 +346,7 @@ describe("DeductionForm editing", () => {
     const { save } = renderForm({ editing: EDITING_DRAFT, loans: [ACTIVE_LOAN] });
 
     expect(screen.getByRole("dialog")).toHaveAccessibleName("Edit draft deduction");
-    expect((screen.getByLabelText("Monthly contribution") as HTMLInputElement).value).toBe(
+    expect((screen.getByLabelText("Monthly savings") as HTMLInputElement).value).toBe(
       "5000.00"
     );
     expect(

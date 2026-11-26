@@ -256,7 +256,7 @@ describe("AdminDashboardView", () => {
 
     expect(
       screen.getByRole("img", {
-        name: /monthly savings contributions and verified repayments over the last six months/i,
+        name: /monthly savings and verified repayments over the last six months/i,
       })
     ).toBeInTheDocument();
     expect(screen.getByText("jdoe")).toBeInTheDocument();
@@ -282,7 +282,7 @@ describe("AdminDashboardView", () => {
     );
 
     expect(
-      screen.getByText(/no savings contributions or verified repayments/i)
+      screen.getByText(/no savings or verified repayments/i)
     ).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });

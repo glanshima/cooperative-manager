@@ -18,7 +18,7 @@ function monthLabel(key: string, showYear: boolean): string {
 
 export default function TrendChart({ trend }: { trend: DashboardTrend }) {
   const series = [
-    trend.savings ? { key: "savings", label: "Savings contributions", values: trend.savings } : null,
+    trend.savings ? { key: "savings", label: "Savings", values: trend.savings } : null,
     trend.repayments
       ? { key: "repayments", label: "Verified repayments", values: trend.repayments }
       : null,
@@ -32,7 +32,7 @@ export default function TrendChart({ trend }: { trend: DashboardTrend }) {
   if (!peak) {
     return (
       <p className={styles.empty}>
-        No savings contributions or verified repayments in the last six months.
+        No savings or verified repayments in the last six months.
       </p>
     );
   }
@@ -55,7 +55,7 @@ export default function TrendChart({ trend }: { trend: DashboardTrend }) {
         className={styles.chart}
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="img"
-        aria-label="Monthly savings contributions and verified repayments over the last six months"
+        aria-label="Monthly savings and verified repayments over the last six months"
       >
         <text x="0" y="12" className={styles.axisLabel}>
           ₦{formatMoney(peak)}

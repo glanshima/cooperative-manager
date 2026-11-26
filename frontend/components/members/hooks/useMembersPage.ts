@@ -596,7 +596,7 @@ export function useMembersPage(
     setSuccess(null);
     try {
       await approveContributionChangeRequest(id, { reason: reason.trim() || undefined });
-      setSuccess("Contribution change approved. The new amount applies from next month.");
+      setSuccess("Savings change approved. The new amount applies from next month.");
       await refreshContributionRequests();
       await refresh();
       return true;
@@ -611,7 +611,7 @@ export function useMembersPage(
     setSuccess(null);
     try {
       await rejectContributionChangeRequest(id, { reason: reason.trim() });
-      setSuccess("Contribution change rejected.");
+      setSuccess("Savings change rejected.");
       await refreshContributionRequests();
       return true;
     } catch (e: any) {

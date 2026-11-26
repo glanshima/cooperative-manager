@@ -145,6 +145,18 @@ export async function listLoans(params?: { member_id?: string; status?: LoanStat
   return apiFetch<Loan[]>("/api/loans", { searchParams: params });
 }
 
+/** Server-computed total across the member's active loans -- never re-derived here. */
+export interface MemberLoanBalance {
+  member_id: string;
+  active_loan_count: number;
+  total_outstanding_balance: string;
+  conflicted: boolean;
+}
+
+export async function getMemberLoanBalance(memberId: string): Promise<MemberLoanBalance> {
+  return apiFetch<MemberLoanBalance>(`/api/loans/member/${memberId}/balance`);
+}
+
 export async function createLoan(input: LoanInput): Promise<Loan> {
   return apiFetch<Loan>("/api/loans", { method: "POST", body: input });
 }

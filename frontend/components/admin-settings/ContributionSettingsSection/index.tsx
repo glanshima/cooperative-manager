@@ -14,9 +14,9 @@ export default function ContributionSettingsSection({
 
   return (
     <section>
-      <h2>Contributions</h2>
+      <h2>Savings</h2>
       <label style={{ display: "block", marginBottom: 8 }}>
-        Minimum monthly contribution
+        Minimum monthly savings
         <input
           type="number"
           step="0.01"
@@ -26,7 +26,7 @@ export default function ContributionSettingsSection({
           style={{ display: "block", padding: 8, marginTop: 4 }}
         />
         <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-          A member&apos;s agreed contribution cannot be lower than this. 0 means no minimum.
+          A member&apos;s agreed savings cannot be lower than this. 0 means no minimum.
         </span>
       </label>
       <label style={{ display: "block" }}>

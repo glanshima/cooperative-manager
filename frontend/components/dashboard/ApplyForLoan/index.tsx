@@ -25,6 +25,7 @@ export default function ApplyForLoan({
             borderRadius: 8,
             padding: 16,
             marginBottom: 24,
+            minWidth: 0,
           }}
         >
           <h2>New loan application</h2>
@@ -34,7 +35,7 @@ export default function ApplyForLoan({
             attach a photo/scan of the receipt below.
           </p>
 
-          <form onSubmit={apply.submit} style={{ display: "grid", gap: 10 }}>
+          <form onSubmit={apply.submit} className="form-grid">
             <select
               required
               value={form.loan_type_id}
