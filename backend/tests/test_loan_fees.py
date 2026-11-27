@@ -5,11 +5,20 @@ added to total_repayable and NOT part of any instalment. loans.fee_amount
 records what is owed; loan_fee_payments is the verified proof ledger a
 future cashbook will report.
 """
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from decimal import Decimal
+from threading import Barrier
+from uuid import uuid4
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from app import models
+from app.main import app
+from app.routers import loan_fees
 from tests.conftest import (
+    TestSessionLocal,
     auth_headers,
     grant_permission,
     make_admin_user,
@@ -163,6 +172,46 @@ def test_paid_loan_reports_fee_paid_and_refuses_another_submission(
     assert "already been paid" in again.json()["detail"]
 
 
+def test_application_paid_loan_cannot_verify_an_old_second_fee_payment(
+    client, db_session, seed_permissions
+):
+    _, _, loan = _fixture(db_session, psn="PSN-FEE-APP-PAID")
+    loan.fee_paid_via_application = True
+    db_session.commit()
+    admin = _verifier(db_session)
+    payment = models.LoanFeePayment(
+        loan_id=loan.id,
+        member_id=loan.member_id,
+        amount=loan.fee_amount,
+        payment_reference="TRF-LEGACY-SECOND-FEE",
+        receipt_image_base64="aGVsbG8=",
+        receipt_content_type="image/png",
+        status=models.FeePaymentStatus.AWAITING_VERIFICATION,
+    )
+    db_session.add(payment)
+    db_session.commit()
+    db_session.refresh(payment)
+
+    blocked = client.post(
+        f"/api/loan-fees/{payment.id}/verify",
+        headers=auth_headers(admin),
+        json={"approved": True},
+    )
+    assert blocked.status_code == 400, blocked.text
+    assert "paid with its application" in blocked.json()["detail"]
+    db_session.expire_all()
+    still_open = db_session.query(models.LoanFeePayment).filter(models.LoanFeePayment.id == payment.id).one()
+    assert still_open.status == models.FeePaymentStatus.AWAITING_VERIFICATION
+
+    rejected = client.post(
+        f"/api/loan-fees/{payment.id}/verify",
+        headers=auth_headers(admin),
+        json={"approved": False, "rejection_reason": "Fee already settled with application"},
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == "rejected"
+
+
 def test_rejection_requires_a_reason_and_records_it(client, db_session, seed_permissions):
     _, user, loan = _fixture(db_session)
     admin = _verifier(db_session)
@@ -242,3 +291,120 @@ def test_conflicted_officer_cannot_verify_a_related_members_fee(
         .one()
     )
     assert still_open.status == models.FeePaymentStatus.AWAITING_VERIFICATION
+
+
+def test_concurrent_direct_fee_requests_create_and_verify_only_one_obligation(monkeypatch):
+    setup: Session = TestSessionLocal()
+    suffix = uuid4().hex[:8]
+    member = user = loan = admin = None
+    try:
+        member = make_member(
+            setup,
+            psn=f"PSN-FEE-RACE-{suffix}",
+            email=f"fee-race-{suffix}@example.com",
+        )
+        user = make_member_user(setup, member)
+        loan_type = make_loan_type(setup, f"Fee Race Loan {suffix}")
+        loan = _make_loan(setup, member, loan_type)
+        admin = make_admin_user(
+            setup, username=f"fee_race_{suffix}", super_admin=True
+        )
+
+        monkeypatch.setattr(
+            loan_fees.notification_service, "notify_staff", lambda *args, **kwargs: 0
+        )
+        monkeypatch.setattr(
+            loan_fees.notification_service, "notify_member", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(
+            loan_fees.audit_service, "log_event", lambda *args, **kwargs: None
+        )
+        posting_calls = []
+        post_loan_fee = loan_fees.cashbook.post_loan_fee
+
+        def record_posting(db, payment, **kwargs):
+            posting_calls.append(payment.id)
+            return post_loan_fee(db, payment, **kwargs)
+
+        monkeypatch.setattr(loan_fees.cashbook, "post_loan_fee", record_posting)
+
+        submit_barrier = Barrier(2)
+
+        def submit(reference):
+            with TestClient(app) as test_client:
+                submit_barrier.wait()
+                return test_client.post(
+                    f"/api/loans/{loan.id}/fee-payment",
+                    headers=auth_headers(user),
+                    json={
+                        "payment_reference": reference,
+                        "receipt_image_base64": "aGVsbG8=",
+                        "receipt_content_type": "image/png",
+                    },
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            submitted = list(
+                pool.map(submit, [f"TRF-RACE-A-{suffix}", f"TRF-RACE-B-{suffix}"])
+            )
+
+        assert sorted(response.status_code for response in submitted) == [201, 400]
+        created = next(response for response in submitted if response.status_code == 201)
+        payment_id = created.json()["id"]
+        setup.expire_all()
+        assert (
+            setup.query(models.LoanFeePayment)
+            .filter(models.LoanFeePayment.loan_id == loan.id)
+            .count()
+            == 1
+        )
+
+        verify_barrier = Barrier(2)
+
+        def verify(_):
+            with TestClient(app) as test_client:
+                verify_barrier.wait()
+                return test_client.post(
+                    f"/api/loan-fees/{payment_id}/verify",
+                    headers=auth_headers(admin),
+                    json={"approved": True},
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            verified = list(pool.map(verify, [0, 1]))
+
+        assert sorted(response.status_code for response in verified) == [200, 400]
+        setup.expire_all()
+        stored = (
+            setup.query(models.LoanFeePayment)
+            .filter(models.LoanFeePayment.id == payment_id)
+            .one()
+        )
+        assert stored.status == models.FeePaymentStatus.VERIFIED
+        assert posting_calls == [stored.id]
+    finally:
+        setup.rollback()
+        if loan is not None:
+            setup.query(models.LoanFeePayment).filter(
+                models.LoanFeePayment.loan_id == loan.id
+            ).delete(synchronize_session=False)
+            setup.query(models.Loan).filter(models.Loan.id == loan.id).delete(
+                synchronize_session=False
+            )
+            setup.query(models.LoanType).filter(
+                models.LoanType.id == loan.loan_type_id
+            ).delete(synchronize_session=False)
+        if user is not None:
+            setup.query(models.User).filter(models.User.id == user.id).delete(
+                synchronize_session=False
+            )
+        if admin is not None:
+            setup.query(models.User).filter(models.User.id == admin.id).delete(
+                synchronize_session=False
+            )
+        if member is not None:
+            setup.query(models.Member).filter(models.Member.id == member.id).delete(
+                synchronize_session=False
+            )
+        setup.commit()
+        setup.close()

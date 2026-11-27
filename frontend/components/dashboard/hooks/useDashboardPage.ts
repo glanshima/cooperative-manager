@@ -34,6 +34,8 @@ import {
 import { currentMonth, monthLabel } from "@/lib/month";
 import { computeLoanPreview, resolveTypeInterestTerms } from "@/lib/loanMath";
 
+export type LoanApplicationStep = 1 | 2 | 3 | 4;
+
 export type LoanApplicationFormValues = {
   loan_type_id: string;
   requested_amount: number;
@@ -88,8 +90,11 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
   const [notifications, setNotifications] = useState<NotificationPage | null>(null);
 
   const [form, setForm] = useState<LoanApplicationFormValues>(EMPTY_APPLICATION_FORM);
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptFile, setReceiptFileState] = useState<File | null>(null);
   const [showApplyForm, setShowApplyForm] = useState(false);
+  const [applicationStep, setApplicationStep] = useState<LoanApplicationStep>(1);
+  const [applicationError, setApplicationError] = useState<string | null>(null);
+  const [applicationSubmitting, setApplicationSubmitting] = useState(false);
 
   const [servicingLoanId, setServicingLoanId] = useState<string | null>(null);
   const [reapplyFromId, setReapplyFromId] = useState<string | null>(null);
@@ -168,25 +173,89 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
     value: LoanApplicationFormValues[K]
   ) {
     setForm((current) => ({ ...current, [key]: value }));
+    setApplicationError(null);
+  }
+
+  function setReceiptFile(file: File | null) {
+    setReceiptFileState(file);
+    setApplicationError(null);
+  }
+
+  function toggleApplyForm() {
+    if (!showApplyForm) {
+      setApplicationStep(1);
+      setApplicationError(null);
+    }
+    setShowApplyForm((current) => !current);
+  }
+
+  function validateApplicationStep(step: LoanApplicationStep): string | null {
+    if (step === 1) {
+      if (!form.loan_type_id) return "Choose a loan type.";
+      if (!form.requested_amount || form.requested_amount <= 0) {
+        return "Enter the amount you want to request.";
+      }
+      if (form.requested_tenure_months !== "") {
+        const defaultTenure = selectedType?.tenure_months ?? 0;
+        if (
+          form.requested_tenure_months <= 0 ||
+          form.requested_tenure_months > defaultTenure
+        ) {
+          return `Choose a tenure between 1 and ${defaultTenure} months.`;
+        }
+      }
+    }
+    if (
+      step === 2 &&
+      !form.use_default_account &&
+      (!form.alternate_bank_name.trim() ||
+        !form.alternate_account_name.trim() ||
+        !form.alternate_account_number.trim())
+    ) {
+      return "Enter the bank name, account name and account number, or use your account on file.";
+    }
+    if (step === 3) {
+      if (!form.payment_reference.trim()) return "Enter your bank transfer reference.";
+      if (!receiptFile) return "Attach your payment receipt.";
+    }
+    return null;
+  }
+
+  function goToApplicationStep(nextStep: LoanApplicationStep) {
+    if (nextStep > applicationStep) {
+      for (let step = applicationStep; step < nextStep; step += 1) {
+        const message = validateApplicationStep(step as LoanApplicationStep);
+        if (message) {
+          setApplicationError(message);
+          return;
+        }
+      }
+    }
+    setApplicationError(null);
+    setApplicationStep(nextStep);
   }
 
   async function handleSubmitApplication(e: FormEvent) {
     e.preventDefault();
+    if (applicationStep !== 4) {
+      goToApplicationStep((applicationStep + 1) as 2 | 3 | 4);
+      return;
+    }
     setError(null);
     setSuccess(null);
 
-    if (!receiptFile) {
-      setError("Please attach your payment receipt.");
-      return;
+    for (const step of [1, 2, 3] as const) {
+      const message = validateApplicationStep(step);
+      if (message) {
+        setApplicationStep(step);
+        setApplicationError(message);
+        return;
+      }
     }
-    if (
-      !form.use_default_account &&
-      (!form.alternate_bank_name || !form.alternate_account_name || !form.alternate_account_number)
-    ) {
-      setError("Please provide the bank name, account name, and account number, or use your default account.");
-      return;
-    }
+    if (!receiptFile) return;
 
+    setApplicationSubmitting(true);
+    setApplicationError(null);
     try {
       const base64 = await fileToBase64(receiptFile);
       const commonFields = {
@@ -213,17 +282,23 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
         setSuccess("Application submitted. It will be reviewed once your payment is verified.");
       }
       setForm(EMPTY_APPLICATION_FORM);
-      setReceiptFile(null);
+      setReceiptFileState(null);
       setShowApplyForm(false);
+      setApplicationStep(1);
       setReapplyFromId(null);
       await refresh();
     } catch (e: any) {
-      setError(e.message);
+      setApplicationError(e.message);
+    } finally {
+      setApplicationSubmitting(false);
     }
   }
 
   function handleStartReapply(app: LoanApplication) {
     setReapplyFromId(app.id);
+    setReceiptFileState(null);
+    setApplicationStep(1);
+    setApplicationError(null);
     setForm({
       ...EMPTY_APPLICATION_FORM,
       loan_type_id: app.loan_type_id,
@@ -351,7 +426,7 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
     previewTenure,
     typeTerms.mode,
     typeTerms.spreadMonths,
-    selectedType ? parseFloat(selectedType.flat_charge) : 0
+    parseFloat(settings?.loan_form_fee ?? "0")
   );
 
   const activity: DashboardActivityItem[] = [
@@ -397,7 +472,11 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
     feedback: { error, success },
     apply: {
       showForm: showApplyForm,
-      toggle: () => setShowApplyForm((current) => !current),
+      toggle: toggleApplyForm,
+      step: applicationStep,
+      goToStep: goToApplicationStep,
+      error: applicationError,
+      submitting: applicationSubmitting,
       form,
       setField: setFormField,
       receiptFile,
@@ -410,7 +489,7 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
         mode: typeTerms.mode,
         spreadMonths: typeTerms.spreadMonths,
         interest: preview.interest,
-        flatCharge: preview.fee,
+        fee: preview.fee,
         netDisbursed: preview.netDisbursed,
         totalRepayable: preview.totalRepayable,
         installment: preview.installment,

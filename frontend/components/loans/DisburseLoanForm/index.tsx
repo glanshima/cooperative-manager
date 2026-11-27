@@ -82,8 +82,8 @@ export default function DisburseLoanForm({ disburse }: { disburse: LoansPageMode
               ` + ${preview.interestInstallment.toFixed(2)} interest for the first ${
                 preview.spreadMonths ?? 0
               } months`}
-            {preview.flatCharge > 0 &&
-              ` · Processing fee (paid separately): ${preview.flatCharge.toFixed(2)}`}
+            {preview.fee > 0 &&
+              ` · Loan fee (paid separately): ₦${preview.fee.toFixed(2)}`}
           </div>
         )}
 

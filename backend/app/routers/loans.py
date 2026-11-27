@@ -17,8 +17,7 @@ from ..deps import (
 from ..loan_calc import (
     compute_expected_end_date,
     compute_loan_terms,
-    get_effective_terms,
-    resolve_interest_terms,
+    resolve_loan_terms,
 )
 from ..loan_rules import (
     assert_member_may_borrow,
@@ -32,7 +31,6 @@ from ..self_conflict import (
     mark_conflicted_reads,
     require_no_member_conflict,
 )
-
 router = APIRouter(
     prefix="/api/loans",
     tags=["loans"],
@@ -203,12 +201,13 @@ def create_loan(
     # Direct admin disbursement uses the rate effective as of the chosen
     # disbursement_date, and the loan type's default tenure (there's no
     # "requested tenure" negotiation on this admin-direct path).
-    interest_rate, tenure_months, flat_charge = get_effective_terms(
-        db, loan_type, payload.disbursement_date
+    resolved = resolve_loan_terms(
+        db, loan_type, payload.disbursement_date, lock_configuration=True
     )
-    interest_mode, interest_spread_months = resolve_interest_terms(
-        db, loan_type, payload.disbursement_date
-    )
+    interest_rate = resolved.interest_rate
+    tenure_months = resolved.tenure_months
+    interest_mode = resolved.interest_mode
+    interest_spread_months = resolved.interest_spread_months
     try:
         terms = compute_loan_terms(
             payload.principal, interest_rate, tenure_months, interest_mode, interest_spread_months
@@ -236,7 +235,7 @@ def create_loan(
             else None
         ),
         interest_installment=terms.interest_installment,
-        fee_amount=flat_charge,
+        fee_amount=resolved.form_fee,
         disbursement_date=payload.disbursement_date,
         expected_end_date=expected_end_date,
         disbursement_bank_name=member.bank_name,

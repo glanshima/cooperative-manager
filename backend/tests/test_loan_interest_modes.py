@@ -22,7 +22,7 @@ from app.loan_calc import (
     expected_total_by_due_month,
     instalment_for_due_month,
 )
-from tests.conftest import auth_headers, make_admin_user, make_loan_type, make_member
+from tests.conftest import auth_headers, make_admin_user, make_loan_type, make_member, make_settings
 
 ZERO = Decimal("0.00")
 
@@ -116,7 +116,8 @@ def _disburse(client, admin, member, loan_type, *, principal="1000.00", disburse
     )
 
 
-def test_flat_charge_is_recorded_but_never_added_to_the_loan(client, db_session):
+def test_universal_fee_is_recorded_but_never_added_to_the_loan(client, db_session):
+    make_settings(db_session, loan_form_fee=Decimal("25.00"))
     admin = make_admin_user(db_session, username="modes_admin", super_admin=True)
     member = make_member(db_session, psn="PSN-MODES-1", email="modes1@example.com")
     loan_type = make_loan_type(
@@ -131,8 +132,8 @@ def test_flat_charge_is_recorded_but_never_added_to_the_loan(client, db_session)
     assert Decimal(body["net_disbursed"]) == Decimal("850.00")
     assert Decimal(body["interest_amount"]) == Decimal("150.00")
     assert Decimal(body["monthly_installment"]) == Decimal("100.00")
-    # The fee is owed and tracked, but outside every loan figure.
-    assert Decimal(body["fee_amount"]) == Decimal("1.00")
+    # The cooperative's single fee snapshot is owed separately, outside every loan figure.
+    assert Decimal(body["fee_amount"]) == Decimal("25.00")
     assert body["fee_status"] == "due"
 
 

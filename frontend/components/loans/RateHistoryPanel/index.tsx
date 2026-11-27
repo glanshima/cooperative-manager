@@ -34,7 +34,7 @@ export default function RateHistoryPanel({ types }: { types: LoansPageModel["typ
             <th>Effective from</th>
             <th>Rate</th>
             <th>Tenure</th>
-            <th>Fee</th>
+            <th>Legacy fee</th>
             <th>Interest deduction</th>
           </tr>
         </thead>
@@ -59,7 +59,8 @@ export default function RateHistoryPanel({ types }: { types: LoansPageModel["typ
       <p style={{ fontSize: 13, color: "#666" }}>
         Adding a new version below does NOT affect loans already disbursed — it only applies to
         loans disbursed on or after the effective date you choose (which can be in the future, to
-        schedule an upcoming change).
+        schedule an upcoming change). Legacy fees are shown for history only; the universal fee
+        is configured in Settings.
       </p>
       <form onSubmit={types.submitVersion} className="form-grid">
         <input
@@ -76,15 +77,6 @@ export default function RateHistoryPanel({ types }: { types: LoansPageModel["typ
           placeholder="New tenure (months)"
           value={newVersion.tenure_months}
           onChange={(e) => types.setVersionField("tenure_months", parseInt(e.target.value))}
-        />
-        <input
-          type="number"
-          step="0.01"
-          placeholder="New fee (optional)"
-          value={newVersion.flat_charge}
-          onChange={(e) =>
-            types.setVersionField("flat_charge", parseFloat(e.target.value) || 0)
-          }
         />
         <select
           aria-label="Interest deduction"

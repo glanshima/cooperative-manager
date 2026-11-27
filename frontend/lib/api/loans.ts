@@ -12,8 +12,8 @@ export interface LoanType {
   description?: string | null;
   interest_rate: string; // decimal fraction as string, e.g. "0.1500" - current effective rate (cached)
   tenure_months: number;
-  // Processing fee, paid separately: never deducted from the loan and never
-  // added to what the member repays.
+  // Legacy per-type fee retained for historical records only. New loans use
+  // Settings.loan_form_fee and snapshot it on the loan/application.
   flat_charge: string;
   // null = inherit the cooperative default.
   interest_mode?: InterestDeductionMode | null;
@@ -111,7 +111,7 @@ export interface Loan {
   interest_spread_months?: number | null;
   // Extra amount on each of the first interest_spread_months instalments.
   interest_installment?: string;
-  // Processing fee owed separately; fee_status tracks its own payment.
+  // Universal loan fee snapshot, owed separately; fee_status tracks its own payment.
   fee_amount?: string;
   fee_status?: "not_required" | "due" | "awaiting_verification" | "rejected" | "paid";
   fee_rejection_reason?: string | null;

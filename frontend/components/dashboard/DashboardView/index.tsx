@@ -101,7 +101,7 @@ export default function DashboardView({ model }: { model: DashboardPageModel }) 
           <h2 className={styles.sectionTitle}>Loans</h2>
           {model.loansEnabled ? (
             <>
-              <ApplyForLoan apply={model.apply} member={member} settings={model.settings} />
+              <ApplyForLoan apply={model.apply} member={member} />
               <ApplicationsSection applications={model.applications} />
               <LoansSection loans={model.loans} />
             </>

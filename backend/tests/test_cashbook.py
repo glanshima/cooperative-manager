@@ -822,6 +822,107 @@ def test_a_verified_fee_posts_income(client, db_session):
     assert posted[cashbook.LOAN_FEE_INCOME] == (ZERO, Decimal("50.00"))
 
 
+def test_a_verified_application_fee_posts_once_against_the_application(client, db_session):
+    admin = _ready(client, db_session)
+    make_settings(db_session, loan_form_fee=Decimal("35.00"))
+    member = make_member(db_session, psn="CB-APP-FEE", email="cbappfee@example.com")
+    user = make_member_user(db_session, member)
+    loan_type = make_loan_type(db_session, "Cashbook Application Fee Loan", open_for_application=True)
+
+    submitted = client.post(
+        "/api/loan-applications",
+        json={
+            "loan_type_id": str(loan_type.id),
+            "requested_amount": "500.00",
+            "payment_reference": "TRF-APP-CB",
+            "receipt_image_base64": "aGVsbG8=",
+            "receipt_content_type": "image/png",
+        },
+        headers=auth_headers(user),
+    )
+    assert submitted.status_code == 201, submitted.text
+    application_id = submitted.json()["id"]
+    assert Decimal(submitted.json()["form_fee_amount"]) == Decimal("35.00")
+
+    verified = client.post(
+        f"/api/loan-applications/{application_id}/verify-payment",
+        json={"approved": True},
+        headers=auth_headers(admin),
+    )
+    assert verified.status_code == 200, verified.text
+
+    entry = _entry_for(
+        db_session, models.CashbookEntrySource.LOAN_FEE, uuid.UUID(application_id)
+    )
+    posted = {line.account.system_key: (line.debit, line.credit) for line in entry.lines}
+    assert posted[cashbook.BANK] == (Decimal("35.00"), ZERO)
+    assert posted[cashbook.LOAN_FEE_INCOME] == (ZERO, Decimal("35.00"))
+    assert _balance(db_session, cashbook.LOAN_FEE_INCOME) == Decimal("35.00")
+
+    repeated = client.post(
+        f"/api/loan-applications/{application_id}/verify-payment",
+        json={"approved": True},
+        headers=auth_headers(admin),
+    )
+    assert repeated.status_code == 400
+    assert (
+        db_session.query(models.CashbookEntry)
+        .filter(
+            models.CashbookEntry.source == models.CashbookEntrySource.LOAN_FEE,
+            models.CashbookEntry.source_id == uuid.UUID(application_id),
+        )
+        .count()
+        == 1
+    )
+
+
+def test_application_fee_verification_waits_for_the_opening_journal(client, db_session):
+    _enable(db_session)
+    _ensure_chart(db_session)
+    admin = make_admin_user(db_session, username="cb_app_unopened", super_admin=True)
+    make_settings(db_session, loan_form_fee=Decimal("35.00"))
+    member = make_member(db_session, psn="CB-APP-UNOPENED", email="cbappunopened@example.com")
+    user = make_member_user(db_session, member)
+    loan_type = make_loan_type(db_session, "Cashbook Unopened Application", open_for_application=True)
+
+    submitted = client.post(
+        "/api/loan-applications",
+        json={
+            "loan_type_id": str(loan_type.id),
+            "requested_amount": "500.00",
+            "payment_reference": "TRF-APP-UNOPENED",
+            "receipt_image_base64": "aGVsbG8=",
+            "receipt_content_type": "image/png",
+        },
+        headers=auth_headers(user),
+    )
+    assert submitted.status_code == 201, submitted.text
+    application_id = submitted.json()["id"]
+
+    blocked = client.post(
+        f"/api/loan-applications/{application_id}/verify-payment",
+        json={"approved": True},
+        headers=auth_headers(admin),
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert "opening balances" in blocked.json()["detail"]
+    db_session.expire_all()
+    pending = db_session.query(models.LoanApplication).filter(models.LoanApplication.id == application_id).one()
+    assert pending.payment_status == models.PaymentVerificationStatus.AWAITING_VERIFICATION
+    assert db_session.query(models.CashbookEntry).count() == 0
+
+    _opening(client, admin, db_session)
+    verified = client.post(
+        f"/api/loan-applications/{application_id}/verify-payment",
+        json={"approved": True},
+        headers=auth_headers(admin),
+    )
+    assert verified.status_code == 200, verified.text
+    assert _entry_for(
+        db_session, models.CashbookEntrySource.LOAN_FEE, uuid.UUID(application_id)
+    )
+
+
 def test_settlement_and_payout_post_to_the_right_accounts(client, db_session):
     admin = _ready(client, db_session, cash="500.00")
     member = make_member(

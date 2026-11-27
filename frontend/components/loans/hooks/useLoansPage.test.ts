@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { computeDisbursePreview } from "./useLoansPage";
 
-const TYPE = { interest_rate: "0.15", flat_charge: "0.00", tenure_months: 12 };
+const TYPE = { interest_rate: "0.15", tenure_months: 12 };
 
 describe("computeDisbursePreview", () => {
   it("deducts interest at source instead of adding it to the repayable total", () => {
@@ -17,13 +17,10 @@ describe("computeDisbursePreview", () => {
     expect(preview.mode).toBe("at_source");
   });
 
-  it("never adds the processing fee to the loan figures", () => {
-    const preview = computeDisbursePreview(100_000, {
-      ...TYPE,
-      flat_charge: "1000.00",
-    });
+  it("uses the universal loan fee without adding it to the loan figures", () => {
+    const preview = computeDisbursePreview(100_000, TYPE, undefined, undefined, 1000);
 
-    expect(preview.flatCharge).toBeCloseTo(1000, 2);
+    expect(preview.fee).toBeCloseTo(1000, 2);
     expect(preview.total).toBeCloseTo(100_000, 2);
     expect(preview.installment).toBeCloseTo(8333.33, 2);
     expect(preview.netDisbursed).toBeCloseTo(85_000, 2);
@@ -71,7 +68,7 @@ describe("computeDisbursePreview", () => {
     expect(computeDisbursePreview(100_000, undefined)).toEqual({
       interest: 0,
       netDisbursed: 0,
-      flatCharge: 0,
+      fee: 0,
       total: 0,
       installment: 0,
       interestInstallment: 0,

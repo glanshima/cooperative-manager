@@ -11,7 +11,7 @@ export interface LoanTermsPreview {
   installment: number;
   // Extra per month during the first spreadMonths instalments.
   interestInstallment: number;
-  // The processing fee, owed separately -- shown, never part of the sums.
+  // The universal loan fee, owed separately -- shown, never part of the sums.
   fee: number;
 }
 

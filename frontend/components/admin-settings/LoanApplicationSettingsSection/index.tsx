@@ -13,14 +13,19 @@ export default function LoanApplicationSettingsSection({
     <section>
       <h2>Loan applications</h2>
       <label style={{ display: "block", marginBottom: 8 }}>
-        Loan form fee
+        Universal loan/application fee
         <input
           type="number"
+          min="0"
           step="0.01"
           value={settings.loan_form_fee}
           onChange={(e) => setField("loan_form_fee", e.target.value)}
           style={{ display: "block", padding: 8, marginTop: 4 }}
         />
+        <span style={{ display: "block", marginTop: 4, fontSize: 12, color: "var(--text-muted)" }}>
+          One fee for every loan type, paid separately from the loan. Each new application or
+          direct loan keeps a snapshot of this amount.
+        </span>
       </label>
       <label style={{ display: "block", marginBottom: 8 }}>
         Interest deduction (applies to loan types without their own setting)

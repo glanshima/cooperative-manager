@@ -1,8 +1,9 @@
 import { apiFetch } from "./client";
 import type { PaymentVerificationStatus } from "./applications";
 
-// A loan's processing fee is cooperative income paid SEPARATELY from the
-// loan: verifying one never changes the loan's payout, total or balance.
+// A direct loan's universal fee is cooperative income paid SEPARATELY from
+// the loan: verifying one never changes the loan's payout, total or balance.
+// Application-derived loans settle their fee during application review.
 export interface LoanFeePayment {
   id: string;
   loan_id: string;

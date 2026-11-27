@@ -1,3 +1,4 @@
+import type { InterestDeductionMode } from "./loans";
 import { apiFetch } from "./client";
 
 export type LoanApplicationStatus = "pending" | "approved" | "rejected" | "cancelled";
@@ -12,6 +13,9 @@ export interface LoanApplication {
   requested_tenure_months?: number | null;
   approved_tenure_months?: number | null;
   tenure_decision_reason?: string | null;
+  approved_interest_rate?: string | null;
+  approved_interest_mode?: InterestDeductionMode | null;
+  approved_interest_spread_months?: number | null;
   preferred_disbursement_date?: string | null;
   use_default_account: boolean;
   alternate_bank_name?: string | null;

@@ -27,7 +27,7 @@ export default function LoansSection({ loans }: { loans: DashboardPageModel["loa
               <th>Principal</th>
               <th>Monthly installment</th>
               <th>Balance</th>
-              <th>Processing fee</th>
+              <th>Loan fee</th>
               <th>Status</th>
               <th>Expected end</th>
               <th></th>
@@ -80,9 +80,9 @@ export default function LoansSection({ loans }: { loans: DashboardPageModel["loa
             marginTop: 16,
           }}
         >
-          <h3>Pay the processing fee</h3>
+          <h3>Pay the loan fee</h3>
           <p style={{ fontSize: 13, color: "#666", marginTop: 0 }}>
-            The processing fee is separate from your loan. Pay it to the cooperative and attach
+            The loan fee is separate from your loan. Pay it to the cooperative and attach
             the receipt — a staff member verifies it. It is never added to what you repay.
           </p>
           <form onSubmit={loans.submitFeePayment} style={{ display: "grid", gap: 10 }}>
