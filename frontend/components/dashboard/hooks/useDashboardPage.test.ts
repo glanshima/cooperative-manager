@@ -13,6 +13,7 @@ import {
   listLoans,
   listLoanTypes,
   listRepaymentsForLoan,
+  submitLoanApplication,
   submitRepayment,
 } from "@/lib/api";
 import type { CurrentUser, Loan, Settings } from "@/lib/api";
@@ -31,6 +32,7 @@ vi.mock("@/lib/api", () => ({
   listLoans: vi.fn(),
   listLoanTypes: vi.fn(),
   submitLoanApplication: vi.fn(),
+  submitFeePayment: vi.fn(),
   fileToBase64: vi.fn(),
   submitRepayment: vi.fn(),
   cancelApplication: vi.fn(),
@@ -48,6 +50,7 @@ const listRepaymentsForLoanMock = vi.mocked(listRepaymentsForLoan);
 const listLoanApplicationsMock = vi.mocked(listLoanApplications);
 const listLoansMock = vi.mocked(listLoans);
 const listLoanTypesMock = vi.mocked(listLoanTypes);
+const submitLoanApplicationMock = vi.mocked(submitLoanApplication);
 const fileToBase64Mock = vi.mocked(fileToBase64);
 const submitRepaymentMock = vi.mocked(submitRepayment);
 
@@ -178,6 +181,62 @@ describe("useDashboardPage module gating", () => {
     expect(getMyDeductionsMock).not.toHaveBeenCalled();
     expect(result.current.deductionsEnabled).toBe(false);
     expect(result.current.summary.deductions).toBeNull();
+  });
+});
+
+describe("useDashboardPage application submission", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getMyMemberRecordMock.mockResolvedValue({ id: "member-1" } as any);
+    getMySavingsMock.mockResolvedValue({} as any);
+    getMyDeductionsMock.mockResolvedValue({} as any);
+    getMemberLoanBalanceMock.mockResolvedValue({} as any);
+    getNotificationsMock.mockResolvedValue({ items: [], total: 0, unread_count: 0 });
+    getSettingsMock.mockResolvedValue(settings);
+    listLoanApplicationsMock.mockResolvedValue([]);
+    listLoansMock.mockResolvedValue([]);
+    listLoanTypesMock.mockResolvedValue([
+      {
+        id: "type-1",
+        name: "Quick Loan",
+        interest_rate: "10.00",
+        tenure_months: 6,
+        is_active: true,
+        open_for_application: true,
+      } as any,
+    ]);
+  });
+
+  it("advances instead of submitting when Enter is pressed before review", async () => {
+    const { result } = renderHook(() => useDashboardPage(false, user, logout));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      result.current.apply.toggle();
+      result.current.apply.setField("loan_type_id", "type-1");
+      result.current.apply.setField("requested_amount", 50000);
+      result.current.apply.setField("payment_reference", "TRF-ENTER-1");
+      result.current.apply.setReceiptFile(
+        new File(["receipt"], "receipt.png", { type: "image/png" })
+      );
+    });
+
+    await act(async () => {
+      await result.current.apply.submit({ preventDefault: () => {} } as any);
+    });
+
+    expect(result.current.apply.step).toBe(2);
+
+    await act(async () => {
+      await result.current.apply.submit({ preventDefault: () => {} } as any);
+    });
+    expect(result.current.apply.step).toBe(3);
+
+    await act(async () => {
+      await result.current.apply.submit({ preventDefault: () => {} } as any);
+    });
+    expect(result.current.apply.step).toBe(4);
+    expect(submitLoanApplicationMock).not.toHaveBeenCalled();
   });
 });
 

@@ -16,6 +16,10 @@ export default function LoanTypesManager({ types }: { types: LoansPageModel["typ
       }}
     >
       <h2>Loan types</h2>
+      <p className="notice">
+        Every loan type uses the universal loan/application fee configured in Settings. Legacy
+        fee values below are kept for history only.
+      </p>
       <Table style={{ marginBottom: 16 }}>
         <thead>
           <tr style={{ textAlign: "left", borderBottom: "2px solid #333" }}>
@@ -24,7 +28,7 @@ export default function LoanTypesManager({ types }: { types: LoansPageModel["typ
             <th>Rate</th>
             <th>Tenure (months)</th>
             <th>Interest deduction</th>
-            <th>Fee (paid separately)</th>
+            <th>Legacy fee (history only)</th>
             <th>Active</th>
             <th>Open for application</th>
           </tr>
@@ -92,13 +96,6 @@ export default function LoanTypesManager({ types }: { types: LoansPageModel["typ
           placeholder="Tenure (months)"
           value={form.tenure_months}
           onChange={(e) => types.setField("tenure_months", parseInt(e.target.value))}
-        />
-        <input
-          type="number"
-          step="0.01"
-          placeholder="Processing fee (optional, paid separately)"
-          value={form.flat_charge}
-          onChange={(e) => types.setField("flat_charge", parseFloat(e.target.value) || 0)}
         />
         <select
           aria-label="Interest deduction"

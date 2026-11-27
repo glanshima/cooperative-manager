@@ -136,11 +136,68 @@ def get_effective_rate_version(db: Session, loan_type_id, as_of_date: date):
     )
 
 
-def _cooperative_defaults(db: Session):
-    settings = db.query(models.Settings).first()
-    if settings is None:
-        return models.InterestDeductionMode.AT_SOURCE, None
-    return settings.loan_interest_mode, settings.loan_interest_spread_months
+class ResolvedLoanTerms(NamedTuple):
+    interest_rate: Decimal
+    tenure_months: int
+    legacy_fee: Decimal
+    interest_mode: models.InterestDeductionMode
+    interest_spread_months: Optional[int]
+    form_fee: Decimal
+
+
+def resolve_loan_terms(
+    db: Session,
+    loan_type: models.LoanType,
+    as_of_date: date,
+    *,
+    lock_configuration: bool = False,
+) -> ResolvedLoanTerms:
+    """Resolve every contractual term from the same effective version.
+
+    Financial mutations lock the loan type, selected rate version and
+    cooperative settings so a concurrent configuration change cannot mix
+    an old rate with a new interest method or fee snapshot.
+    """
+    version_query = db.query(models.LoanTypeRateVersion).filter(
+        models.LoanTypeRateVersion.loan_type_id == loan_type.id,
+        models.LoanTypeRateVersion.effective_from <= as_of_date,
+    ).order_by(models.LoanTypeRateVersion.effective_from.desc())
+    settings_query = db.query(models.Settings)
+
+    if lock_configuration:
+        loan_type = (
+            db.query(models.LoanType)
+            .filter(models.LoanType.id == loan_type.id)
+            .populate_existing()
+            .with_for_update()
+            .one()
+        )
+        version = version_query.populate_existing().with_for_update().first()
+        settings = settings_query.populate_existing().with_for_update().first()
+    else:
+        version = version_query.first()
+        settings = settings_query.first()
+
+    source = version if version is not None else loan_type
+    default_mode = (
+        settings.loan_interest_mode
+        if settings is not None
+        else models.InterestDeductionMode.AT_SOURCE
+    )
+    default_months = settings.loan_interest_spread_months if settings is not None else None
+
+    return ResolvedLoanTerms(
+        interest_rate=source.interest_rate,
+        tenure_months=source.tenure_months,
+        legacy_fee=source.flat_charge,
+        interest_mode=source.interest_mode or loan_type.interest_mode or default_mode,
+        interest_spread_months=(
+            source.interest_spread_months
+            or loan_type.interest_spread_months
+            or default_months
+        ),
+        form_fee=settings.loan_form_fee if settings is not None else ZERO,
+    )
 
 
 def resolve_interest_terms(db: Session, loan_type, as_of_date: date):
@@ -148,13 +205,8 @@ def resolve_interest_terms(db: Session, loan_type, as_of_date: date):
     ``as_of_date``: the rate version's override wins, then the loan
     type's cached value, then the cooperative default. Months are only
     meaningful for SPREAD_FIRST_MONTHS and fall back independently."""
-    version = get_effective_rate_version(db, loan_type.id, as_of_date)
-    source = version if version is not None else loan_type
-
-    default_mode, default_months = _cooperative_defaults(db)
-    mode = source.interest_mode or loan_type.interest_mode or default_mode
-    months = source.interest_spread_months or loan_type.interest_spread_months or default_months
-    return mode, months
+    terms = resolve_loan_terms(db, loan_type, as_of_date)
+    return terms.interest_mode, terms.interest_spread_months
 
 
 def get_effective_terms(db: Session, loan_type, as_of_date: date):
@@ -163,10 +215,8 @@ def get_effective_terms(db: Session, loan_type, as_of_date: date):
     the given date for this loan type, falling back to the loan type's
     own cached fields if somehow no version row exists yet.
     """
-    version = get_effective_rate_version(db, loan_type.id, as_of_date)
-    if version:
-        return version.interest_rate, version.tenure_months, version.flat_charge
-    return loan_type.interest_rate, loan_type.tenure_months, loan_type.flat_charge
+    terms = resolve_loan_terms(db, loan_type, as_of_date)
+    return terms.interest_rate, terms.tenure_months, terms.legacy_fee
 
 
 def sync_loan_type_cache(db: Session, loan_type):

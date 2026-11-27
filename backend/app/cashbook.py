@@ -596,6 +596,35 @@ def post_loan_repayment(
     )
 
 
+def _post_loan_fee(
+    db: Session,
+    *,
+    source_id: uuid.UUID,
+    amount: Decimal,
+    reference: str,
+    actor_id: Optional[uuid.UUID] = None,
+    entry_date: Optional[date] = None,
+) -> Optional[models.CashbookEntry]:
+    amount = money(amount)
+    if amount <= ZERO or not module_enabled(db):
+        return None
+    require_open_books(db)
+    accounts = system_accounts(db, BANK, LOAN_FEE_INCOME)
+    return post(
+        db,
+        entry_date=_entry_date(entry_date),
+        narration="Loan fee received",
+        reference=reference,
+        source=models.CashbookEntrySource.LOAN_FEE,
+        source_id=source_id,
+        actor_id=actor_id,
+        lines=[
+            (accounts[BANK], amount, ZERO),
+            (accounts[LOAN_FEE_INCOME], ZERO, amount),
+        ],
+    )
+
+
 def post_loan_fee(
     db: Session,
     payment: models.LoanFeePayment,
@@ -603,24 +632,30 @@ def post_loan_fee(
     actor_id: Optional[uuid.UUID] = None,
     entry_date: Optional[date] = None,
 ) -> Optional[models.CashbookEntry]:
-    if not books_open(db):
-        return None
-    amount = money(payment.amount)
-    if amount <= ZERO:
-        return None
-    accounts = system_accounts(db, BANK, LOAN_FEE_INCOME)
-    return post(
+    return _post_loan_fee(
         db,
-        entry_date=_entry_date(entry_date),
-        narration="Loan fee received",
-        reference=payment.payment_reference,
-        source=models.CashbookEntrySource.LOAN_FEE,
         source_id=payment.id,
+        amount=payment.amount,
+        reference=payment.payment_reference,
         actor_id=actor_id,
-        lines=[
-            (accounts[BANK], amount, ZERO),
-            (accounts[LOAN_FEE_INCOME], ZERO, amount),
-        ],
+        entry_date=entry_date,
+    )
+
+
+def post_application_fee(
+    db: Session,
+    application: models.LoanApplication,
+    *,
+    actor_id: Optional[uuid.UUID] = None,
+    entry_date: Optional[date] = None,
+) -> Optional[models.CashbookEntry]:
+    return _post_loan_fee(
+        db,
+        source_id=application.id,
+        amount=application.form_fee_amount,
+        reference=application.payment_reference,
+        actor_id=actor_id,
+        entry_date=entry_date,
     )
 
 

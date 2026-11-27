@@ -350,18 +350,14 @@ class LoanType(Base):
     interest rate and repayment tenure (e.g. Capital, Short, Quick,
     Item, CR&O loans in the original workbook).
 
-    interest_rate/tenure_months/flat_charge below are a DENORMALIZED
-    CACHE of "whichever rate version is effective as of today" -- kept
-    so the many places that read loan_type.interest_rate directly (the
-    admin table, the member application form's default display, older
-    code) don't all need to become date-aware. The actual source of
-    truth for "what rate applied on a specific date" is
-    LoanTypeRateVersion; any code computing a REAL loan (disbursement,
-    application decision) must look up the version effective as of the
-    relevant date via loan_calc.get_effective_terms(), not read
-    these cached fields directly, since a rate change scheduled for a
-    future date should not apply early, and a loan disbursed after a
-    rate change should use the new rate even if approved earlier.
+    interest_rate/tenure_months below are a DENORMALIZED CACHE of
+    "whichever rate version is effective as of today" -- kept so the
+    admin table and member application preview can read current terms
+    without becoming date-aware. The actual source of truth for a real
+    loan is LoanTypeRateVersion, resolved for the relevant date through
+    loan_calc.get_effective_terms(). flat_charge is retained only for
+    historical rate-version records; new loans use the cooperative-wide
+    Settings.loan_form_fee instead.
     """
 
     __tablename__ = "loan_types"
@@ -385,11 +381,8 @@ class LoanType(Base):
 
     is_active = Column(Boolean, default=True, nullable=False)
 
-    # Processing fee charged for this loan type. It is paid separately by
-    # the member (bank transfer + receipt, verified like the application
-    # form fee) and is NEVER part of the loan: it changes neither the
-    # payout, the total repayable, nor the instalment. Zero when the type
-    # has no fee.
+    # Legacy per-type fee retained for historical rate versions. New fee
+    # obligations use the universal Settings.loan_form_fee instead.
     flat_charge = Column(Numeric(14, 2), nullable=False, default=0)
 
     # Interest recovery override for this type (denormalized cache of the
@@ -421,11 +414,10 @@ class LoanType(Base):
 class LoanTypeRateVersion(Base):
     """
     Effective-dated rate history for a loan type. Editing a loan type's
-    rate/tenure/flat_charge creates a NEW row here (with an admin-chosen
-    effective_from date) rather than mutating LoanType in place, so a
-    rate change can be scheduled for the future, and loans already
-    disbursed under an older rate are unaffected (they store their own
-    computed numbers permanently and never re-read this table).
+    rate/tenure creates a NEW row here (with an admin-chosen effective_from
+    date) rather than mutating LoanType in place, so a rate change can be
+    scheduled for the future. flat_charge remains on historical rows only;
+    new fee obligations use Settings.loan_form_fee.
     """
 
     __tablename__ = "loan_type_rate_versions"
@@ -487,9 +479,10 @@ class Loan(Base):
       monthly_installment stays the principal portion.
       expected_end_date   = disbursement_date + tenure_months (EDATE equivalent)
 
-    The loan type's flat_charge is a fee paid separately and is not part
-    of any of these figures; fee_amount only records what is owed outside
-    the loan so the payment can be verified.
+    The universal loan/application fee is paid separately and is not part
+    of any of these figures. fee_amount records the fee snapshot; an
+    application-derived loan marks it paid when the application payment was
+    already verified, while a direct loan uses the legacy fee-payment ledger.
     disbursement_date is always normalized to the 1st of the month in
     which disbursement actually happens (not the member's requested date,
     which is only a preference recorded on the application).
@@ -544,9 +537,9 @@ class Loan(Base):
     interest_spread_months = Column(Integer, nullable=True)
     interest_installment = Column(Numeric(14, 2), nullable=False, default=0)
 
-    # Fee owed separately from this loan (the loan type's flat_charge at
-    # disbursement). Never part of the figures above.
+    # Universal fee snapshot, never part of the figures above.
     fee_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    fee_paid_via_application = Column(Boolean, nullable=False, default=False)
 
     disbursement_date = Column(Date, nullable=False)
     expected_end_date = Column(Date, nullable=False)
@@ -585,6 +578,8 @@ class Loan(Base):
         """not_required | due | awaiting_verification | rejected | paid."""
         if not self.fee_amount or self.fee_amount <= 0:
             return "not_required"
+        if self.fee_paid_via_application:
+            return "paid"
         if any(p.status == FeePaymentStatus.VERIFIED for p in self.fee_payments):
             return "paid"
         if any(p.status == FeePaymentStatus.AWAITING_VERIFICATION for p in self.fee_payments):
@@ -1174,6 +1169,14 @@ class LoanApplication(Base):
             name="ck_loan_applications_approved_amount_positive",
         ),
         CheckConstraint("form_fee_amount >= 0", name="ck_loan_applications_form_fee_nonnegative"),
+        CheckConstraint(
+            "approved_interest_rate IS NULL OR approved_interest_rate >= 0",
+            name="ck_loan_applications_approved_interest_rate_nonnegative",
+        ),
+        CheckConstraint(
+            "approved_interest_spread_months IS NULL OR approved_interest_spread_months > 0",
+            name="ck_loan_applications_approved_interest_spread_months_positive",
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1195,6 +1198,12 @@ class LoanApplication(Base):
     requested_tenure_months = Column(Integer, nullable=True)
     approved_tenure_months = Column(Integer, nullable=True)
     tenure_decision_reason = Column(String, nullable=True)
+    approved_interest_rate = Column(Numeric(6, 4), nullable=True)
+    approved_interest_mode = Column(
+        Enum(InterestDeductionMode, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        nullable=True,
+    )
+    approved_interest_spread_months = Column(Integer, nullable=True)
 
     # Member's stated preference only -- the actual disbursement_date on
     # the resulting Loan is controlled by when an admin disburses it
@@ -1244,7 +1253,7 @@ class LoanApplication(Base):
     was_restricted_at_submission = Column(Boolean, nullable=False, default=False)
     restriction_reason_snapshot = Column(String, nullable=True)
 
-    # --- Loan-form fee payment, required before an application is reviewable ---
+    # --- Universal loan/application fee, paid once before review ---
     form_fee_amount = Column(Numeric(14, 2), nullable=False)  # snapshot of Settings.loan_form_fee at submission
     payment_reference = Column(String, nullable=False)  # bank transfer reference number
     receipt_image_base64 = Column(Text, nullable=False)
@@ -1795,8 +1804,8 @@ class Settings(Base):
         default=LoanRestrictionBehavior.WARN,
     )
 
-    # Fixed fee a member must pay (and upload proof of) before a loan
-    # application is even reviewable. Same amount regardless of loan type.
+    # Universal loan/application fee. Self-service applications collect it
+    # before review; direct loans record the same amount as their sole fee.
     loan_form_fee = Column(Numeric(14, 2), nullable=False, default=0)
 
     # Cooperative-wide default for how loan interest is recovered. A loan

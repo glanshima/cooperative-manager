@@ -27,8 +27,9 @@ export default function LoanFeesView({ model }: { model: LoanFeesPageModel }) {
       )}
 
       <p style={{ color: "#555", marginTop: 0 }}>
-        Processing fees are paid separately from the loan. Verified payments here are the
-        cooperative's income record; they never alter a loan's payout or balance.
+        Loan fees are paid separately from the loan. Verified payments here are the
+        cooperative's income record; they never alter a loan's payout or balance. Application
+        fees are verified in Loan Applications and are not requested again here.
       </p>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>

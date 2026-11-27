@@ -27,14 +27,16 @@ import { computeLoanPreview, resolveTypeInterestTerms } from "@/lib/loanMath";
 export type RateVersionForm = {
   interest_rate: number;
   tenure_months: number;
-  flat_charge: number;
   // "" = inherit the loan type / cooperative default.
   interest_mode: InterestDeductionMode | "";
   interest_spread_months: number | "";
   effective_from: string;
 };
 
-export type LoanTypeForm = Omit<LoanTypeCreateInput, "interest_mode" | "interest_spread_months"> & {
+export type LoanTypeForm = Omit<
+  LoanTypeCreateInput,
+  "interest_mode" | "interest_spread_months" | "flat_charge"
+> & {
   interest_mode: InterestDeductionMode | "";
   interest_spread_months: number | "";
 };
@@ -54,7 +56,6 @@ export const EMPTY_TYPE_FORM: LoanTypeForm = {
   description: "",
   interest_rate: 0.15,
   tenure_months: 12,
-  flat_charge: 0,
   interest_mode: "",
   interest_spread_months: "",
   is_active: true,
@@ -65,8 +66,8 @@ export const EMPTY_TYPE_FORM: LoanTypeForm = {
 export interface DisbursePreview {
   interest: number;
   netDisbursed: number;
-  // The processing fee, owed separately -- never part of `total`.
-  flatCharge: number;
+  // The universal loan fee, owed separately -- never part of `total`.
+  fee: number;
   total: number;
   installment: number;
   interestInstallment: number;
@@ -76,20 +77,21 @@ export interface DisbursePreview {
 
 // Mirrors loan_calc.compute_loan_terms via the shared frontend helper: the
 // mode decides whether interest is withheld from the payout or collected
-// through the instalments, and the processing fee is never part of the
+// through the instalments, and the universal loan fee is never part of the
 // loan figures.
 export function computeDisbursePreview(
   principal: number,
-  type?: Pick<LoanType, "interest_rate" | "flat_charge" | "tenure_months"> &
+  type?: Pick<LoanType, "interest_rate" | "tenure_months"> &
     Partial<Pick<LoanType, "interest_mode" | "interest_spread_months">>,
   defaultMode?: InterestDeductionMode,
-  defaultSpreadMonths?: number | null
+  defaultSpreadMonths?: number | null,
+  fee = 0
 ): DisbursePreview {
   if (!type) {
     return {
       interest: 0,
       netDisbursed: 0,
-      flatCharge: 0,
+      fee,
       total: 0,
       installment: 0,
       interestInstallment: 0,
@@ -104,12 +106,12 @@ export function computeDisbursePreview(
     type.tenure_months,
     mode,
     spreadMonths,
-    parseFloat(type.flat_charge)
+    fee
   );
   return {
     interest: preview.interest,
     netDisbursed: preview.netDisbursed,
-    flatCharge: preview.fee,
+    fee: preview.fee,
     total: preview.totalRepayable,
     installment: preview.installment,
     interestInstallment: preview.interestInstallment,
@@ -136,7 +138,6 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
   const [newVersion, setNewVersion] = useState<RateVersionForm>({
     interest_rate: 0.15,
     tenure_months: 12,
-    flat_charge: 0,
     interest_mode: "",
     interest_spread_months: "",
     effective_from: today(),
@@ -149,8 +150,8 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
       const [loansData, typesData, settingsData] = await Promise.all([
         listLoans(),
         listLoanTypes(),
-        // Needed for the interest-mode preview when a type inherits the
-        // cooperative default.
+        // Supplies the universal fee and the interest-mode default when a
+        // loan type inherits cooperative settings.
         getSettings().catch(() => null),
       ]);
       setLoans(loansData);
@@ -247,7 +248,6 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
       setNewVersion({
         interest_rate: parseFloat(type.interest_rate),
         tenure_months: type.tenure_months,
-        flat_charge: parseFloat(type.flat_charge),
         interest_mode: type.interest_mode ?? "",
         interest_spread_months: type.interest_spread_months ?? "",
         effective_from: today(),
@@ -306,7 +306,8 @@ export function useLoansPage(authLoading: boolean, logout: () => void) {
     loanForm.principal,
     selectedType,
     settings?.loan_interest_mode,
-    settings?.loan_interest_spread_months
+    settings?.loan_interest_spread_months,
+    parseFloat(settings?.loan_form_fee ?? "0")
   );
 
   return {

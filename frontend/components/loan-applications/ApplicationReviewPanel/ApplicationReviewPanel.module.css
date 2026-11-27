@@ -1,0 +1,286 @@
+.panel {
+  position: sticky;
+  bottom: 16px;
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header h2,
+.header p,
+.receipt h3,
+.actionPanel h3 {
+  margin: 0;
+}
+
+.eyebrow {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.subtitle {
+  margin-top: 3px !important;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.step strong,
+.step small {
+  display: block;
+}
+
+.step strong {
+  font-size: 13px;
+}
+
+.step small {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.stepNumber {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--surface-sunken);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stepCurrent {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+}
+
+.stepCurrent .stepNumber {
+  background: var(--primary);
+  color: #fff;
+}
+
+.stepComplete {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.stepComplete .stepNumber {
+  background: var(--success);
+  color: #fff;
+}
+
+.stepStopped {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 0;
+}
+
+.summary div {
+  min-width: 0;
+}
+
+.summary dt {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.summary dd {
+  margin: 3px 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.full {
+  grid-column: 1 / -1;
+}
+
+.receipt {
+  display: grid;
+  gap: 8px;
+}
+
+.receipt h3,
+.actionPanel h3 {
+  font-size: 16px;
+}
+
+.notice,
+.actionPanel {
+  margin: 0;
+}
+
+.notice {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  font-size: 13px;
+}
+
+.warning {
+  border-color: #f0c78c;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.danger {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.success {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.actionPanel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+}
+
+.actionPanel > p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+}
+
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.checkbox input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.actions button {
+  min-height: 44px;
+}
+
+@media (max-width: 700px) {
+  .panel {
+    position: static;
+    padding: 14px;
+    box-shadow: none;
+  }
+
+  .stepper {
+    gap: 5px;
+  }
+
+  .step {
+    display: grid;
+    gap: 5px;
+    padding: 8px 6px;
+    text-align: center;
+  }
+
+  .stepNumber {
+    justify-self: center;
+  }
+
+  .step strong {
+    font-size: 11px;
+  }
+
+  .step small {
+    font-size: 10px;
+  }
+
+  .summary,
+  .fields {
+    grid-template-columns: 1fr;
+  }
+
+  .full {
+    grid-column: auto;
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}

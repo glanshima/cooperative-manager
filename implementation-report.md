@@ -1162,3 +1162,62 @@ The following mockup elements are intentionally not implemented because the app 
 ### 35.6 Status
 
 All requested dashboard and terminology work is complete and locally verified. Remaining work is limited to the deliberately omitted mockup items above, if the owner later supplies their data sources/destinations. No production database or deployment was performed; the commit and push are recorded in git history.
+
+## 36. Universal loan fee and staged application workflow (2026-11-27)
+
+### 36.1 Scope and compatibility
+
+- **Branch:** `feature/mact-controlled-remediation`; implemented and verified locally. Production migration and deployment have not been performed.
+- `Settings.loan_form_fee` is the single canonical fee for every loan type. New self-service applications snapshot it in `LoanApplication.form_fee_amount`; direct loans snapshot it in `Loan.fee_amount`.
+- The fee is cooperative income paid separately. It is never added to principal, interest, total repayable or an instalment, and never reduces the member's payout.
+- Existing `LoanType.flat_charge` values and historical fee-payment records remain intact as legacy history. Active loan-type and rate-version forms no longer edit the legacy per-type fee.
+- Application-derived loans carry `fee_paid_via_application=true`; their fee is already settled and the post-disbursement fee-payment route cannot charge it again. Direct loans continue to use the existing fee-payment verification route.
+- No server-side save-and-resume drafts were added. Frontend validation guides the member; the server remains authoritative.
+
+### 36.2 Persistence and accounting
+
+- Added `Loan.fee_paid_via_application` and frozen application approval fields for interest rate, interest mode and spread period in `backend/app/models.py`, with non-negative/positive constraints.
+- Added `scripts/manual_migration_2026_11_universal_loan_fee.sql` to the ordered manual-migration runner. The migration also backfills `fee_paid_via_application=true` for every existing loan referenced by `loan_applications.resulting_loan_id`.
+- The ordered migration was applied to local `mact_local` and `mact_test`. A follow-up query found **zero** application-derived loans still marked eligible for another fee in either database.
+- Application-fee verification posts through the existing `LOAN_FEE` Cashbook source, keyed by the application UUID, so the unique source identity prevents duplicate income entries. The verification and journal posting share one transaction.
+- With Cashbook disabled, automatic fee posting remains intentionally skipped. With Cashbook enabled, verification now refuses to commit when opening balances are missing or the period is locked; the application stays awaiting verification until the books can accept the entry.
+
+### 36.3 Backend workflow
+
+- Payment verification remains gate 1. Approval is blocked until payment is verified, and disbursement is blocked until approval.
+- Approval resolves effective terms and freezes the interest rate, mode, spread period, approved amount/tenure and fee snapshot. Disbursement executes those frozen terms instead of repricing the loan.
+- Approval, direct-loan creation and the legacy disbursement fallback use one locked configuration snapshot covering the loan type, effective rate version and cooperative settings, preventing mixed-term reads.
+- Legacy approved applications without frozen terms retain the documented fallback to terms effective on the normalized first-of-month disbursement date.
+- Direct-fee submission and verification lock the loan first, reload the payment after waiting and recheck sibling obligations. A database trigger rejects new duplicate pending/verified obligations while preserving historical duplicate rows unchanged.
+- A historical queued `LoanFeePayment` cannot be approved when its loan was paid through the application. An officer can still reject that stale row with a reason, without recognizing income.
+- Existing permission checks, conflict-of-interest read-only behavior, row locking and audit events remain in force.
+
+### 36.4 Member experience
+
+- `frontend/components/dashboard/ApplyForLoan` is now a four-step flow: **Loan request → Terms and payout → Fee payment → Review and submit**.
+- The wizard shows the universal fee separately from estimated loan figures, validates each forward transition, moves focus to the current step, exposes an accessible four-item progress list, and renders inline errors as alerts.
+- Enter/early form submission advances one step on steps 1–3; only step 4 can call the submit/reapply API. A successful submission resets the form and receipt.
+- Mobile action targets are at least 44px, including the Continue/Back controls. CSS Modules use `.actions button` so the rule reaches the existing global button classes.
+
+### 36.5 Administrative experience and direct loans
+
+- `ApplicationReviewPanel` exposes three gates: **Review and verify payment → Approve or reject → Disburse**. Current, complete, pending and stopped stages have text as well as styling.
+- The panel shows the requested and approved terms, frozen rate/mode/spread period, fee snapshot, transfer reference, receipt, payout account and conflict state. Legacy approvals are labelled explicitly rather than displaying invented frozen terms.
+- Rejecting payment marks only the first gate rejected; the loan-decision gate remains **Not reached**. Conflicted records remain readable with write actions removed.
+- Approved and disbursed panels explicitly confirm that the application fee is settled and no second fee is due.
+- Direct-loan previews and settings copy use the universal fee. Member and officer fee screens call it **Loan fee** and explain that it is income, not a loan-balance adjustment.
+
+### 36.6 Verification
+
+- **Focused backend regressions:** `tests/test_cashbook.py`, `tests/test_loan_fees.py` and `tests/test_loan_application_workflow.py` — **52 passed**.
+- **Full backend:** `pytest -q` on local `mact_test` — **492 passed** in 6m47s. Warnings were the existing SQLAlchemy/Python datetime deprecations.
+- **Migration invariant:** the revised migration was applied twice to `mact_test` and once to `mact_local`. A rolled-back database check confirmed SQLSTATE `23505` for a new duplicate obligation while two legacy duplicate rows remained unchanged.
+- **Full frontend:** `npm test` — **49 files / 328 tests passed**. The existing Vite config-loader warning remains non-fatal.
+- **TypeScript/build:** `npx tsc --noEmit` passed. `NEXT_PUBLIC_API_URL=http://localhost:8101 npm run build` compiled successfully, completed TypeScript and generated all 25 static pages. The existing Next 16/React 18 deprecation warning remains.
+- **Local API smoke:** `scripts/smoke_test.py` against `http://localhost:8101` with the conflict fixture — **10/10 steps passed**. It created local pending application `471ab89d-df43-4283-b6bb-80f29a238ef2` with a ₦2,500.00 fee snapshot; the inert draft deduction remained unconfirmed.
+- **Browser:** rebuilt frontend at `http://localhost:3101`, final local backend at `http://localhost:8101`, viewport **389×519**. The member wizard advanced to step 2, showed the fee separately from loan figures, had no horizontal overflow, and Continue/Back measured **44px**. The admin review showed all three completed stages, the ₦2,500.00 fee snapshot and the explicit no-second-fee message. No console errors remained after authentication.
+- **Existing golden-path record:** application `f95c1570-e4d3-40f0-b351-1df36423d98b` / loan `deb03cc6-7411-43d7-9224-6c3e1d197073` remained approved/disbursed with frozen 10% at-source terms, a ₦2,500.00 paid application fee and no `LoanFeePayment` row.
+
+### 36.7 Status
+
+The approved loan-fee and staged-workflow scope is complete and locally verified, including the final Cashbook, historical-fee, Enter-key, rejected-payment-stage, mobile-target, fee-concurrency and locked-configuration regressions. Commit and push are authorized for this feature branch only; production migration and deployment remain unperformed. Unrelated controlled-remediation workstreams remain untouched.

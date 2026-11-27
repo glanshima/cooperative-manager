@@ -27,7 +27,7 @@ from ..loan_calc import (
     compute_expected_end_date,
     compute_loan_terms,
     get_effective_terms,
-    resolve_interest_terms,
+    resolve_loan_terms,
 )
 from ..loan_rules import (
     assert_member_may_borrow,
@@ -324,6 +324,10 @@ def verify_payment(
 
     if payload.approved:
         application.payment_status = models.PaymentVerificationStatus.VERIFIED
+        try:
+            cashbook.post_application_fee(db, application, actor_id=current_user.id)
+        except cashbook.CashbookError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail)
         notification_service.notify_member(
             db,
             application.member,
@@ -466,12 +470,37 @@ def decide_application(
         if not payload.approved_tenure_months or payload.approved_tenure_months <= 0:
             raise HTTPException(status_code=400, detail="approved_tenure_months is required when approving")
 
+        approval_date = date.today()
+        resolved = resolve_loan_terms(
+            db, application.loan_type, approval_date, lock_configuration=True
+        )
+        interest_rate = resolved.interest_rate
+        interest_mode = resolved.interest_mode
+        interest_spread_months = resolved.interest_spread_months
+        try:
+            compute_loan_terms(
+                payload.approved_amount,
+                interest_rate,
+                payload.approved_tenure_months,
+                interest_mode,
+                interest_spread_months,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Loan terms are misconfigured: {exc}")
+
         # Flag if the admin didn't simply grant what was requested, so the
         # reason is expected (not strictly enforced -- an admin might have
         # an obvious reason that doesn't need restating).
         application.approved_amount = payload.approved_amount
         application.approved_tenure_months = payload.approved_tenure_months
         application.tenure_decision_reason = payload.tenure_decision_reason
+        application.approved_interest_rate = interest_rate
+        application.approved_interest_mode = interest_mode
+        application.approved_interest_spread_months = (
+            interest_spread_months
+            if interest_mode == models.InterestDeductionMode.SPREAD_FIRST_MONTHS
+            else None
+        )
         application.status = models.LoanApplicationStatus.APPROVED
         # resulting_loan_id stays null -- set only by /disburse below
 
@@ -502,6 +531,10 @@ def decide_application(
             new_values={
                 "approved_amount": application.approved_amount,
                 "approved_tenure_months": application.approved_tenure_months,
+                "approved_interest_rate": application.approved_interest_rate,
+                "approved_interest_mode": application.approved_interest_mode,
+                "approved_interest_spread_months": application.approved_interest_spread_months,
+                "fee_amount": application.form_fee_amount,
             },
             reason=payload.admin_notes,
             request=request,
@@ -574,10 +607,10 @@ def disburse_application(
     moment a loan really "starts" -- disbursement_date is always
     normalized to the 1st of the current month, regardless of the
     member's preferred_disbursement_date (which is only ever a
-    preference). The interest rate/flat_charge used are whichever were
-    effective as of this disbursement date (see LoanTypeRateVersion);
-    the tenure is fixed to whatever was approved at decision time. Sends
-    the one detailed email covering everything the member needs.
+    preference). New approvals use the interest terms frozen at decision
+    time; legacy approvals without snapshots fall back to the terms effective
+    on the disbursement date. The universal fee is the application's paid
+    snapshot. Sends the one detailed email covering everything the member needs.
 
     Balance deduction: if the admin selects existing active loan(s) of
     this member (via deduct_loan_ids or deduct_all_active), those loans
@@ -638,8 +671,17 @@ def disburse_application(
     loan_type = application.loan_type
     disbursement_date = date.today().replace(day=1)
 
-    interest_rate, _default_tenure, flat_charge = get_effective_terms(db, loan_type, disbursement_date)
-    interest_mode, interest_spread_months = resolve_interest_terms(db, loan_type, disbursement_date)
+    if application.approved_interest_rate is not None:
+        interest_rate = application.approved_interest_rate
+        interest_mode = application.approved_interest_mode
+        interest_spread_months = application.approved_interest_spread_months
+    else:
+        resolved = resolve_loan_terms(
+            db, loan_type, disbursement_date, lock_configuration=True
+        )
+        interest_rate = resolved.interest_rate
+        interest_mode = resolved.interest_mode
+        interest_spread_months = resolved.interest_spread_months
     try:
         terms = compute_loan_terms(
             application.approved_amount,
@@ -744,7 +786,8 @@ def disburse_application(
             else None
         ),
         interest_installment=terms.interest_installment,
-        fee_amount=flat_charge,
+        fee_amount=application.form_fee_amount,
+        fee_paid_via_application=True,
         disbursement_date=disbursement_date,
         expected_end_date=expected_end_date,
         disbursement_bank_name=disbursement_bank_name,

@@ -455,9 +455,10 @@ def _validate_interest_terms(
 
 
 class LoanTypeCreate(LoanTypeBase):
-    """interest_rate/tenure_months/flat_charge here seed the loan type's
-    FIRST rate version. effective_from defaults to today if not given.
-    interest_mode omitted means "use the cooperative default"."""
+    """interest_rate/tenure_months here seed the loan type's FIRST rate
+    version. flat_charge is retained for legacy compatibility only; new fee
+    obligations use Settings.loan_form_fee. effective_from defaults to today
+    if not given. interest_mode omitted means "use the cooperative default"."""
     interest_rate: Decimal
     tenure_months: int
     flat_charge: Decimal = Decimal("0")
@@ -472,9 +473,9 @@ class LoanTypeCreate(LoanTypeBase):
 
 
 class LoanTypeUpdate(BaseModel):
-    """Only non-rate fields. To change interest_rate/tenure_months/
-    flat_charge, create a new rate version instead (POST
-    /api/loan-types/{id}/rate-versions) -- see LoanTypeRateVersionCreate."""
+    """Only non-rate fields. To change interest_rate/tenure_months, create
+    a new rate version instead (POST /api/loan-types/{id}/rate-versions).
+    flat_charge is legacy data and does not control new loan fees."""
     name: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
@@ -902,6 +903,9 @@ class LoanApplicationOut(BaseModel):
     requested_tenure_months: Optional[int] = None
     approved_tenure_months: Optional[int] = None
     tenure_decision_reason: Optional[str] = None
+    approved_interest_rate: Optional[Decimal] = None
+    approved_interest_mode: Optional[InterestDeductionMode] = None
+    approved_interest_spread_months: Optional[int] = None
     preferred_disbursement_date: Optional[date] = None
     use_default_account: bool
     alternate_bank_name: Optional[str] = None

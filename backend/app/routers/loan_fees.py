@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from .. import cashbook, models, schemas, audit_service, notification_service
@@ -39,6 +40,23 @@ def _to_details_schema(payment: models.LoanFeePayment) -> schemas.LoanFeePayment
     )
 
 
+def _other_fee_obligation(
+    db: Session, loan_id: uuid.UUID, *, exclude_payment_id: Optional[uuid.UUID] = None
+) -> Optional[models.LoanFeePayment]:
+    query = db.query(models.LoanFeePayment).filter(
+        models.LoanFeePayment.loan_id == loan_id,
+        models.LoanFeePayment.status.in_(
+            [
+                models.FeePaymentStatus.AWAITING_VERIFICATION,
+                models.FeePaymentStatus.VERIFIED,
+            ]
+        ),
+    )
+    if exclude_payment_id is not None:
+        query = query.filter(models.LoanFeePayment.id != exclude_payment_id)
+    return query.first()
+
+
 @router.post(
     "/api/loans/{loan_id}/fee-payment",
     response_model=schemas.LoanFeePaymentOut,
@@ -56,18 +74,25 @@ def submit_fee_payment(
     if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
         raise HTTPException(status_code=403, detail="Only members can submit fee payments")
 
-    loan = db.query(models.Loan).filter(models.Loan.id == loan_id).first()
+    loan = (
+        db.query(models.Loan)
+        .filter(models.Loan.id == loan_id)
+        .with_for_update()
+        .first()
+    )
     if not loan:
         raise HTTPException(status_code=404, detail="Loan not found")
     if loan.member_id != current_user.member_id:
         raise HTTPException(status_code=403, detail="You can only pay fees on your own loans")
     if not loan.fee_amount or loan.fee_amount <= 0:
         raise HTTPException(status_code=400, detail="This loan has no fee to pay")
+    if loan.fee_paid_via_application:
+        raise HTTPException(status_code=400, detail="This loan's fee was paid with its application")
 
-    existing = db.query(models.LoanFeePayment).filter(models.LoanFeePayment.loan_id == loan_id).all()
-    if any(p.status == models.FeePaymentStatus.VERIFIED for p in existing):
+    existing = _other_fee_obligation(db, loan_id)
+    if existing and existing.status == models.FeePaymentStatus.VERIFIED:
         raise HTTPException(status_code=400, detail="This loan's fee has already been paid")
-    if any(p.status == models.FeePaymentStatus.AWAITING_VERIFICATION for p in existing):
+    if existing:
         raise HTTPException(status_code=400, detail="A fee payment for this loan is already awaiting review")
 
     payment = models.LoanFeePayment(
@@ -90,7 +115,14 @@ def submit_fee_payment(
         ),
         link_path="/admin/loan-fees",
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Another fee payment for this loan was submitted or verified concurrently",
+        )
     db.refresh(payment)
     return payment
 
@@ -267,8 +299,26 @@ def verify_fee_payment(
 
     payment = (
         db.query(models.LoanFeePayment)
+        .filter(models.LoanFeePayment.id == payment_id)
+        .first()
+    )
+    if not payment:
+        raise HTTPException(status_code=404, detail="Fee payment not found")
+
+    loan = (
+        db.query(models.Loan)
+        .filter(models.Loan.id == payment.loan_id)
+        .with_for_update()
+        .first()
+    )
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+
+    payment = (
+        db.query(models.LoanFeePayment)
         .options(joinedload(models.LoanFeePayment.loan).joinedload(models.Loan.member))
         .filter(models.LoanFeePayment.id == payment_id)
+        .populate_existing()
         .with_for_update(of=models.LoanFeePayment)
         .first()
     )
@@ -286,8 +336,19 @@ def verify_fee_payment(
         request=request,
     )
 
+    if payload.approved and payment.loan.fee_paid_via_application:
+        raise HTTPException(status_code=400, detail="This loan's fee was paid with its application")
     if payment.status != models.FeePaymentStatus.AWAITING_VERIFICATION:
         raise HTTPException(status_code=400, detail="This fee payment has already been reviewed")
+    if payload.approved:
+        other = _other_fee_obligation(db, payment.loan_id, exclude_payment_id=payment.id)
+        if other and other.status == models.FeePaymentStatus.VERIFIED:
+            raise HTTPException(status_code=400, detail="This loan's fee has already been paid")
+        if other:
+            raise HTTPException(
+                status_code=400,
+                detail="Another fee payment for this loan is awaiting review",
+            )
 
     payment.verified_by_user_id = current_user.id
     payment.verified_at = datetime.utcnow()
@@ -309,7 +370,14 @@ def verify_fee_payment(
             cashbook.post_loan_fee(db, payment, actor_id=current_user.id)
         except cashbook.CashbookError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Another fee payment for this loan was submitted or verified concurrently",
+            )
         db.refresh(payment)
         audit_service.log_event(
             db,
