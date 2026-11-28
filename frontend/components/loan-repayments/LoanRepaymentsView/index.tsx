@@ -16,10 +16,13 @@ export default function LoanRepaymentsView({ model }: { model: LoanRepaymentsPag
         <h1>Loan Repayments</h1>
       </div>
 
-      {model.filter.awaitingOnly && (
+      {model.filter.awaitingOnly && model.filter.canViewHistory && (
         <FilterNotice onClear={model.filter.clear}>
           Showing repayments awaiting verification.
         </FilterNotice>
+      )}
+      {model.filter.awaitingOnly && !model.filter.canViewHistory && (
+        <p>Your role can review repayments awaiting verification, but not repayment history.</p>
       )}
 
       {model.feedback.error && (

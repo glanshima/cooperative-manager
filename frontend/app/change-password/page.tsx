@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import AuthShell from "@/components/branding/AuthShell";
 import PageSkeleton from "@/components/ui/PageSkeleton";
+import PasswordInput from "@/components/ui/PasswordInput";
 
 import { useAuth } from "../../lib/useAuth";
 import { changePassword } from "../../lib/api";
@@ -57,24 +58,27 @@ export default function ChangePasswordPage() {
       {error && <p className="notice notice--error">{error}</p>}
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
-        <input
+        <PasswordInput
           required
-          type="password"
-          placeholder="Current (temporary) password"
+          name="currentPassword"
+          label="Current (temporary) password"
+          autoComplete="current-password"
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
         />
-        <input
+        <PasswordInput
           required
-          type="password"
-          placeholder="New password (min. 8 characters)"
+          name="newPassword"
+          label="New password (min. 8 characters)"
+          autoComplete="new-password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
         />
-        <input
+        <PasswordInput
           required
-          type="password"
-          placeholder="Confirm new password"
+          name="confirmPassword"
+          label="Confirm new password"
+          autoComplete="new-password"
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
         />

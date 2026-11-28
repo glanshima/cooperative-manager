@@ -130,7 +130,7 @@ def _actor_snapshot(db: Session, actor: Optional[models.User]):
     )
 
 
-def log_event(
+def stage_event(
     db: Session,
     *,
     actor: Optional[models.User],
@@ -164,8 +164,38 @@ def log_event(
         request_reference=request_reference,
         timestamp=datetime.utcnow(),
     )
+    db.add(event)
+    return event
+
+
+def log_event(
+    db: Session,
+    *,
+    actor: Optional[models.User],
+    event_type: str,
+    action: str,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    previous_values: Optional[dict] = None,
+    new_values: Optional[dict] = None,
+    reason: Optional[str] = None,
+    request: Optional[Request] = None,
+    actor_username_override: Optional[str] = None,
+) -> models.AuditEvent:
+    event = stage_event(
+        db,
+        actor=actor,
+        event_type=event_type,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        previous_values=previous_values,
+        new_values=new_values,
+        reason=reason,
+        request=request,
+        actor_username_override=actor_username_override,
+    )
     try:
-        db.add(event)
         db.commit()
     except Exception as exc:
         db.rollback()

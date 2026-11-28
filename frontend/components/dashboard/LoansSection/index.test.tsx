@@ -32,6 +32,7 @@ function model(items: Loan[], overrides: Record<string, unknown> = {}) {
     setRepayReference: vi.fn(),
     repayReceiptFile: null,
     setRepayReceiptFile: vi.fn(),
+    submitting: false,
     startRepayment: vi.fn(),
     submitRepayment: vi.fn(),
     cancelRepayment: vi.fn(),

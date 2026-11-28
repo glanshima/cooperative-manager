@@ -330,6 +330,41 @@ def test_queues_only_list_actions_the_officer_can_take(client, db_session):
     assert "settlements" not in queues  # no savings.settle
 
 
+def test_disbursement_queue_excludes_applications_already_turned_into_loans(
+    client, db_session
+):
+    admin = _admin(db_session, "disbursement.submit")
+    member = make_member(db_session)
+    loan_type = make_loan_type(db_session, "Dashboard Loan")
+    loan = _loan(db_session, member, loan_type)
+    common = {
+        "member_id": member.id,
+        "loan_type_id": loan_type.id,
+        "requested_amount": Decimal("1000.00"),
+        "form_fee_amount": ZERO,
+        "receipt_image_base64": "aGVsbG8=",
+        "receipt_content_type": "image/png",
+        "status": models.LoanApplicationStatus.APPROVED,
+        "payment_status": models.PaymentVerificationStatus.VERIFIED,
+    }
+    db_session.add_all(
+        [
+            models.LoanApplication(**common, payment_reference="TRF-AWAITING"),
+            models.LoanApplication(
+                **common,
+                payment_reference="TRF-DISBURSED",
+                resulting_loan_id=loan.id,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    queues = {item["key"]: item for item in _dashboard(client, admin)["queues"]}
+
+    assert queues["disbursements"]["count"] == 1
+    assert queues["disbursements"]["href"] == "/admin/disbursements"
+
+
 def test_settlement_queue_links_to_pending_payouts(client, db_session):
     admin = _admin(db_session, "savings.settle")
     member = make_member(db_session)

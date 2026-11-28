@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from sqlalchemy import event
 
-from app import models
+from app import cashbook, models
 from tests.conftest import (
     auth_headers,
     make_admin_user,
@@ -31,6 +31,49 @@ def _fixture(db_session, psn):
     )
     admin = make_admin_user(db_session, username=f"workflow_{psn.lower()}", super_admin=True)
     return member, user, loan_type, admin
+
+
+def _ready_cashbook(db_session, admin):
+    make_settings(db_session, cashbook_module_enabled=True)
+    chart = [
+        ("1000", "Cash on hand", models.CashbookAccountKind.ASSET, cashbook.CASH),
+        ("1010", "Bank", models.CashbookAccountKind.ASSET, cashbook.BANK),
+        ("1100", "Loans receivable", models.CashbookAccountKind.ASSET, cashbook.LOAN_RECEIVABLE),
+        ("2000", "Member savings", models.CashbookAccountKind.LIABILITY, cashbook.MEMBER_SAVINGS),
+        ("2010", "Payouts payable", models.CashbookAccountKind.LIABILITY, cashbook.PAYOUT_PAYABLE),
+        (
+            "2020",
+            "Other deductions payable",
+            models.CashbookAccountKind.LIABILITY,
+            cashbook.OTHER_DEDUCTIONS_PAYABLE,
+        ),
+        ("3000", "Retained earnings", models.CashbookAccountKind.EQUITY, "RETAINED_EARNINGS"),
+        ("4000", "Loan interest income", models.CashbookAccountKind.INCOME, cashbook.INTEREST_INCOME),
+        ("4010", "Loan fee income", models.CashbookAccountKind.INCOME, cashbook.LOAN_FEE_INCOME),
+    ]
+    existing = {account.code for account in db_session.query(models.CashbookAccount).all()}
+    for code, name, kind, system_key in chart:
+        if code not in existing:
+            db_session.add(
+                models.CashbookAccount(code=code, name=name, kind=kind, system_key=system_key)
+            )
+    db_session.commit()
+    accounts = {
+        account.system_key: account
+        for account in db_session.query(models.CashbookAccount)
+        .filter(models.CashbookAccount.system_key.isnot(None))
+        .all()
+    }
+    cashbook.post_opening(
+        db_session,
+        as_of=date(2025, 12, 31),
+        lines=[
+            (accounts[cashbook.BANK], Decimal("10000.00"), Decimal("0.00")),
+            (accounts["RETAINED_EARNINGS"], Decimal("0.00"), Decimal("10000.00")),
+        ],
+        actor_id=admin.id,
+    )
+    db_session.commit()
 
 
 def _submit(client, user, loan_type):
@@ -110,6 +153,7 @@ def test_application_snapshots_the_universal_fee_and_uses_frozen_approval_terms(
     assert blocked_decision.status_code == 400
     assert "payment must be verified" in blocked_decision.json()["detail"]
 
+    _ready_cashbook(db_session, admin)
     _verify_payment(client, admin, application_id)
     blocked_disbursement = client.post(
         f"/api/loan-applications/{application_id}/disburse",
@@ -177,6 +221,7 @@ def test_approval_resolves_all_terms_from_one_locked_configuration_snapshot(
 ):
     _, user, loan_type, admin = _fixture(db_session, "PSN-WORKFLOW-LOCKED")
     submitted = _submit(client, user, loan_type)
+    _ready_cashbook(db_session, admin)
     _verify_payment(client, admin, submitted["id"])
     statements = []
 

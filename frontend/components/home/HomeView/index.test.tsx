@@ -219,4 +219,20 @@ describe("HomeView", () => {
     expect(screen.queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Settings (admin)" })).not.toBeInTheDocument();
   });
+
+  it("offers verification-only staff the pending repayment queue", () => {
+    render(
+      <HomeView
+        model={makeModel({
+          user: { ...admin, permissions: ["repayment.verify"] },
+          currentSettings: settings,
+          loansEnabled: true,
+        })}
+      />
+    );
+
+    expect(
+      screen.getByRole("link", { name: "Loan Repayments (admin review)" })
+    ).toHaveAttribute("href", "/admin/loan-repayments?status=awaiting_verification");
+  });
 });

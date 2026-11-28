@@ -248,6 +248,32 @@ def test_a_repayment_verification_notifies_the_member_login(client, db_session):
     assert "800.00" in rows[0].body  # remaining balance
 
 
+def test_repayment_verification_skips_a_member_login_that_is_not_active(
+    client, db_session, monkeypatch
+):
+    monkeypatch.setattr(
+        "app.routers.loan_repayments.send_email",
+        lambda **kwargs: EmailResult(True, SENT, message_id="msg_inactive_test"),
+    )
+    admin = make_admin_user(db_session, username="notify_inactive_repay_admin", super_admin=True)
+    member = make_member(db_session, psn="PSN-NOT-INACTIVE")
+    user = make_member_user(db_session, member)
+    user.account_status = models.AccountStatus.SUSPENDED
+    db_session.commit()
+    repayment = _make_repayment(db_session, member, make_loan_type(db_session, "Inactive Repay"))
+
+    response = client.post(
+        f"/api/loan-repayments/{repayment.id}/verify",
+        json={"approved": True},
+        headers=auth_headers(admin),
+    )
+
+    assert response.status_code == 200, response.text
+    assert _feed(db_session, user) == []
+    db_session.refresh(repayment)
+    assert repayment.status == models.RepaymentVerificationStatus.VERIFIED
+
+
 def test_a_contribution_approval_notifies_the_member_login(client, db_session):
     admin = make_admin_user(db_session, username="notify_contrib_admin", super_admin=True)
     member = make_member(db_session, psn="PSN-NOT-11")

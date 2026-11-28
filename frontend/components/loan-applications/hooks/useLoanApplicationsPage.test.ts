@@ -76,6 +76,8 @@ describe("useLoanApplicationsPage", () => {
     const { result } = await renderLoadedHook();
 
     expect(result.current.table.items).toEqual([summary]);
+    expect(listMock).toHaveBeenCalledWith({ status: "pending" });
+    expect(result.current.filter.current).toBe("pending");
 
     await expandApplication(result);
 
@@ -182,12 +184,27 @@ describe("useLoanApplicationsPage queue presets", () => {
     expect(result.current.filter.current).toBe("payment");
   });
 
-  it("clears the preset and reloads the full list", async () => {
+  it("clears the preset and shows the full application history", async () => {
     window.history.replaceState(null, "", "/admin/loan-applications?queue=review");
     const { result } = await renderLoadedHook();
 
     act(() => result.current.filter.clear());
 
     await waitFor(() => expect(listMock).toHaveBeenLastCalledWith(undefined));
+    expect(result.current.filter.current).toBe("all");
+  });
+
+  it.each([
+    ["pending", { status: "pending" }],
+    ["approved", { status: "approved", undisbursed_only: true }],
+    ["rejected", { status: "rejected" }],
+    ["cancelled", { status: "cancelled" }],
+    ["all", undefined],
+  ] as const)("opens the %s admin view", async (queue, expectedParams) => {
+    window.history.replaceState(null, "", `/admin/loan-applications?queue=${queue}`);
+    const { result } = await renderLoadedHook();
+
+    expect(listMock).toHaveBeenCalledWith(expectedParams);
+    expect(result.current.filter.current).toBe(queue);
   });
 });

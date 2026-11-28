@@ -250,6 +250,10 @@ describe("useDashboardPage repayments", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getMyMemberRecordMock.mockResolvedValue({ id: "member-1" } as any);
+    getMySavingsMock.mockResolvedValue({} as any);
+    getMyDeductionsMock.mockResolvedValue({} as any);
+    getMemberLoanBalanceMock.mockResolvedValue({} as any);
+    getNotificationsMock.mockResolvedValue({ items: [], total: 0, unread_count: 0 });
     getSettingsMock.mockResolvedValue(settings);
     listLoanApplicationsMock.mockResolvedValue([]);
     listLoansMock.mockResolvedValue([loan]);
@@ -283,7 +287,7 @@ describe("useDashboardPage repayments", () => {
       payment_reference: "TRF-9",
       receipt_image_base64: "cmVjZWlwdA==",
       receipt_content_type: "image/png",
-    });
+    }, expect.any(String));
   });
 
   it("refuses to submit without a payment month", async () => {
@@ -304,5 +308,64 @@ describe("useDashboardPage repayments", () => {
 
     expect(submitRepaymentMock).not.toHaveBeenCalled();
     expect(result.current.feedback.error).toBe("Choose the month this payment covers.");
+  });
+
+  it("reuses the attempt key when the member retries an unchanged submission", async () => {
+    submitRepaymentMock
+      .mockRejectedValueOnce(new Error("Connection lost"))
+      .mockResolvedValueOnce({} as any);
+    const { result } = renderHook(() => useDashboardPage(false, user, logout));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.loans.startRepayment(loan));
+    act(() => {
+      result.current.loans.setRepayReference("TRF-RETRY");
+      result.current.loans.setRepayReceiptFile(
+        new File(["receipt"], "receipt.png", { type: "image/png" })
+      );
+    });
+
+    await act(async () => {
+      await result.current.loans.submitRepayment({ preventDefault: () => {} } as any);
+    });
+    await act(async () => {
+      await result.current.loans.submitRepayment({ preventDefault: () => {} } as any);
+    });
+
+    expect(submitRepaymentMock).toHaveBeenCalledTimes(2);
+    expect(submitRepaymentMock.mock.calls[0][2]).toEqual(expect.any(String));
+    expect(submitRepaymentMock.mock.calls[1][2]).toBe(submitRepaymentMock.mock.calls[0][2]);
+  });
+
+  it("prevents duplicate in-flight submissions", async () => {
+    let finishSubmission: (value: unknown) => void = () => {};
+    submitRepaymentMock.mockImplementation(
+      () => new Promise<any>((resolve) => { finishSubmission = resolve; })
+    );
+    const { result } = renderHook(() => useDashboardPage(false, user, logout));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.loans.startRepayment(loan));
+    act(() => {
+      result.current.loans.setRepayReference("TRF-ONCE");
+      result.current.loans.setRepayReceiptFile(
+        new File(["receipt"], "receipt.png", { type: "image/png" })
+      );
+    });
+
+    let firstSubmission: Promise<void> = Promise.resolve();
+    await act(async () => {
+      firstSubmission = result.current.loans.submitRepayment({ preventDefault: () => {} } as any);
+      await result.current.loans.submitRepayment({ preventDefault: () => {} } as any);
+    });
+
+    expect(submitRepaymentMock).toHaveBeenCalledTimes(1);
+    expect(result.current.loans.submitting).toBe(true);
+
+    await act(async () => {
+      finishSubmission({});
+      await firstSubmission!;
+    });
+    expect(result.current.loans.submitting).toBe(false);
   });
 });

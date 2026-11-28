@@ -319,6 +319,11 @@ def verify_payment(
         raise HTTPException(status_code=400, detail="This payment has already been reviewed")
 
     previous_payment_status = application.payment_status.value
+    previous_application_status = application.status
+    terminal_application_status = previous_application_status in (
+        models.LoanApplicationStatus.CANCELLED,
+        models.LoanApplicationStatus.REJECTED,
+    )
     application.payment_verified_by_user_id = current_user.id
     application.payment_verified_at = datetime.utcnow()
 
@@ -328,15 +333,22 @@ def verify_payment(
             cashbook.post_application_fee(db, application, actor_id=current_user.id)
         except cashbook.CashbookError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+        if terminal_application_status:
+            payment_notice_body = (
+                f"Your payment for the {application.loan_type.name} application has been "
+                f"verified. The application remains {previous_application_status.value}."
+            )
+        else:
+            payment_notice_body = (
+                f"Your payment for the {application.loan_type.name} application has been "
+                "verified. The application now awaits a decision."
+            )
         notification_service.notify_member(
             db,
             application.member,
             category=models.NotificationCategory.LOAN,
             title="Loan form payment verified",
-            body=(
-                f"Your payment for the {application.loan_type.name} application has been "
-                "verified. The application now awaits a decision."
-            ),
+            body=payment_notice_body,
             link_path="/dashboard",
         )
     else:
@@ -344,18 +356,27 @@ def verify_payment(
             raise HTTPException(status_code=400, detail="rejection_reason is required when rejecting a payment")
         application.payment_status = models.PaymentVerificationStatus.REJECTED
         application.payment_rejection_reason = payload.rejection_reason
-        # An invalid payment means the application itself can't proceed
-        application.status = models.LoanApplicationStatus.REJECTED
-        application.admin_notes = f"Payment not verified: {payload.rejection_reason}"
+        if not terminal_application_status:
+            # An invalid payment means a non-terminal application can't proceed.
+            application.status = models.LoanApplicationStatus.REJECTED
+            application.admin_notes = f"Payment not verified: {payload.rejection_reason}"
+        if terminal_application_status:
+            payment_notice_body = (
+                f"Your payment for the {application.loan_type.name} application was not "
+                f"verified: {payload.rejection_reason}. The application remains "
+                f"{previous_application_status.value}."
+            )
+        else:
+            payment_notice_body = (
+                f"Your payment for the {application.loan_type.name} application was not "
+                f"verified: {payload.rejection_reason}"
+            )
         notification_service.notify_member(
             db,
             application.member,
             category=models.NotificationCategory.LOAN,
             title="Loan form payment could not be verified",
-            body=(
-                f"Your payment for the {application.loan_type.name} application was not "
-                f"verified: {payload.rejection_reason}"
-            ),
+            body=payment_notice_body,
             link_path="/dashboard",
         )
 
@@ -369,8 +390,14 @@ def verify_payment(
         action="approve" if payload.approved else "reject",
         entity_type="loan_application",
         entity_id=str(application.id),
-        previous_values={"payment_status": previous_payment_status},
-        new_values={"payment_status": application.payment_status.value},
+        previous_values={
+            "payment_status": previous_payment_status,
+            "application_status": previous_application_status.value,
+        },
+        new_values={
+            "payment_status": application.payment_status.value,
+            "application_status": application.status.value,
+        },
         reason=payload.rejection_reason,
         request=request,
     )
@@ -890,11 +917,14 @@ def cancel_application(
     request: Request,
     current_user: models.User = Depends(require_password_already_changed),
     db: Session = Depends(get_db),
+    idem: IdempotencyContext = Depends(idempotency_check),
 ):
     """Member cancels their own application before it's disbursed. The
     loan-form fee is NOT refunded -- cancelling is a deliberate choice
     with that tradeoff; the frontend should warn about this and suggest
     /reschedule instead if the member just wants a different date."""
+    if idem.cached_response is not None:
+        return idem.cached_response
     if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
         raise HTTPException(status_code=403, detail="Only members can cancel their own applications")
 
@@ -902,6 +932,7 @@ def cancel_application(
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
         .filter(models.LoanApplication.id == application_id)
+        .with_for_update(of=models.LoanApplication)
         .first()
     )
     if not application:
@@ -918,6 +949,7 @@ def cancel_application(
             detail="This application can no longer be cancelled (already disbursed, rejected, or cancelled).",
         )
 
+    previous_application_status = application.status.value
     application.status = models.LoanApplicationStatus.CANCELLED
     application.cancelled_at = datetime.utcnow()
     # Approved-but-undisbursed applications still owed staff a payout, so
@@ -935,31 +967,40 @@ def cancel_application(
         ),
         link_path="/admin/loan-applications",
     )
-    db.commit()
-    db.refresh(application)
-
-    audit_service.log_event(
+    audit_service.stage_event(
         db,
         actor=current_user,
         event_type="loan_application.cancelled",
         action="cancel",
         entity_type="loan_application",
         entity_id=str(application.id),
+        previous_values={"application_status": previous_application_status},
+        new_values={"application_status": application.status.value},
         request=request,
     )
-    return _to_detail_schema(application)
+    result = _to_detail_schema(application)
+    if idem.key:
+        idem.store(result.model_dump(mode="json"), status_code=200)
+    else:
+        db.commit()
+    db.refresh(application)
+    return result
 
 
 @router.post("/{application_id}/reschedule", response_model=schemas.LoanApplicationOutWithDetails)
 def reschedule_application(
     application_id: uuid.UUID,
     payload: schemas.RescheduleRequest,
+    request: Request,
     current_user: models.User = Depends(require_password_already_changed),
     db: Session = Depends(get_db),
+    idem: IdempotencyContext = Depends(idempotency_check),
 ):
     """Member updates their preferred disbursement date WITHOUT
     cancelling -- no fee impact at all, since the application itself
     isn't ending. Same eligibility window as /cancel."""
+    if idem.cached_response is not None:
+        return idem.cached_response
     if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
         raise HTTPException(status_code=403, detail="Only members can reschedule their own applications")
 
@@ -967,6 +1008,7 @@ def reschedule_application(
         db.query(models.LoanApplication)
         .options(joinedload(models.LoanApplication.member), joinedload(models.LoanApplication.loan_type))
         .filter(models.LoanApplication.id == application_id)
+        .with_for_update(of=models.LoanApplication)
         .first()
     )
     if not application:
@@ -983,10 +1025,30 @@ def reschedule_application(
             detail="This application can no longer be rescheduled (already disbursed, rejected, or cancelled).",
         )
 
+    previous_disbursement_date = application.preferred_disbursement_date
     application.preferred_disbursement_date = payload.preferred_disbursement_date
-    db.commit()
+    audit_service.stage_event(
+        db,
+        actor=current_user,
+        event_type="loan_application.rescheduled",
+        action="reschedule",
+        entity_type="loan_application",
+        entity_id=str(application.id),
+        previous_values={
+            "preferred_disbursement_date": (
+                previous_disbursement_date.isoformat() if previous_disbursement_date else None
+            )
+        },
+        new_values={"preferred_disbursement_date": payload.preferred_disbursement_date.isoformat()},
+        request=request,
+    )
+    result = _to_detail_schema(application)
+    if idem.key:
+        idem.store(result.model_dump(mode="json"), status_code=200)
+    else:
+        db.commit()
     db.refresh(application)
-    return _to_detail_schema(application)
+    return result
 
 
 @router.post("/{application_id}/reapply", response_model=schemas.LoanApplicationOutWithDetails, status_code=201)

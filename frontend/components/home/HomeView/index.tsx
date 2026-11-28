@@ -77,9 +77,17 @@ export default function HomeView({ model }: { model: HomePageModel }) {
               <a href="/admin/disbursements">Disbursements (admin)</a>
             </li>
           )}
-          {loansEnabled && user.role === "admin" && can("repayment.view") && (
+          {loansEnabled && user.role === "admin" && canAny(["repayment.view", "repayment.verify"]) && (
             <li>
-              <a href="/admin/loan-repayments">Loan Repayments (admin review)</a>
+              <a
+                href={
+                  can("repayment.view")
+                    ? "/admin/loan-repayments"
+                    : "/admin/loan-repayments?status=awaiting_verification"
+                }
+              >
+                Loan Repayments (admin review)
+              </a>
             </li>
           )}
           {user.role === "admin" && deductionsEnabled && can("deduction.view") && (

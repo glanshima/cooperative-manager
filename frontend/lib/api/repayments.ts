@@ -34,8 +34,16 @@ export interface LoanRepaymentInput {
   receipt_content_type: string;
 }
 
-export async function submitRepayment(loanId: string, input: LoanRepaymentInput): Promise<LoanRepayment> {
-  return apiFetch<LoanRepayment>(`/api/loans/${loanId}/repayments`, { method: "POST", body: input });
+export async function submitRepayment(
+  loanId: string,
+  input: LoanRepaymentInput,
+  idempotencyKey?: string
+): Promise<LoanRepayment> {
+  return apiFetch<LoanRepayment>(`/api/loans/${loanId}/repayments`, {
+    method: "POST",
+    body: input,
+    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+  });
 }
 
 export async function listRepaymentsForLoan(loanId: string): Promise<LoanRepayment[]> {

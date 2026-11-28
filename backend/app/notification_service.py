@@ -64,7 +64,11 @@ def notify_member(
 ) -> Optional[models.Notification]:
     """Notifies the member's self-service login, when one exists."""
     user = member.get_member_login_user(db)
-    if user is None or not user.is_active:
+    if (
+        user is None
+        or not user.is_active
+        or user.account_status != models.AccountStatus.ACTIVE
+    ):
         return None
     return notify(
         db,
@@ -97,6 +101,7 @@ def notify_staff(
         .filter(
             models.User.role == models.UserRole.ADMIN,
             models.User.is_active.is_(True),
+            models.User.account_status == models.AccountStatus.ACTIVE,
         )
         .all()
     )

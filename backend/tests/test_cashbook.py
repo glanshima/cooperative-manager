@@ -923,6 +923,120 @@ def test_application_fee_verification_waits_for_the_opening_journal(client, db_s
     )
 
 
+def test_application_fee_verification_waits_for_the_cashbook_module(client, db_session):
+    make_settings(db_session, cashbook_module_enabled=False, loan_form_fee=Decimal("35.00"))
+    admin = make_admin_user(db_session, username="cb_app_disabled", super_admin=True)
+    member = make_member(db_session, psn="CB-APP-DISABLED", email="cbappdisabled@example.com")
+    user = make_member_user(db_session, member)
+    loan_type = make_loan_type(db_session, "Cashbook Disabled Application", open_for_application=True)
+
+    submitted = client.post(
+        "/api/loan-applications",
+        json={
+            "loan_type_id": str(loan_type.id),
+            "requested_amount": "500.00",
+            "payment_reference": "TRF-APP-DISABLED",
+            "receipt_image_base64": "aGVsbG8=",
+            "receipt_content_type": "image/png",
+        },
+        headers=auth_headers(user),
+    )
+    assert submitted.status_code == 201, submitted.text
+    application_id = submitted.json()["id"]
+
+    blocked = client.post(
+        f"/api/loan-applications/{application_id}/verify-payment",
+        json={"approved": True},
+        headers=auth_headers(admin),
+    )
+    assert blocked.status_code == 403, blocked.text
+    assert "Cashbook module is disabled" in blocked.json()["detail"]
+    db_session.expire_all()
+    pending = db_session.query(models.LoanApplication).filter(models.LoanApplication.id == application_id).one()
+    assert pending.payment_status == models.PaymentVerificationStatus.AWAITING_VERIFICATION
+    assert db_session.query(models.CashbookEntry).count() == 0
+
+
+def test_application_fee_verification_waits_for_an_unlocked_period(client, db_session):
+    admin = _ready(client, db_session)
+    make_settings(db_session, loan_form_fee=Decimal("35.00"))
+    member = make_member(db_session, psn="CB-APP-LOCKED", email="cbapplocked@example.com")
+    user = make_member_user(db_session, member)
+    loan_type = make_loan_type(db_session, "Cashbook Locked Application", open_for_application=True)
+
+    submitted = client.post(
+        "/api/loan-applications",
+        json={
+            "loan_type_id": str(loan_type.id),
+            "requested_amount": "500.00",
+            "payment_reference": "TRF-APP-LOCKED",
+            "receipt_image_base64": "aGVsbG8=",
+            "receipt_content_type": "image/png",
+        },
+        headers=auth_headers(user),
+    )
+    assert submitted.status_code == 201, submitted.text
+    application_id = submitted.json()["id"]
+    cashbook.lock_period(
+        db_session,
+        date.today().replace(day=1),
+        actor=admin,
+        note="Month closed",
+    )
+    db_session.commit()
+
+    blocked = client.post(
+        f"/api/loan-applications/{application_id}/verify-payment",
+        json={"approved": True},
+        headers=auth_headers(admin),
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert "is locked" in blocked.json()["detail"]
+    db_session.expire_all()
+    pending = db_session.query(models.LoanApplication).filter(models.LoanApplication.id == application_id).one()
+    assert pending.payment_status == models.PaymentVerificationStatus.AWAITING_VERIFICATION
+    assert (
+        db_session.query(models.CashbookEntry)
+        .filter(
+            models.CashbookEntry.source == models.CashbookEntrySource.LOAN_FEE,
+            models.CashbookEntry.source_id == uuid.UUID(application_id),
+        )
+        .count()
+        == 0
+    )
+
+
+def test_zero_fee_application_payment_verifies_without_cashbook(client, db_session):
+    make_settings(db_session, cashbook_module_enabled=False, loan_form_fee=Decimal("0.00"))
+    admin = make_admin_user(db_session, username="cb_app_zero", super_admin=True)
+    member = make_member(db_session, psn="CB-APP-ZERO", email="cbappzero@example.com")
+    user = make_member_user(db_session, member)
+    loan_type = make_loan_type(db_session, "Cashbook Zero Fee Application", open_for_application=True)
+
+    submitted = client.post(
+        "/api/loan-applications",
+        json={
+            "loan_type_id": str(loan_type.id),
+            "requested_amount": "500.00",
+            "payment_reference": "TRF-APP-ZERO",
+            "receipt_image_base64": "aGVsbG8=",
+            "receipt_content_type": "image/png",
+        },
+        headers=auth_headers(user),
+    )
+    assert submitted.status_code == 201, submitted.text
+    application_id = submitted.json()["id"]
+
+    verified = client.post(
+        f"/api/loan-applications/{application_id}/verify-payment",
+        json={"approved": True},
+        headers=auth_headers(admin),
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["payment_status"] == "verified"
+    assert db_session.query(models.CashbookEntry).count() == 0
+
+
 def test_settlement_and_payout_post_to_the_right_accounts(client, db_session):
     admin = _ready(client, db_session, cash="500.00")
     member = make_member(

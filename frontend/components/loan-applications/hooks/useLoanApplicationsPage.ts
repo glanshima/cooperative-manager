@@ -10,12 +10,31 @@ import {
   LoanApplicationWithReceipt,
 } from "@/lib/api";
 
-export type ApplicationQueueFilter = "review" | "payment" | null;
+export type ApplicationQueueFilter =
+  | "review"
+  | "payment"
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled"
+  | "all";
+
+const APPLICATION_VIEWS: ApplicationQueueFilter[] = [
+  "review",
+  "payment",
+  "pending",
+  "approved",
+  "rejected",
+  "cancelled",
+  "all",
+];
 
 function readQueueFilter(): ApplicationQueueFilter {
-  if (typeof window === "undefined") return null;
+  if (typeof window === "undefined") return "pending";
   const requested = new URLSearchParams(window.location.search).get("queue");
-  return requested === "review" || requested === "payment" ? requested : null;
+  return APPLICATION_VIEWS.includes(requested as ApplicationQueueFilter)
+    ? (requested as ApplicationQueueFilter)
+    : "pending";
 }
 
 export function useLoanApplicationsPage(authLoading: boolean, logout: () => void) {
@@ -23,9 +42,9 @@ export function useLoanApplicationsPage(authLoading: boolean, logout: () => void
   const [expanded, setExpanded] = useState<LoanApplicationWithReceipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // The dashboard's queues link here with the queue they count, so the page
-  // opens on exactly those rows instead of the whole application history.
-  const [queueFilter, setQueueFilter] = useState<ApplicationQueueFilter>(null);
+  // The dashboard's queues link here with the queue they count. Without a
+  // preset, the page opens on Pending rather than the full history.
+  const [queueFilter, setQueueFilter] = useState<ApplicationQueueFilter>("pending");
   const [filterReady, setFilterReady] = useState(false);
 
   const [approvedAmount, setApprovedAmount] = useState("");
@@ -45,7 +64,11 @@ export function useLoanApplicationsPage(authLoading: boolean, logout: () => void
             ? { status: "pending", payment_status: "verified" }
             : queueFilter === "payment"
               ? { payment_status: "awaiting_verification" }
-              : undefined
+              : queueFilter === "approved"
+                ? { status: "approved", undisbursed_only: true }
+                : queueFilter === "all"
+                  ? undefined
+                  : { status: queueFilter }
         )
       );
     } catch (e: any) {
@@ -136,7 +159,8 @@ export function useLoanApplicationsPage(authLoading: boolean, logout: () => void
     loading,
     filter: {
       current: queueFilter,
-      clear: () => setQueueFilter(null),
+      set: setQueueFilter,
+      clear: () => setQueueFilter("all"),
     },
     table: {
       items: applications,

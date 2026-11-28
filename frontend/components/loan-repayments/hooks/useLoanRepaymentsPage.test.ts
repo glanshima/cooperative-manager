@@ -27,8 +27,8 @@ const repayment = {
 
 const logout = vi.fn();
 
-async function renderLoadedHook() {
-  const rendered = renderHook(() => useLoanRepaymentsPage(false, logout));
+async function renderLoadedHook(canViewHistory = true) {
+  const rendered = renderHook(() => useLoanRepaymentsPage(false, logout, canViewHistory));
   await waitFor(() => expect(rendered.result.current.loading).toBe(false));
   return rendered;
 }
@@ -78,5 +78,18 @@ describe("useLoanRepaymentsPage", () => {
 
     await waitFor(() => expect(listMock).toHaveBeenLastCalledWith(undefined));
     expect(result.current.filter.awaitingOnly).toBe(false);
+  });
+
+  it("keeps verifier-only users on the pending queue without a history control", async () => {
+    const { result } = await renderLoadedHook(false);
+
+    expect(listMock).toHaveBeenCalledWith("awaiting_verification");
+    expect(result.current.filter.awaitingOnly).toBe(true);
+    expect(result.current.filter.canViewHistory).toBe(false);
+
+    act(() => result.current.filter.clear());
+
+    expect(result.current.filter.awaitingOnly).toBe(true);
+    expect(listMock).toHaveBeenCalledTimes(1);
   });
 });
