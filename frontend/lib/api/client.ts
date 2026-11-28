@@ -63,7 +63,12 @@ async function handle<T>(res: Response): Promise<T> {
  */
 export async function apiFetch<T>(
   path: string,
-  options: { method?: string; body?: unknown; searchParams?: Record<string, string | undefined> } = {}
+  options: {
+    method?: string;
+    body?: unknown;
+    searchParams?: Record<string, string | undefined>;
+    headers?: Record<string, string>;
+  } = {}
 ): Promise<T> {
   const url = new URL(`${API_URL}${path}`);
   if (options.searchParams) {
@@ -73,7 +78,7 @@ export async function apiFetch<T>(
   }
 
   const token = getToken();
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...options.headers };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
 

@@ -522,6 +522,20 @@ describe("AdminNav", () => {
     expect(within(nav).getByRole("link", { name: "Loan repayments" })).toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: "Disbursements" })).not.toBeInTheDocument();
   });
+
+  it("links verification-only staff directly to the pending queue", async () => {
+    authState.user = { username: "verifier", permissions: ["repayment.verify"] };
+    render(<AdminNav />);
+
+    const nav = screen.getByRole("navigation", { name: "Admin" });
+    await within(nav).findByRole("button", { name: "Loan Management" });
+
+    expect(within(nav).getByRole("link", { name: "Loan repayments" })).toHaveAttribute(
+      "href",
+      "/admin/loan-repayments?status=awaiting_verification"
+    );
+    expect(within(nav).queryByRole("link", { name: "Loans" })).not.toBeInTheDocument();
+  });
 });
 
 describe("useAdminNav", () => {

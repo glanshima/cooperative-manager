@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import AuthShell from "@/components/branding/AuthShell";
+import PasswordInput from "@/components/ui/PasswordInput";
 
 import { login } from "../../lib/api";
 
@@ -46,14 +47,17 @@ export default function LoginPage() {
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
         <input
           required
+          autoComplete="username"
           placeholder="PSN or username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
         />
-        <input
+        <PasswordInput
           required
-          type="password"
+          name="password"
+          label="Password"
           placeholder="Password"
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />

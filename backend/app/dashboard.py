@@ -339,7 +339,10 @@ def _queues(db: Session, permissions: Set[str]) -> List[dict]:
     if "disbursement.submit" in permissions:
         awaiting = (
             db.query(func.count(models.LoanApplication.id))
-            .filter(models.LoanApplication.status == models.LoanApplicationStatus.APPROVED)
+            .filter(
+                models.LoanApplication.status == models.LoanApplicationStatus.APPROVED,
+                models.LoanApplication.resulting_loan_id.is_(None),
+            )
             .scalar()
         )
         add(

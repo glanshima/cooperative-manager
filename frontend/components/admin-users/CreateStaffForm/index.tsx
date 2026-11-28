@@ -1,3 +1,5 @@
+import PasswordInput from "@/components/ui/PasswordInput";
+
 import type { AdminUsersPageModel } from "../hooks/useAdminUsersPage";
 import MemberPicker from "../MemberPicker";
 import { describeMember } from "../utils";
@@ -25,22 +27,20 @@ export default function CreateStaffForm({
         <label>
           Username
           <input
+            autoComplete="username"
             value={create.username}
             onChange={(e) => create.setUsername(e.target.value)}
             required
             style={{ display: "block", padding: 8 }}
           />
         </label>
-        <label>
-          Temporary password
-          <input
-            type="password"
-            value={create.password}
-            onChange={(e) => create.setPassword(e.target.value)}
-            required
-            style={{ display: "block", padding: 8 }}
-          />
-        </label>
+        <PasswordInput
+          label="Temporary password"
+          autoComplete="new-password"
+          value={create.password}
+          onChange={(e) => create.setPassword(e.target.value)}
+          required
+        />
         <button type="submit">Create</button>
       </form>
 

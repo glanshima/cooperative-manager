@@ -60,8 +60,13 @@ export function useAdminNav(permissions: string[]) {
   if (canAny(DISBURSEMENT_PERMISSIONS)) {
     loanChildren.push({ href: "/admin/disbursements", label: "Disbursements" });
   }
-  if (can("repayment.view")) {
-    loanChildren.push({ href: "/admin/loan-repayments", label: "Loan repayments" });
+  if (canAny(["repayment.view", "repayment.verify"])) {
+    loanChildren.push({
+      href: can("repayment.view")
+        ? "/admin/loan-repayments"
+        : "/admin/loan-repayments?status=awaiting_verification",
+      label: "Loan repayments",
+    });
   }
   if (can("loan.fee_verify") && can("loan.view")) {
     // The queue's data call is gated on loan.view, so offer it only when

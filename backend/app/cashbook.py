@@ -649,10 +649,14 @@ def post_application_fee(
     actor_id: Optional[uuid.UUID] = None,
     entry_date: Optional[date] = None,
 ) -> Optional[models.CashbookEntry]:
+    amount = money(application.form_fee_amount)
+    if amount <= ZERO:
+        return None
+    require_open_books(db)
     return _post_loan_fee(
         db,
         source_id=application.id,
-        amount=application.form_fee_amount,
+        amount=amount,
         reference=application.payment_reference,
         actor_id=actor_id,
         entry_date=entry_date,

@@ -151,6 +151,54 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.password-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.password-field__label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.password-field__control {
+  position: relative;
+}
+
+.password-field__input {
+  width: 100%;
+  min-height: 44px;
+  padding-right: 48px;
+}
+
+.password-field__toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  transform: translateY(-50%);
+}
+
+.password-field__toggle:hover:not(:disabled) {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.password-field__toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
 textarea {
   resize: vertical;
 }

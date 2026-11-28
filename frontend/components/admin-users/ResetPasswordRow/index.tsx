@@ -1,3 +1,5 @@
+import PasswordInput from "@/components/ui/PasswordInput";
+
 import type { CurrentUser } from "@/lib/api";
 
 export default function ResetPasswordRow({
@@ -28,13 +30,14 @@ export default function ResetPasswordRow({
           className="toolbar"
           style={{ marginTop: 8 }}
         >
-          <input
-            type="password"
+          <PasswordInput
+            label="Temporary password"
+            autoComplete="new-password"
             placeholder="Temporary password (min 8 chars, 1 letter, 1 number)"
             value={tempPassword}
             onChange={(e) => onTempPasswordChange(e.target.value)}
             required
-            style={{ padding: 6, flex: "1 1 220px", width: "auto" }}
+            containerStyle={{ flex: "1 1 220px" }}
           />
           <button type="submit" disabled={!tempPassword}>
             Confirm Reset

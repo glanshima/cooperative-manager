@@ -160,8 +160,10 @@ export default function LoansSection({ loans }: { loans: DashboardPageModel["loa
               />
             </label>
             <div>
-              <button type="submit">Submit repayment</button>{" "}
-              <button type="button" onClick={loans.cancelRepayment}>
+              <button type="submit" disabled={loans.submitting}>
+                {loans.submitting ? "Submitting..." : "Submit repayment"}
+              </button>{" "}
+              <button type="button" onClick={loans.cancelRepayment} disabled={loans.submitting}>
                 Cancel
               </button>
             </div>

@@ -8,7 +8,11 @@ import {
   LoanRepaymentWithReceipt,
 } from "@/lib/api";
 
-export function useLoanRepaymentsPage(authLoading: boolean, logout: () => void) {
+export function useLoanRepaymentsPage(
+  authLoading: boolean,
+  logout: () => void,
+  canViewHistory = true
+) {
   const [repayments, setRepayments] = useState<LoanRepayment[]>([]);
   const [expanded, setExpanded] = useState<LoanRepaymentWithReceipt | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,9 +38,9 @@ export function useLoanRepaymentsPage(authLoading: boolean, logout: () => void) 
     // The query string is only readable in the browser, so the first fetch
     // waits for it rather than loading the history first.
     const requested = new URLSearchParams(window.location.search).get("status");
-    setAwaitingOnly(requested === "awaiting_verification");
+    setAwaitingOnly(!canViewHistory || requested === "awaiting_verification");
     setFilterReady(true);
-  }, []);
+  }, [canViewHistory]);
 
   useEffect(() => {
     if (!authLoading && filterReady) refresh();
@@ -71,7 +75,10 @@ export function useLoanRepaymentsPage(authLoading: boolean, logout: () => void) 
     loading,
     filter: {
       awaitingOnly,
-      clear: () => setAwaitingOnly(false),
+      canViewHistory,
+      clear: () => {
+        if (canViewHistory) setAwaitingOnly(false);
+      },
     },
     table: { items: repayments, onReview: handleExpand },
     review: {

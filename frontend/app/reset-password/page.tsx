@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import AuthShell from "@/components/branding/AuthShell";
+import PasswordInput from "@/components/ui/PasswordInput";
 
 import { resetPassword, verifyResetToken } from "../../lib/api";
 
@@ -124,29 +125,25 @@ function ResetPasswordForm() {
     <form onSubmit={handleSubmit} style={{ display: "grid", gap: 14 }}>
       {error && <div className="notice notice--error">{error}</div>}
 
-      <label style={{ display: "grid", gap: 6, fontSize: 14, fontWeight: 500 }}>
-        New Password
-        <input
-          required
-          type="password"
-          placeholder="Min 8 chars, 1 letter, 1 number"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-          disabled={loading}
-        />
-      </label>
+      <PasswordInput
+        required
+        label="New Password"
+        autoComplete="new-password"
+        placeholder="Min 8 chars, 1 letter, 1 number"
+        value={newPassword}
+        onChange={(e) => setNewPassword(e.target.value)}
+        disabled={loading}
+      />
 
-      <label style={{ display: "grid", gap: 6, fontSize: 14, fontWeight: 500 }}>
-        Confirm New Password
-        <input
-          required
-          type="password"
-          placeholder="Re-enter new password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
-          disabled={loading}
-        />
-      </label>
+      <PasswordInput
+        required
+        label="Confirm New Password"
+        autoComplete="new-password"
+        placeholder="Re-enter new password"
+        value={confirmPassword}
+        onChange={(e) => setConfirmPassword(e.target.value)}
+        disabled={loading}
+      />
 
       <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0" }}>
         Password policy: Minimum 8 characters with at least one letter and one number.

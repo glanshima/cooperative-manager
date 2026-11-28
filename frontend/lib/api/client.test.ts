@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createOffice, listAuditEvents, listOffices, revokeRole } from "./admin";
-import { ApiError, setToken } from "./client";
+import { ApiError, apiFetch, setToken } from "./client";
 
 function response(body: unknown, status = 200): Response {
   return {
@@ -41,6 +41,25 @@ describe("apiFetch", () => {
     expect(init.method).toBe("POST");
     expect(init.body).toBe(JSON.stringify({ name: "Treasurer", description: "Finance" }));
     expect(init.headers).toMatchObject({ "Content-Type": "application/json" });
+  });
+
+  it("forwards idempotency headers without replacing authorization", async () => {
+    setToken("token-123");
+    const fetchMock = vi.fn().mockResolvedValue(response({ id: "rep-1" }, 201));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetch("/api/loans/loan-1/repayments", {
+      method: "POST",
+      body: { amount_claimed: 100 },
+      headers: { "Idempotency-Key": "attempt-1" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer token-123",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "attempt-1",
+    });
   });
 
   it("turns a structured detail into a readable ApiError message", async () => {

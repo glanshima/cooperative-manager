@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import {
@@ -98,10 +98,13 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
 
   const [servicingLoanId, setServicingLoanId] = useState<string | null>(null);
   const [reapplyFromId, setReapplyFromId] = useState<string | null>(null);
-  const [repayAmount, setRepayAmount] = useState(0);
-  const [repayMonth, setRepayMonth] = useState(currentMonth());
-  const [repayReference, setRepayReference] = useState("");
-  const [repayReceiptFile, setRepayReceiptFile] = useState<File | null>(null);
+  const [repayAmount, setRepayAmountState] = useState(0);
+  const [repayMonth, setRepayMonthState] = useState(currentMonth());
+  const [repayReference, setRepayReferenceState] = useState("");
+  const [repayReceiptFile, setRepayReceiptFileState] = useState<File | null>(null);
+  const [repaymentIdempotencyKey, setRepaymentIdempotencyKey] = useState("");
+  const [repaymentSubmitting, setRepaymentSubmitting] = useState(false);
+  const repaymentInFlight = useRef(false);
 
   const [feePayingLoanId, setFeePayingLoanId] = useState<string | null>(null);
   const [feeReference, setFeeReference] = useState("");
@@ -337,15 +340,38 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
     }
   }
 
+  function setRepayAmount(amount: number) {
+    setRepayAmountState(amount);
+    setRepaymentIdempotencyKey(crypto.randomUUID());
+  }
+
+  function setRepayMonth(month: string) {
+    setRepayMonthState(month);
+    setRepaymentIdempotencyKey(crypto.randomUUID());
+  }
+
+  function setRepayReference(reference: string) {
+    setRepayReferenceState(reference);
+    setRepaymentIdempotencyKey(crypto.randomUUID());
+  }
+
+  function setRepayReceiptFile(file: File | null) {
+    setRepayReceiptFileState(file);
+    setRepaymentIdempotencyKey(crypto.randomUUID());
+  }
+
   function handleStartRepayment(loan: Loan) {
     setServicingLoanId(loan.id);
-    setRepayAmount(parseFloat(loan.monthly_installment));
-    setRepayMonth(currentMonth());
+    setRepayAmountState(parseFloat(loan.monthly_installment));
+    setRepayMonthState(currentMonth());
+    setRepayReferenceState("");
+    setRepayReceiptFileState(null);
+    setRepaymentIdempotencyKey(crypto.randomUUID());
   }
 
   async function handleSubmitRepayment(e: FormEvent) {
     e.preventDefault();
-    if (!servicingLoanId) return;
+    if (!servicingLoanId || repaymentInFlight.current) return;
     setError(null);
     setSuccess(null);
 
@@ -358,24 +384,34 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
       return;
     }
 
+    repaymentInFlight.current = true;
+    setRepaymentSubmitting(true);
     try {
       const base64 = await fileToBase64(repayReceiptFile);
-      await submitRepayment(servicingLoanId, {
-        amount_claimed: repayAmount,
-        payment_month: repayMonth,
-        payment_reference: repayReference,
-        receipt_image_base64: base64,
-        receipt_content_type: repayReceiptFile.type,
-      });
+      await submitRepayment(
+        servicingLoanId,
+        {
+          amount_claimed: repayAmount,
+          payment_month: repayMonth,
+          payment_reference: repayReference,
+          receipt_image_base64: base64,
+          receipt_content_type: repayReceiptFile.type,
+        },
+        repaymentIdempotencyKey
+      );
       setSuccess("Repayment submitted for verification.");
       setServicingLoanId(null);
-      setRepayAmount(0);
-      setRepayMonth(currentMonth());
-      setRepayReference("");
-      setRepayReceiptFile(null);
+      setRepayAmountState(0);
+      setRepayMonthState(currentMonth());
+      setRepayReferenceState("");
+      setRepayReceiptFileState(null);
+      setRepaymentIdempotencyKey("");
       await refresh();
     } catch (e: any) {
       setError(e.message);
+    } finally {
+      repaymentInFlight.current = false;
+      setRepaymentSubmitting(false);
     }
   }
 
@@ -513,9 +549,14 @@ export function useDashboardPage(authLoading: boolean, user: CurrentUser | null,
       setRepayReference,
       repayReceiptFile,
       setRepayReceiptFile,
+      submitting: repaymentSubmitting,
       startRepayment: handleStartRepayment,
       submitRepayment: handleSubmitRepayment,
-      cancelRepayment: () => setServicingLoanId(null),
+      cancelRepayment: () => {
+        if (repaymentInFlight.current) return;
+        setServicingLoanId(null);
+        setRepaymentIdempotencyKey("");
+      },
       feePayingLoanId,
       feeReference,
       setFeeReference,

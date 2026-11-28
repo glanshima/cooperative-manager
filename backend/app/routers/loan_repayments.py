@@ -11,6 +11,7 @@ from ..database import get_db
 from ..deps import (
     get_current_user,
     require_admin,
+    require_any_permission,
     require_module_enabled,
     require_password_already_changed,
     require_permission,
@@ -51,9 +52,14 @@ def _assert_can_view_loan(loan: models.Loan, current_user: models.User, db: Sess
 def submit_repayment(
     loan_id: uuid.UUID,
     payload: schemas.LoanRepaymentCreate,
+    request: Request,
     current_user: models.User = Depends(require_password_already_changed),
     db: Session = Depends(get_db),
+    idem: IdempotencyContext = Depends(idempotency_check),
 ):
+    if idem.cached_response is not None:
+        return idem.cached_response
+
     if current_user.role != models.UserRole.MEMBER or not current_user.member_id:
         raise HTTPException(status_code=403, detail="Only members can submit repayments")
 
@@ -87,7 +93,37 @@ def submit_repayment(
         receipt_content_type=payload.receipt_content_type,
     )
     db.add(repayment)
-    db.commit()
+    db.flush()
+    notification_service.notify_staff(
+        db,
+        permission_code="repayment.verify",
+        category=models.NotificationCategory.REPAYMENT,
+        title="New repayment to verify",
+        body=(
+            f"{loan.member.name} submitted a repayment of {repayment.amount_claimed} "
+            f"for {payment_month.strftime('%B %Y')}."
+        ),
+        link_path="/admin/loan-repayments?status=awaiting_verification",
+    )
+    audit_service.stage_event(
+        db,
+        actor=current_user,
+        event_type="repayment.submitted",
+        action="submit",
+        entity_type="loan_repayment",
+        entity_id=str(repayment.id),
+        new_values={
+            "amount_claimed": str(repayment.amount_claimed),
+            "loan_id": str(repayment.loan_id),
+            "payment_month": payment_month.isoformat(),
+        },
+        request=request,
+    )
+    result = schemas.LoanRepaymentOut.model_validate(repayment)
+    if idem.key:
+        idem.store(result.model_dump(mode="json"), status_code=201)
+    else:
+        db.commit()
     db.refresh(repayment)
     return repayment
 
@@ -134,13 +170,23 @@ def list_repayments_for_loan(
 def list_all_repayments(
     request: Request,
     status: Optional[models.RepaymentVerificationStatus] = None,
-    current_user: models.User = Depends(require_permission("repayment.view")),
+    current_user: models.User = Depends(require_any_permission("repayment.view", "repayment.verify")),
     db: Session = Depends(get_db),
 ):
-    """Admin-only: cross-loan queue of repayments awaiting verification."""
+    """Admin-only: full history for viewers, pending evidence for verifiers."""
+    can_view_history = user_has_permission(db, current_user, "repayment.view")
+    if not can_view_history and status not in (None, models.RepaymentVerificationStatus.AWAITING_VERIFICATION):
+        raise HTTPException(
+            status_code=403,
+            detail="Repayment history requires the 'repayment.view' permission.",
+        )
+
     query = db.query(models.LoanRepayment)
-    if status:
-        query = query.filter(models.LoanRepayment.status == status)
+    if status or not can_view_history:
+        query = query.filter(
+            models.LoanRepayment.status
+            == (status or models.RepaymentVerificationStatus.AWAITING_VERIFICATION)
+        )
     repayments = query.order_by(models.LoanRepayment.created_at.desc()).all()
     items = [schemas.LoanRepaymentOut.model_validate(r) for r in repayments]
     flagged = mark_conflicted_reads(items, get_conflicted_member_ids(db, current_user))
@@ -171,8 +217,18 @@ def get_repayment(
     if current_user.role == models.UserRole.MEMBER:
         if repayment.member_id != current_user.member_id:
             raise HTTPException(status_code=403, detail="You can only view your own repayments")
-    elif not user_has_permission(db, current_user, "repayment.view"):
-        raise HTTPException(status_code=403, detail="You do not have the 'repayment.view' permission")
+    elif user_has_permission(db, current_user, "repayment.view"):
+        pass
+    elif (
+        user_has_permission(db, current_user, "repayment.verify")
+        and repayment.status == models.RepaymentVerificationStatus.AWAITING_VERIFICATION
+    ):
+        pass
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to view this repayment.",
+        )
 
     conflicted = repayment.member_id in get_conflicted_member_ids(db, current_user)
     if conflicted:

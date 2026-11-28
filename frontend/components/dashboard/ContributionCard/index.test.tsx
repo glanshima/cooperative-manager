@@ -89,14 +89,44 @@ describe("ContributionCard", () => {
     await waitFor(() => expect(getRequestsMock).toHaveBeenCalled());
   });
 
-  it("points a member with no amount on file to an officer", async () => {
+  it("lets a financial member with no amount request an initial amount", async () => {
     render(
       <ContributionCard member={{ ...financialMember, monthly_contribution_amount: null } as Member} />
     );
 
     expect(screen.getByText(/not yet set/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Request change" })).not.toBeInTheDocument();
+    const requestButton = screen.getByRole("button", { name: "Request amount" });
+    await waitFor(() => expect(requestButton).toBeEnabled());
+    expect(screen.queryByText("₦0.00")).not.toBeInTheDocument();
+
+    fireEvent.click(requestButton);
+    expect(screen.getByText(/No monthly savings amount is set yet/i)).toBeInTheDocument();
     await waitFor(() => expect(getRequestsMock).toHaveBeenCalled());
+  });
+
+  it("renders an unset prior amount without treating it as zero", async () => {
+    getRequestsMock.mockResolvedValue([
+      {
+        id: "req-initial",
+        status: "pending",
+        requested_amount: "8000.00",
+        current_amount: null,
+      } as never,
+    ]);
+    render(
+      <ContributionCard member={{ ...financialMember, monthly_contribution_amount: null } as Member} />
+    );
+
+    expect(await screen.findByText(/Not set → ₦8,000\.00/)).toBeInTheDocument();
+    expect(screen.queryByText(/₦0\.00/)).not.toBeInTheDocument();
+  });
+
+  it("surfaces request-history failures while keeping the request action available", async () => {
+    getRequestsMock.mockRejectedValue(new Error("history unavailable"));
+    render(<ContributionCard member={financialMember} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Could not load your request history/i);
+    expect(screen.getByRole("button", { name: "Request change" })).toBeEnabled();
   });
 
   it("disables requesting while a change is already pending", async () => {

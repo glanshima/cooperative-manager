@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { formatMoney } from "@/components/deductions/labels";
 import Modal from "@/components/ui/Modal";
+import StatusMessage from "@/components/ui/StatusMessage";
 import { getSettings, type Member } from "@/lib/api";
 import {
   ContributionChangeRequest,
@@ -27,6 +28,7 @@ export default function ContributionCard({ member }: { member: Member }) {
   const [minimum, setMinimum] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requestHistoryError, setRequestHistoryError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [requestedAmount, setRequestedAmount] = useState("");
@@ -34,6 +36,7 @@ export default function ContributionCard({ member }: { member: Member }) {
 
   async function loadRequests() {
     setLoading(true);
+    setRequestHistoryError(null);
     try {
       // Settled, not all: a savings lookup failing must not hide the
       // member's own change-request history.
@@ -42,7 +45,13 @@ export default function ContributionCard({ member }: { member: Member }) {
         getMySavings(),
         getSettings(),
       ]);
-      if (requestResult.status === "fulfilled") setRequests(requestResult.value);
+      if (requestResult.status === "fulfilled") {
+        setRequests(requestResult.value);
+      } else {
+        setRequestHistoryError(
+          "Could not load your request history. Refresh to check pending requests."
+        );
+      }
       if (savingsResult.status === "fulfilled") setSavings(savingsResult.value);
       if (settingsResult.status === "fulfilled") {
         setMinimum(Number(settingsResult.value.minimum_monthly_contribution));
@@ -123,30 +132,29 @@ export default function ContributionCard({ member }: { member: Member }) {
     );
   }
 
-  if (!amount) {
-    return (
-      <section style={cardStyle}>
-        <h2 style={{ marginTop: 0 }}>Monthly savings</h2>
-        {savingsSummary}
-        <p style={{ color: "#666", marginBottom: 0 }}>
-          Your savings amount is not yet set. Contact an officer to record it.
-        </p>
-      </section>
-    );
-  }
-
   return (
     <section style={cardStyle}>
       <h2 style={{ marginTop: 0 }}>Monthly savings</h2>
       {savingsSummary}
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
-        <span style={{ fontSize: 24, fontWeight: 600 }}>₦{formatMoney(amount)}</span>
-        <span style={{ fontSize: 12, color: "#666" }}>per month</span>
+        {amount ? (
+          <>
+            <span style={{ fontSize: 24, fontWeight: 600 }}>₦{formatMoney(amount)}</span>
+            <span style={{ fontSize: 12, color: "#666" }}>per month</span>
+          </>
+        ) : (
+          <span style={{ fontSize: 20, fontWeight: 600, color: "#666" }}>Not yet set</span>
+        )}
       </div>
+      {!amount && (
+        <p style={{ color: "#666", marginTop: 0 }}>
+          You do not have a monthly savings amount yet. You can request an initial amount.
+        </p>
+      )}
 
       <div className="toolbar">
         <button onClick={() => setShowRequestModal(true)} disabled={loading || pending !== undefined}>
-          {pending ? "Request pending" : "Request change"}
+          {pending ? "Request pending" : amount ? "Request change" : "Request amount"}
         </button>
         <button onClick={loadRequests} disabled={loading}>
           Refresh
@@ -160,15 +168,36 @@ export default function ContributionCard({ member }: { member: Member }) {
         </p>
       )}
 
-      {error && !showRequestModal && <p style={{ color: "crimson", fontSize: 14 }}>{error}</p>}
-      {success && <p style={{ color: "green", fontSize: 14 }}>{success}</p>}
+      {requestHistoryError && (
+        <StatusMessage
+          tone="error"
+          dismissLabel="Dismiss request history error"
+          onDismiss={() => setRequestHistoryError(null)}
+        >
+          {requestHistoryError}
+        </StatusMessage>
+      )}
+      {error && !showRequestModal && (
+        <StatusMessage tone="error" dismissLabel="Dismiss savings error" onDismiss={() => setError(null)}>
+          {error}
+        </StatusMessage>
+      )}
+      {success && (
+        <StatusMessage
+          tone="success"
+          dismissLabel="Dismiss success message"
+          onDismiss={() => setSuccess(null)}
+        >
+          {success}
+        </StatusMessage>
+      )}
 
       {requests.length > 0 && (
         <ul style={{ margin: "12px 0 0 0", padding: 0, listStyle: "none", fontSize: 13, color: "#555" }}>
           {requests.slice(0, 5).map((r) => (
             <li key={r.id} style={{ padding: "4px 0", borderTop: "1px solid #eee" }}>
-              ₦{formatMoney(r.current_amount ?? "0")} → ₦{formatMoney(r.requested_amount)} ·{" "}
-              <strong>{r.status}</strong>
+              {r.current_amount == null ? "Not set" : `₦${formatMoney(r.current_amount)}`} →{" "}
+              {`₦${formatMoney(r.requested_amount)}`} · <strong>{r.status}</strong>
               {r.status === "approved" && r.effective_from && ` · from ${r.effective_from}`}
               {r.status === "rejected" && r.review_reason && ` · ${r.review_reason}`}
             </li>
@@ -185,7 +214,9 @@ export default function ContributionCard({ member }: { member: Member }) {
           maxWidth={400}
         >
           <p style={{ color: "#666", marginBottom: 16 }}>
-            Your current monthly savings is ₦{formatMoney(amount)}. Enter a new amount and a reason.
+            {amount
+              ? `Your current monthly savings is ₦${formatMoney(amount)}. Enter a new amount and a reason.`
+              : "No monthly savings amount is set yet. Enter your initial amount and a reason."}
           </p>
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div>
